@@ -1,11 +1,13 @@
 
 import React, { useMemo } from 'react';
-import { EnrichedFyersQuote, MarketSnapshot } from '../types';
-import { TrendingUp, TrendingDown, Activity, ArrowUpRight, ArrowDownRight, BarChart2, DollarSign, Scale } from 'lucide-react';
+import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
+import { TrendingUp, TrendingDown, Activity, ArrowUpRight, ArrowDownRight, BarChart2, Scale } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
   latestSnapshot?: MarketSnapshot;
+  onNavigate: (mode: ViewMode) => void;
+  onSelectStock: (symbol: string) => void;
 }
 
 const formatValue = (val: number) => {
@@ -21,7 +23,7 @@ const formatMillions = (num: number) => {
   return `${val.toFixed(2)}M`;
 };
 
-export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot }) => {
+export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot, onNavigate, onSelectStock }) => {
   
   // --- Weighted Aggregation Logic ---
   const stats = useMemo(() => {
@@ -106,7 +108,10 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           
           {/* Weighted Breadth */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg relative overflow-hidden">
+          <div 
+             onClick={() => onNavigate('stocks')}
+             className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg relative overflow-hidden cursor-pointer hover:border-blue-500/50 transition-colors"
+          >
              <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-4 flex items-center gap-2">
                 <BarChart2 size={16} /> Weighted Breadth
              </h3>
@@ -128,7 +133,10 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
           </div>
 
           {/* Weighted Buying Pressure (Value Based) */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg relative overflow-hidden group">
+          <div 
+             onClick={() => onNavigate('stocks')}
+             className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg relative overflow-hidden group cursor-pointer hover:border-blue-500/50 transition-colors"
+          >
              <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                 <ArrowUpRight size={80} className="text-blue-500" />
              </div>
@@ -149,7 +157,10 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
           </div>
 
           {/* Weighted Selling Pressure (Value Based) */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg relative overflow-hidden group">
+          <div 
+             onClick={() => onNavigate('stocks')}
+             className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg relative overflow-hidden group cursor-pointer hover:border-blue-500/50 transition-colors"
+          >
              <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                 <ArrowDownRight size={80} className="text-red-500" />
              </div>
@@ -173,10 +184,14 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
 
        {/* Row 2: Options Data (If available) */}
        {latestSnapshot && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg">
+        <div 
+             onClick={() => onNavigate('options')}
+             className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg cursor-pointer hover:border-blue-500/50 transition-colors"
+        >
              <div className="flex items-center gap-2 mb-4">
                  <Scale size={20} className="text-yellow-400" />
                  <h3 className="text-gray-200 font-bold uppercase">Options Market Sentiment</h3>
+                 <span className="text-xs text-blue-500 bg-blue-900/20 px-2 py-0.5 rounded ml-auto">Click for Option Chain</span>
              </div>
              
              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
@@ -272,7 +287,11 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                 <table className="w-full text-sm">
                    <tbody className="divide-y divide-gray-800">
                       {topLifters.map(stock => (
-                         <tr key={stock.symbol} className="hover:bg-gray-800/50">
+                         <tr 
+                            key={stock.symbol} 
+                            onClick={() => onSelectStock(stock.symbol)}
+                            className="hover:bg-gray-800/50 cursor-pointer"
+                         >
                             <td className="px-4 py-3 text-gray-300">
                                {stock.short_name}
                                <span className="ml-2 text-[10px] text-gray-500 bg-gray-800 px-1 rounded">
@@ -305,7 +324,11 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                 <table className="w-full text-sm">
                    <tbody className="divide-y divide-gray-800">
                       {topDraggers.map(stock => (
-                         <tr key={stock.symbol} className="hover:bg-gray-800/50">
+                         <tr 
+                            key={stock.symbol} 
+                            onClick={() => onSelectStock(stock.symbol)}
+                            className="hover:bg-gray-800/50 cursor-pointer"
+                         >
                             <td className="px-4 py-3 text-gray-300">
                                {stock.short_name}
                                <span className="ml-2 text-[10px] text-gray-500 bg-gray-800 px-1 rounded">

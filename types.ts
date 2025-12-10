@@ -167,3 +167,5 @@ export interface MarketSnapshot {
   putsBuyQty: number;
   putsSellQty: number;
 }
+
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history';

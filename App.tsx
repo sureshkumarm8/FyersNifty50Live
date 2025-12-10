@@ -7,11 +7,9 @@ import { OptionChain } from './components/OptionChain';
 import { CumulativeView } from './components/CumulativeView';
 import { SentimentHistory } from './components/SentimentHistory';
 import { SettingsModal } from './components/SettingsModal';
-import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot } from './types';
+import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode } from './types';
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
-
-type ViewMode = 'summary' | 'stocks' | 'options' | 'history';
 
 const App: React.FC = () => {
   // --- State ---
@@ -363,7 +361,12 @@ const App: React.FC = () => {
            </div>
         ) : viewMode === 'summary' ? (
            <div className="flex-1 overflow-y-auto">
-              <CumulativeView data={stocks} latestSnapshot={historyLog.length > 0 ? historyLog[historyLog.length - 1] : undefined} />
+              <CumulativeView 
+                data={stocks} 
+                latestSnapshot={historyLog.length > 0 ? historyLog[historyLog.length - 1] : undefined} 
+                onNavigate={setViewMode}
+                onSelectStock={setSelectedStock}
+              />
            </div>
         ) : (
            /* STOCKS LIST VIEW */
