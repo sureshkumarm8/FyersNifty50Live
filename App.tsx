@@ -69,17 +69,33 @@ const App: React.FC = () => {
         const prev = prevStocksRef.current[curr.symbol];
         
         let bid_qty_chg_1m = undefined;
+        let bid_qty_chg_p = undefined;
+        let ask_qty_chg_1m = undefined;
         let ask_qty_chg_p = undefined;
+        let net_strength_1m = undefined;
 
         if (prev) {
-           // Calc Change in Total Bid Qty
+           // --- BID CALCULATIONS ---
            if (curr.total_buy_qty !== undefined && prev.total_buy_qty !== undefined) {
               bid_qty_chg_1m = curr.total_buy_qty - prev.total_buy_qty;
+              
+              if (prev.total_buy_qty !== 0) {
+                 bid_qty_chg_p = (bid_qty_chg_1m / prev.total_buy_qty) * 100;
+              }
            }
 
-           // Calc % Change in Total Ask Qty
-           if (curr.total_sell_qty !== undefined && prev.total_sell_qty !== undefined && prev.total_sell_qty !== 0) {
-              ask_qty_chg_p = ((curr.total_sell_qty - prev.total_sell_qty) / prev.total_sell_qty) * 100;
+           // --- ASK CALCULATIONS ---
+           if (curr.total_sell_qty !== undefined && prev.total_sell_qty !== undefined) {
+              ask_qty_chg_1m = curr.total_sell_qty - prev.total_sell_qty;
+              
+              if (prev.total_sell_qty !== 0) {
+                 ask_qty_chg_p = (ask_qty_chg_1m / prev.total_sell_qty) * 100;
+              }
+           }
+
+           // --- NET STRENGTH (Bid % - Ask %) ---
+           if (bid_qty_chg_p !== undefined && ask_qty_chg_p !== undefined) {
+              net_strength_1m = bid_qty_chg_p - ask_qty_chg_p;
            }
         }
         
@@ -89,7 +105,10 @@ const App: React.FC = () => {
         return {
           ...curr,
           bid_qty_chg_1m,
-          ask_qty_chg_p
+          bid_qty_chg_p,
+          ask_qty_chg_1m,
+          ask_qty_chg_p,
+          net_strength_1m
         };
       });
 

@@ -104,7 +104,10 @@ export type SortField =
   | 'total_buy_qty'
   | 'total_sell_qty'
   | 'tt'
-  | 'oi';
+  | 'oi'
+  | 'bid_qty_chg_1m'
+  | 'ask_qty_chg_p'
+  | 'net_strength_1m';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -115,6 +118,11 @@ export interface SortConfig {
 
 // Extended Quote for UI with calculated fields
 export interface EnrichedFyersQuote extends FyersQuote {
-  bid_qty_chg_1m?: number;
-  ask_qty_chg_p?: number;
+  bid_qty_chg_1m?: number;    // Absolute change
+  bid_qty_chg_p?: number;     // Percent change
+  
+  ask_qty_chg_1m?: number;    // Absolute change
+  ask_qty_chg_p?: number;     // Percent change
+  
+  net_strength_1m?: number;   // (Bid% - Ask%)
 }

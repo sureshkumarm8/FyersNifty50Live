@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, SortConfig, SortField } from '../types';
-import { ArrowUp, ArrowDown, Minus } from 'lucide-react';
+import { ArrowUp, ArrowDown } from 'lucide-react';
 
 interface StockTableProps {
   data: EnrichedFyersQuote[];
@@ -43,11 +43,35 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
     { label: 'Chg', field: null, align: 'right' },
     { label: 'Chg%', field: 'chp', align: 'right' },
     { label: 'Total Bid Qty', field: 'total_buy_qty', align: 'right' },
-    { label: 'Bid Chg (1m)', field: null, align: 'right' },
+    { label: 'Bid Chg (1m)', field: 'bid_qty_chg_1m', align: 'right' },
     { label: 'Total Ask Qty', field: 'total_sell_qty', align: 'right' },
-    { label: 'Ask Chg %', field: null, align: 'right' },
+    { label: 'Ask Chg %', field: 'ask_qty_chg_p', align: 'right' },
+    { label: '1m % (Bid-Ask)', field: 'net_strength_1m', align: 'right' }, // NEW COLUMN
     { label: 'Time', field: 'tt', align: 'right' },
   ];
+
+  // Calculate Cumulative Totals
+  const totals = useMemo(() => {
+     if (data.length === 0) return null;
+
+     return data.reduce((acc, curr) => {
+        return {
+           total_buy_qty: acc.total_buy_qty + (curr.total_buy_qty || 0),
+           total_sell_qty: acc.total_sell_qty + (curr.total_sell_qty || 0),
+           bid_qty_chg_1m: acc.bid_qty_chg_1m + (curr.bid_qty_chg_1m || 0),
+           ask_qty_chg_1m: acc.ask_qty_chg_1m + (curr.ask_qty_chg_1m || 0), // Use absolute for sum
+        };
+     }, { total_buy_qty: 0, total_sell_qty: 0, bid_qty_chg_1m: 0, ask_qty_chg_1m: 0 });
+  }, [data]);
+
+  // Derived Weighted percentages for Totals Row
+  const totalAskChgPercent = totals && totals.total_sell_qty > 0 
+     ? (totals.ask_qty_chg_1m / (totals.total_sell_qty - totals.ask_qty_chg_1m)) * 100 
+     : 0;
+
+  const totalNetPercent = totals && totals.total_buy_qty > 0 && totals.total_sell_qty > 0
+      ? ((totals.bid_qty_chg_1m / (totals.total_buy_qty - totals.bid_qty_chg_1m)) * 100) - totalAskChgPercent
+      : 0;
 
   if (isLoading && data.length === 0) {
     return (
@@ -85,6 +109,43 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-800/50">
+          {/* TOTALS ROW (Pinned to Top) */}
+          {totals && (
+             <tr className="bg-gray-800/80 font-bold border-b-2 border-gray-700 text-white">
+                <td className="px-4 py-3 text-left text-yellow-500">TOTAL</td>
+                <td className="px-4 py-3 text-right">--</td>
+                <td className="px-4 py-3 text-right">--</td>
+                <td className="px-4 py-3 text-right">--</td>
+                
+                {/* Total Bid Qty */}
+                <td className="px-4 py-3 text-right text-blue-300">
+                   {formatQty(totals.total_buy_qty)}
+                </td>
+                
+                {/* Total Bid Chg (1m) */}
+                <td className={`px-4 py-3 text-right ${totals.bid_qty_chg_1m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                   {totals.bid_qty_chg_1m > 0 ? '+' : ''}{formatQty(totals.bid_qty_chg_1m)}
+                </td>
+
+                {/* Total Ask Qty */}
+                <td className="px-4 py-3 text-right text-red-300">
+                   {formatQty(totals.total_sell_qty)}
+                </td>
+
+                {/* Avg Ask Chg % */}
+                <td className={`px-4 py-3 text-right ${totalAskChgPercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                   {totalAskChgPercent > 0 ? '+' : ''}{formatNumber(totalAskChgPercent)}%
+                </td>
+
+                {/* Total Net % */}
+                <td className={`px-4 py-3 text-right ${totalNetPercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                   {totalNetPercent > 0 ? '+' : ''}{formatNumber(totalNetPercent)}%
+                </td>
+
+                <td className="px-4 py-3 text-right">--</td>
+             </tr>
+          )}
+
           {data.map((stock) => {
             const isPositive = stock.ch >= 0;
             const TextColor = isPositive ? 'text-green-500' : 'text-red-500';
@@ -131,6 +192,11 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                 {/* Ask Qty % Change */}
                 <td className={`px-4 py-3 text-right font-mono ${stock.ask_qty_chg_p && stock.ask_qty_chg_p >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                    {stock.ask_qty_chg_p ? (stock.ask_qty_chg_p > 0 ? '+' : '') + formatNumber(stock.ask_qty_chg_p) + '%' : '-'}
+                </td>
+                
+                {/* 1m % Net (Bid - Ask) */}
+                <td className={`px-4 py-3 text-right font-mono font-bold ${stock.net_strength_1m && stock.net_strength_1m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                   {stock.net_strength_1m ? (stock.net_strength_1m > 0 ? '+' : '') + formatNumber(stock.net_strength_1m) + '%' : '-'}
                 </td>
 
                 <td className="px-4 py-3 text-right text-gray-500 font-mono text-xs">
