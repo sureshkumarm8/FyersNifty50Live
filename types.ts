@@ -27,14 +27,33 @@ export interface FyersQuote {
   volume: number;
 }
 
+// Internal interface for the raw API response structure which nests data in 'v'
+export interface FyersV3QuoteItem {
+  n: string;
+  s: string;
+  v: FyersQuote;
+}
+
 export interface FyersQuoteResponse {
   s: string; // Status "ok" or "error"
   code: number;
   message: string;
-  d: FyersQuote[];
+  d: FyersV3QuoteItem[];
 }
 
-export type SortField = 'symbol' | 'lp' | 'chp' | 'volume' | 'high_price' | 'low_price';
+export type SortField = 
+  | 'symbol' 
+  | 'lp' 
+  | 'chp' 
+  | 'volume' 
+  | 'high_price' 
+  | 'low_price'
+  | 'open_price'
+  | 'prev_close_price'
+  | 'bid'
+  | 'ask'
+  | 'tt';
+
 export type SortDirection = 'asc' | 'desc';
 
 export interface SortConfig {

@@ -1,12 +1,30 @@
 import { FyersQuote, FyersQuoteResponse, FyersCredentials } from '../types';
-import { NIFTY50_SYMBOLS } from '../constants';
 
 const BASE_URL = 'https://api.fyers.in/data-rest/v3/quotes';
 
-// Helper to generate random variation for Demo Mode
-const randomVariation = (price: number) => {
-  const change = price * (Math.random() * 0.004 - 0.002); // +/- 0.2%
-  return Number((price + change).toFixed(2));
+// Helper to perform the actual fetch request
+const performRequest = async (url: string, credentials: FyersCredentials) => {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Authorization': `${credentials.appId}:${credentials.accessToken}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) throw new Error("Unauthorized: Check App ID or Token");
+    if (response.status === 403) throw new Error("Forbidden: API Access Denied (Check permissions)");
+    throw new Error(`API Error: ${response.status} ${response.statusText}`);
+  }
+
+  const data: FyersQuoteResponse = await response.json();
+  
+  if (data.s !== 'ok') {
+     throw new Error(data.message || "Failed to fetch data");
+  }
+  
+  return data;
 };
 
 export const fetchQuotes = async (
@@ -23,38 +41,50 @@ export const fetchQuotes = async (
 
   // Fyers API V3 Expects comma separated symbols
   const symbolsParam = symbols.join(',');
-  const url = `${BASE_URL}?symbols=${symbolsParam}`;
+  const directUrl = `${BASE_URL}?symbols=${symbolsParam}`;
+
+  let data: FyersQuoteResponse;
 
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `${credentials.appId}:${credentials.accessToken}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) throw new Error("Unauthorized: Check App ID or Token");
-      if (response.status === 403) throw new Error("Forbidden: API Access Denied (Check CORS/Scopes)");
-      throw new Error(`API Error: ${response.statusText}`);
+    // Attempt 1: Direct Fetch
+    // This usually works if the user has a CORS extension or if the API allows the origin
+    data = await performRequest(directUrl, credentials);
+  } catch (error: any) {
+    // Check if it's a network/CORS error
+    if (error.name === 'TypeError' && (error.message === 'Failed to fetch' || error.message.includes('NetworkError'))) {
+       console.warn("Direct fetch failed (likely CORS). Retrying with proxy...");
+       
+       // Attempt 2: CORS Proxy
+       // specific for browser-only environments to bypass CORS
+       const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(directUrl)}`;
+       
+       try {
+         data = await performRequest(proxyUrl, credentials);
+       } catch (proxyError: any) {
+         console.error("Proxy fetch failed:", proxyError);
+         // Throw the original or a combined error to help user debug
+         throw new Error(`Connection failed. If using Real API, ensure 'App ID' and 'Access Token' are valid. (Proxy Error: ${proxyError.message})`);
+       }
+    } else {
+       // If it was a 401/403 or other logic error, rethrow it
+       throw error;
     }
-
-    const data: FyersQuoteResponse = await response.json();
-    
-    if (data.s !== 'ok') {
-       throw new Error(data.message || "Failed to fetch data");
-    }
-    
-    return data.d || [];
-  } catch (error) {
-    console.error("Fyers API Error:", error);
-    throw error;
   }
+
+  // Fyers V3 returns data in 'd' array, where each item has a 'v' property containing the quote
+  if (data && Array.isArray(data.d)) {
+    return data.d.map(item => item.v).filter(Boolean);
+  }
+  
+  return [];
 };
 
 // Mock Data Generator for Demo Mode
-// Keeps track of previous values to simulate realistic movement
+const randomVariation = (price: number) => {
+  const change = price * (Math.random() * 0.004 - 0.002); // +/- 0.2%
+  return Number((price + change).toFixed(2));
+};
+
 let mockCache: Record<string, FyersQuote> = {};
 
 const fetchMockQuotes = async (symbols: string[]): Promise<FyersQuote[]> => {
@@ -82,7 +112,7 @@ const fetchMockQuotes = async (symbols: string[]): Promise<FyersQuote[]> => {
       exchange: 'NSE',
       fyToken: '101010101',
       original_name: sym,
-      tt: Date.now(),
+      tt: Math.floor(Date.now() / 1000), // Fyers returns unix timestamp in seconds usually
       
       lp: lp,
       open_price: open,
@@ -93,9 +123,9 @@ const fetchMockQuotes = async (symbols: string[]): Promise<FyersQuote[]> => {
       
       ch: ch,
       chp: chp,
-      ask: lp,
-      bid: lp,
-      spread: 0.05
+      ask: Number((lp + 0.05).toFixed(2)),
+      bid: Number((lp - 0.05).toFixed(2)),
+      spread: 0.1
     };
     
     mockCache[sym] = quote;

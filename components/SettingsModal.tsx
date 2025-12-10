@@ -72,7 +72,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                <div className="bg-yellow-900/20 border border-yellow-800/50 p-3 rounded text-sm text-yellow-200 flex gap-2 items-start">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <p>
-                    <strong>CORS Warning:</strong> Direct calls to Fyers API from a browser may fail without a proxy or CORS extension.
+                    <strong>Connection Info:</strong> The app will try to connect directly. If blocked by browser (CORS), it will automatically retry via a secure proxy.
                   </p>
                </div>
 

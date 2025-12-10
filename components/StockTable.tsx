@@ -10,6 +10,7 @@ interface StockTableProps {
 }
 
 const formatNumber = (num: number, decimals: number = 2) => {
+  if (typeof num !== 'number') return '--';
   return num.toLocaleString('en-IN', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
@@ -17,9 +18,17 @@ const formatNumber = (num: number, decimals: number = 2) => {
 };
 
 const formatVolume = (vol: number) => {
+  if (!vol) return '--';
   if (vol >= 10000000) return `${(vol / 10000000).toFixed(2)}Cr`;
   if (vol >= 100000) return `${(vol / 100000).toFixed(2)}L`;
   return vol.toLocaleString('en-IN');
+};
+
+const formatTime = (timestamp: number) => {
+  if (!timestamp) return '--:--';
+  // Check if timestamp is in seconds (10 digits) or milliseconds (13 digits)
+  const date = new Date(timestamp > 10000000000 ? timestamp : timestamp * 1000);
+  return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 };
 
 export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort, isLoading }) => {
@@ -28,14 +37,19 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
     return sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
-  const headers: { label: string; field: SortField | null; align: 'left' | 'right' }[] = [
-    { label: 'Symbol', field: 'symbol', align: 'left' },
+  const headers: { label: string; field: SortField | null; align: 'left' | 'right'; width?: string }[] = [
+    { label: 'Symbol', field: 'symbol', align: 'left', width: 'w-48' },
     { label: 'LTP', field: 'lp', align: 'right' },
     { label: 'Chg', field: null, align: 'right' },
     { label: 'Chg%', field: 'chp', align: 'right' },
-    { label: 'Volume', field: 'volume', align: 'right' },
+    { label: 'Bid', field: 'bid', align: 'right' },
+    { label: 'Ask', field: 'ask', align: 'right' },
+    { label: 'Open', field: 'open_price', align: 'right' },
     { label: 'High', field: 'high_price', align: 'right' },
     { label: 'Low', field: 'low_price', align: 'right' },
+    { label: 'Prev. Cl', field: 'prev_close_price', align: 'right' },
+    { label: 'Volume', field: 'volume', align: 'right' },
+    { label: 'Time', field: 'tt', align: 'right' },
   ];
 
   if (isLoading && data.length === 0) {
@@ -57,13 +71,13 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
 
   return (
     <div className="overflow-x-auto w-full bg-gray-900 border border-gray-800 rounded-xl shadow-xl">
-      <table className="w-full text-sm">
+      <table className="w-full text-sm whitespace-nowrap">
         <thead className="bg-gray-950 text-gray-400 border-b border-gray-800 sticky top-0 z-10">
           <tr>
             {headers.map((header, idx) => (
               <th
                 key={idx}
-                className={`px-6 py-4 font-medium uppercase tracking-wider cursor-pointer hover:text-white transition-colors text-${header.align}`}
+                className={`px-4 py-4 font-medium uppercase tracking-wider cursor-pointer hover:text-white transition-colors text-${header.align} ${header.width || ''}`}
                 onClick={() => header.field && onSort(header.field)}
               >
                 <div className={`flex items-center gap-1 ${header.align === 'right' ? 'justify-end' : 'justify-start'}`}>
@@ -82,36 +96,56 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
 
             return (
               <tr key={stock.symbol} className={`${BgHover} transition-colors`}>
-                <td className="px-6 py-4 font-semibold text-white">
+                <td className="px-4 py-3 font-semibold text-white">
                   {stock.short_name || stock.symbol}
                   <span className="block text-xs text-gray-500 font-normal mt-0.5">{stock.exchange}</span>
                 </td>
                 
-                <td className={`px-6 py-4 text-right font-mono text-base ${TextColor}`}>
+                <td className={`px-4 py-3 text-right font-mono text-base ${TextColor}`}>
                    {formatNumber(stock.lp)}
                 </td>
 
-                <td className={`px-6 py-4 text-right font-mono ${TextColor}`}>
+                <td className={`px-4 py-3 text-right font-mono ${TextColor}`}>
                    <div className="flex items-center justify-end gap-1">
                       {stock.ch > 0 ? <ArrowUp size={12}/> : stock.ch < 0 ? <ArrowDown size={12}/> : <Minus size={12} />}
                       {formatNumber(Math.abs(stock.ch))}
                    </div>
                 </td>
 
-                <td className={`px-6 py-4 text-right font-mono font-medium ${TextColor}`}>
+                <td className={`px-4 py-3 text-right font-mono font-medium ${TextColor}`}>
                    {formatNumber(Math.abs(stock.chp))}%
                 </td>
 
-                <td className="px-6 py-4 text-right text-gray-300 font-mono">
-                  {formatVolume(stock.volume)}
+                <td className="px-4 py-3 text-right text-gray-300 font-mono">
+                  {formatNumber(stock.bid)}
                 </td>
 
-                <td className="px-6 py-4 text-right text-gray-400 font-mono">
+                <td className="px-4 py-3 text-right text-gray-300 font-mono">
+                  {formatNumber(stock.ask)}
+                </td>
+
+                <td className="px-4 py-3 text-right text-gray-400 font-mono">
+                  {formatNumber(stock.open_price)}
+                </td>
+
+                <td className="px-4 py-3 text-right text-gray-400 font-mono">
                   {formatNumber(stock.high_price)}
                 </td>
 
-                <td className="px-6 py-4 text-right text-gray-400 font-mono">
+                <td className="px-4 py-3 text-right text-gray-400 font-mono">
                   {formatNumber(stock.low_price)}
+                </td>
+
+                <td className="px-4 py-3 text-right text-gray-500 font-mono">
+                  {formatNumber(stock.prev_close_price)}
+                </td>
+
+                <td className="px-4 py-3 text-right text-gray-300 font-mono">
+                  {formatVolume(stock.volume)}
+                </td>
+
+                <td className="px-4 py-3 text-right text-gray-500 font-mono text-xs">
+                  {formatTime(stock.tt)}
                 </td>
               </tr>
             );
