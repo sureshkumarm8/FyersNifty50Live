@@ -46,7 +46,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
   };
 
   const headers: { label: string; field: SortField | null; align: 'left' | 'right'; width?: string; highlight?: boolean }[] = [
-    { label: 'Symbol', field: 'symbol', align: 'left', width: 'w-48' },
+    { label: 'Symbol', field: 'symbol', align: 'left', width: 'w-32 sm:w-48' },
     { label: 'LTP', field: 'lp', align: 'right' },
     { label: '1m %', field: 'lp_chg_1m_p', align: 'right', highlight: true },
     { label: 'Sess %', field: 'lp_chg_day_p', align: 'right' },
@@ -119,11 +119,11 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
   return (
     <div className="w-full glass-panel rounded-2xl overflow-hidden flex flex-col h-full shadow-2xl relative">
       <div className="overflow-auto flex-1 custom-scrollbar">
-        <table className="w-full text-sm border-collapse">
+        <table className="w-full text-xs sm:text-sm border-collapse whitespace-nowrap">
           <thead className="glass-header text-slate-400 sticky top-0 z-20 uppercase text-[10px] font-bold tracking-widest">
             {totals && (
                <tr className="bg-slate-900/80 backdrop-blur text-slate-200 border-b border-white/10 shadow-lg">
-                 <td className="px-4 py-4 text-left text-blue-400 font-bold border-r border-white/5 bg-blue-900/10">MARKET AGGREGATE</td>
+                 <td className="px-4 py-4 text-left text-blue-400 font-bold border-r border-white/5 bg-blue-900/10 sticky left-0 z-10 backdrop-blur-md">MARKET AGGREGATE</td>
                  <td className="px-4 py-4 text-right"></td>
                  <td className="px-4 py-4 text-right bg-white/5 border-l border-white/5">{formatPercent(weightedLp1m)}</td>
                  <td className="px-4 py-4 text-right bg-white/5">{formatPercent(weightedLpDay)}</td>
@@ -146,7 +146,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
               {headers.map((header, idx) => (
                 <th
                   key={idx}
-                  className={`px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200' : ''}`}
+                  className={`px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200' : ''} ${header.field === 'symbol' ? 'sticky left-0 bg-slate-900/90 z-10 backdrop-blur' : ''}`}
                   onClick={() => header.field && onSort(header.field)}
                 >
                   <div className={`flex items-center gap-1 ${header.align === 'right' ? 'justify-end' : 'justify-start'}`}>
@@ -164,7 +164,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                 className="hover:bg-white/5 transition-all duration-200 cursor-pointer group"
                 onClick={() => onSelect(stock.symbol)}
               >
-                <td className="px-4 py-3 font-semibold text-slate-200 group-hover:text-blue-400 transition-colors border-r border-white/5 bg-slate-900/30">
+                <td className="px-4 py-3 font-semibold text-slate-200 group-hover:text-blue-400 transition-colors border-r border-white/5 bg-slate-900/30 sticky left-0 z-10 backdrop-blur-sm">
                   {stock.short_name || stock.symbol}
                   <span className="block text-[9px] text-slate-500 font-normal uppercase tracking-wider">{stock.exchange}</span>
                 </td>

@@ -250,49 +250,49 @@ const App: React.FC = () => {
       {/* Glass Header */}
       <header className="flex-none glass-header z-30 shadow-2xl relative">
         <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between py-3">
+        <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 h-auto sm:h-18 flex flex-col sm:flex-row items-center justify-between py-2 sm:py-3 gap-3 sm:gap-0">
           
-          <div className="flex items-center gap-6">
-             <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setSelectedStock(null)}>
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 w-full sm:w-auto">
+             <div className="flex items-center gap-3 cursor-pointer group self-start sm:self-center" onClick={() => setSelectedStock(null)}>
                <div className="p-2 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl shadow-lg shadow-blue-500/30 group-hover:shadow-blue-500/50 transition-all duration-300">
-                 <Zap size={24} className="text-white fill-white" />
+                 <Zap size={20} className="text-white fill-white" />
                </div>
                <div>
-                 <h1 className="text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400 hidden sm:block">
+                 <h1 className="text-xl sm:text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">
                    NIFTY<span className="text-blue-500">50</span>.AI
                  </h1>
-                 <h1 className="text-xl font-bold tracking-tight text-white sm:hidden">Nifty50</h1>
                </div>
+               <button onClick={() => setIsSettingsOpen(true)} className="ml-auto sm:hidden p-2 text-slate-400 hover:text-white rounded-lg"><Settings size={20} /></button>
              </div>
 
              {!selectedStock && (
-                <div className="flex bg-slate-900/60 p-1 rounded-xl border border-white/5 backdrop-blur-md">
+                <div className="flex bg-slate-900/60 p-1 rounded-xl border border-white/5 backdrop-blur-md overflow-x-auto w-full sm:w-auto custom-scrollbar">
                    {[
                      { id: 'summary', icon: PieChart, label: 'Cockpit' },
                      { id: 'stocks', icon: List, label: 'Stocks' },
                      { id: 'options', icon: BarChart3, label: 'Options' },
-                     { id: 'history', icon: Clock, label: 'Time Machine' }
+                     { id: 'history', icon: Clock, label: 'History' }
                    ].map((tab) => (
                      <button 
                        key={tab.id}
                        onClick={() => setViewMode(tab.id as ViewMode)} 
-                       className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all duration-300 ${viewMode === tab.id ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                       className={`flex-shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all duration-300 whitespace-nowrap ${viewMode === tab.id ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
                      >
-                        <tab.icon size={16} className={viewMode === tab.id ? 'animate-pulse' : ''} /> {tab.label}
+                        <tab.icon size={14} className={viewMode === tab.id ? 'animate-pulse' : ''} /> {tab.label}
                      </button>
                    ))}
                 </div>
              )}
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 w-full sm:w-auto justify-end hidden sm:flex">
              {!selectedStock && viewMode === 'stocks' && (
-               <div className="hidden md:flex items-center bg-slate-900/50 rounded-full px-4 py-2 border border-white/10 focus-within:border-blue-500/50 focus-within:bg-slate-900/80 transition-all">
+               <div className="flex items-center bg-slate-900/50 rounded-full px-4 py-2 border border-white/10 focus-within:border-blue-500/50 focus-within:bg-slate-900/80 transition-all">
                   <Search size={16} className="text-slate-500 mr-2" />
-                  <input type="text" placeholder="Search Symbol..." className="bg-transparent border-none outline-none text-sm w-48 text-white placeholder-slate-600" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                  <input type="text" placeholder="Search..." className="bg-transparent border-none outline-none text-sm w-32 sm:w-48 text-white placeholder-slate-600" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                </div>
              )}
-            <div className="text-right hidden sm:block">
+            <div className="text-right hidden md:block">
                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Latency</p>
                  <div className="flex items-center justify-end gap-2">
                     <span className="relative flex h-2 w-2">
@@ -309,24 +309,24 @@ const App: React.FC = () => {
 
       <main className="flex-1 flex flex-col min-h-0 overflow-hidden relative z-10">
         {error && (
-          <div className="flex-none px-4 pt-4">
-            <div className="glass-panel border-l-4 border-l-red-500 text-red-200 px-6 py-4 rounded-r-xl flex items-center gap-4 shadow-[0_0_20px_rgba(239,68,68,0.2)]">
-                 <AlertCircle size={24} className="text-red-500 shrink-0 animate-bounce" />
-                 <span className="text-sm font-medium">{error}</span>
+          <div className="flex-none px-4 pt-2">
+            <div className="glass-panel border-l-4 border-l-red-500 text-red-200 px-4 py-2 rounded-r-xl flex items-center gap-4 shadow-[0_0_20px_rgba(239,68,68,0.2)]">
+                 <AlertCircle size={20} className="text-red-500 shrink-0 animate-bounce" />
+                 <span className="text-xs sm:text-sm font-medium">{error}</span>
             </div>
           </div>
         )}
 
         {selectedStock ? (
-           <div className="flex-1 p-6 overflow-hidden animate-in slide-in-from-right duration-300">
+           <div className="flex-1 p-2 sm:p-6 overflow-hidden animate-in slide-in-from-right duration-300">
                <StockDetail symbol={selectedStock} credentials={credentials} onBack={() => setSelectedStock(null)} />
            </div>
         ) : viewMode === 'history' ? (
-           <div className="flex-1 p-6 overflow-hidden animate-in fade-in duration-300">
+           <div className="flex-1 p-2 sm:p-6 overflow-hidden animate-in fade-in duration-300">
                <SentimentHistory history={historyLog} />
            </div>
         ) : viewMode === 'options' ? (
-           <div className="flex-1 p-6 overflow-hidden flex flex-col animate-in fade-in duration-300">
+           <div className="flex-1 p-2 sm:p-6 overflow-hidden flex flex-col animate-in fade-in duration-300">
               <OptionChain quotes={optionQuotes} niftyLtp={niftyLtp} lastUpdated={lastUpdated ? new Date(lastUpdated) : null} isLoading={isLoading} />
            </div>
         ) : viewMode === 'summary' ? (
@@ -340,24 +340,31 @@ const App: React.FC = () => {
            </div>
         ) : (
            <>
-             <div className="flex-none p-6 pb-0 animate-in fade-in duration-300">
+             <div className="flex-none p-2 sm:p-6 pb-0 animate-in fade-in duration-300">
                {stocks.length > 0 && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                     <div className="glass-panel p-4 rounded-xl relative overflow-hidden group">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 mb-2 sm:mb-4">
+                     <div className="glass-panel p-3 sm:p-4 rounded-xl relative overflow-hidden group">
                         <div className="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
                             <Activity size={40} />
                         </div>
-                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Market Breadth</p>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Breadth</p>
                         <div className="flex items-end gap-2 mt-2">
-                           <span className="text-3xl font-bold text-bull text-glow-green">{stocks.filter(s => s.ch >= 0).length}</span>
-                           <span className="text-slate-600 text-xl font-thin">/</span>
-                           <span className="text-3xl font-bold text-bear text-glow-red">{stocks.filter(s => s.ch < 0).length}</span>
+                           <span className="text-2xl sm:text-3xl font-bold text-bull text-glow-green">{stocks.filter(s => s.ch >= 0).length}</span>
+                           <span className="text-slate-600 text-lg sm:text-xl font-thin">/</span>
+                           <span className="text-2xl sm:text-3xl font-bold text-bear text-glow-red">{stocks.filter(s => s.ch < 0).length}</span>
                         </div>
                      </div>
                   </div>
                )}
              </div>
-             <div className="flex-1 overflow-y-auto p-6 pt-2 custom-scrollbar animate-in fade-in duration-500">
+             {/* Mobile Search Bar for Stocks View */}
+             <div className="sm:hidden px-2 pb-2">
+               <div className="flex items-center bg-slate-900/50 rounded-lg px-3 py-2 border border-white/10">
+                   <Search size={16} className="text-slate-500 mr-2" />
+                   <input type="text" placeholder="Search..." className="bg-transparent border-none outline-none text-sm w-full text-white" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+               </div>
+             </div>
+             <div className="flex-1 overflow-y-auto p-2 sm:p-6 pt-2 custom-scrollbar animate-in fade-in duration-500">
                <StockTable data={filteredAndSortedStocks} sortConfig={sortConfig} onSort={handleSort} onSelect={setSelectedStock} isLoading={isLoading} />
              </div>
            </>
