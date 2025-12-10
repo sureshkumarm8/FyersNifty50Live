@@ -1,15 +1,15 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
+import { CumulativeView } from './components/CumulativeView';
 import { SettingsModal } from './components/SettingsModal';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote } from './types';
 import { fetchQuotes } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS } from './constants';
 
-type ViewMode = 'dashboard' | 'options';
+type ViewMode = 'dashboard' | 'options' | 'cumulative';
 
 const App: React.FC = () => {
   // --- State ---
@@ -54,8 +54,8 @@ const App: React.FC = () => {
   };
 
   const refreshData = useCallback(async () => {
-    // Only refresh stocks if we are in dashboard view
-    if (viewMode !== 'dashboard') return;
+    // Only refresh stocks if we are in dashboard OR cumulative view (both need stock data)
+    if (viewMode === 'options') return;
 
     if (!credentials.appId || !credentials.accessToken) {
        if(stocks.length === 0) setError("Please configure API credentials in Settings");
@@ -212,23 +212,31 @@ const App: React.FC = () => {
                  <Activity size={24} className="text-white" />
                </div>
                <div>
-                 <h1 className="text-xl font-bold tracking-tight text-white">Nifty50 Live</h1>
+                 <h1 className="text-xl font-bold tracking-tight text-white hidden sm:block">Nifty50 Live</h1>
+                 <h1 className="text-xl font-bold tracking-tight text-white sm:hidden">Nifty50</h1>
                </div>
              </div>
 
              {/* Navigation Tabs */}
              {!selectedStock && (
-                <div className="hidden sm:flex bg-gray-800/50 p-1 rounded-lg border border-gray-700/50">
+                <div className="flex bg-gray-800/50 p-1 rounded-lg border border-gray-700/50">
                    <button 
                       onClick={() => setViewMode('dashboard')}
-                      className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                      className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
                    >
                       <List size={16} />
                       Stocks
                    </button>
                    <button 
+                      onClick={() => setViewMode('cumulative')}
+                      className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'cumulative' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                   >
+                      <PieChart size={16} />
+                      Summary
+                   </button>
+                   <button 
                       onClick={() => setViewMode('options')}
-                      className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'options' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                      className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'options' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
                    >
                       <BarChart3 size={16} />
                       Options
@@ -251,7 +259,7 @@ const App: React.FC = () => {
                </div>
              )}
 
-            {viewMode === 'dashboard' && (
+            {viewMode !== 'options' && (
                <div className="text-right hidden sm:block">
                  <p className="text-xs text-gray-500">Last Updated</p>
                  <p className="text-sm font-mono text-gray-300">
@@ -260,7 +268,7 @@ const App: React.FC = () => {
                </div>
             )}
 
-            <div className="h-8 w-[1px] bg-gray-800 mx-2"></div>
+            <div className="h-8 w-[1px] bg-gray-800 mx-2 hidden sm:block"></div>
 
             <button 
               onClick={() => setIsSettingsOpen(true)}
@@ -290,7 +298,7 @@ const App: React.FC = () => {
 
         {/* --- VIEW ROUTER --- */}
         
-        {/* 1. STOCK DETAIL VIEW (Full Height overlay or replacement) */}
+        {/* 1. STOCK DETAIL VIEW (Full Height overlay) */}
         {selectedStock ? (
            <div className="flex-1 p-4 overflow-hidden">
                <StockDetail 
@@ -305,10 +313,17 @@ const App: React.FC = () => {
            <div className="flex-1 p-4 overflow-hidden flex flex-col">
               <OptionChain credentials={credentials} />
            </div>
-           
+
+        ) : viewMode === 'cumulative' ? (
+            
+           /* 3. CUMULATIVE SUMMARY VIEW */
+           <div className="flex-1 overflow-y-auto">
+              <CumulativeView data={stocks} />
+           </div>
+
         ) : (
            
-           /* 3. DASHBOARD VIEW */
+           /* 4. DASHBOARD VIEW (Stocks List) */
            <>
              {/* Fixed Stats Area (Non-scrolling) */}
              <div className="flex-none p-4 pb-0">
