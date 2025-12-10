@@ -28,16 +28,24 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (!symbols) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing symbols parameter' }));
+      return;
+    }
+
     try {
-      // Pass symbols directly. 
-      const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${symbols}`;
+      // CRITICAL FIX: Re-encode the symbols because parsedUrl.query has decoded them.
+      const encodedSymbols = encodeURIComponent(symbols);
+      const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${encodedSymbols}`;
 
       // Native fetch is available in Node 18+
       const fyersResponse = await fetch(fyersUrl, {
         method: 'GET',
         headers: { 
-          'Authorization': authHeader 
-          // Content-Type removed
+          'Authorization': authHeader,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'application/json'
         }
       });
       

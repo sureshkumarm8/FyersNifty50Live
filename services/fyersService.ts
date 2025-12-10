@@ -37,39 +37,50 @@ export const fetchQuotes = async (
       method: 'GET',
       headers: {
         'Authorization': `${appId}:${token}`,
-        // Content-Type is intentionally omitted for GET requests to avoid WAF blocks
       }
     });
 
-    // Robust parsing: Get text first to handle non-JSON errors (like 404/500 HTML pages)
+    // 1. Check HTTP Status FIRST
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error("API Endpoint not found. (If local: run 'npm run server'. If Vercel: check deployment)");
+      }
+      if (response.status === 401) throw new Error("Unauthorized: Invalid App ID or Access Token");
+      if (response.status === 403) throw new Error("Forbidden: Access Denied by Fyers");
+      if (response.status === 504) throw new Error("Gateway Timeout: Fyers API is slow or unreachable");
+      
+      // Try to read error body if possible
+      const errText = await response.text();
+      let errMsg = `Server Error (${response.status})`;
+      try {
+        const errJson = JSON.parse(errText);
+        if (errJson.error) errMsg = errJson.error;
+        else if (errJson.message) errMsg = errJson.message;
+        
+        // Append details if available
+        if (errJson.details) errMsg += ` - ${errJson.details.substring(0, 50)}...`;
+      } catch (e) {
+        // If body isn't JSON, use the status text or snippet
+        if (errText.length < 50) errMsg += `: ${errText}`;
+      }
+      throw new Error(errMsg);
+    }
+
+    // 2. Parse JSON (Safe)
     const text = await response.text();
     let data: any;
 
     try {
-      // Handle empty response
       if (!text || text.trim().length === 0) {
         throw new Error("Empty response from server");
       }
       data = JSON.parse(text);
     } catch (parseError) {
       console.error("JSON Parse Error:", parseError, "Response:", text.substring(0, 100));
-      // If response is HTML (common for 404/500 errors), provide a hint
       if (text.includes("<!DOCTYPE") || text.includes("<html")) {
-        // Try to extract title from HTML for better error message
-        const titleMatch = text.match(/<title>(.*?)<\/title>/i);
-        const title = titleMatch ? titleMatch[1] : "Unknown Error";
-        throw new Error(`Server returned HTML (${response.status} ${response.statusText}): ${title}`);
+        throw new Error(`Server returned HTML instead of JSON. The API route might be misconfigured.`);
       }
       throw new Error(`Invalid JSON response: ${text.substring(0, 30)}...`);
-    }
-
-    if (!response.ok) {
-      if (response.status === 401) throw new Error("Unauthorized: Check App ID & Token");
-      if (response.status === 403) throw new Error("Forbidden: Access Denied");
-      if (response.status === 404) throw new Error("API Endpoint not found. (Check Vercel deployment or local server)");
-      
-      const errorMsg = data.error || data.message || `Server Error: ${response.status}`;
-      throw new Error(errorMsg);
     }
 
     return processResponse(data);
@@ -77,7 +88,7 @@ export const fetchQuotes = async (
   } catch (error: any) {
     // Enhance error message for connection failures
     if (error.message.includes("Failed to fetch") || error.message.includes("NetworkError")) {
-      throw new Error("Connection Failed. Ensure the API server is running (npm run server for local).");
+      throw new Error("Connection Failed. Ensure the API server is running (npm run server).");
     }
     throw error;
   }

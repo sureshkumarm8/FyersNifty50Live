@@ -25,20 +25,22 @@ export default async function handler(request, response) {
   }
 
   try {
-    // Construct Fyers URL. Note: request.query.symbols is already decoded by Vercel,
-    // but Fyers expects comma-separated list. We put it directly into the URL.
-    const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${symbols}`;
+    // CRITICAL FIX: Re-encode the symbols because request.query has decoded them.
+    // The Fyers API requires symbols to be URL-encoded (e.g., NSE%3ARELIANCE-EQ).
+    const encodedSymbols = encodeURIComponent(symbols);
+    const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${encodedSymbols}`;
     
-    // Use native fetch (available in Node 18+ environment on Vercel)
+    // Use native fetch
     const fetchResponse = await fetch(fyersUrl, {
       method: 'GET',
       headers: {
-        'Authorization': authHeader
-        // Content-Type removed: Not standard for GET and can trigger WAF blocks
+        'Authorization': authHeader,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json'
       }
     });
 
-    // Safely read text first to handle upstream errors (e.g. Fyers maintenance HTML page)
+    // Safely read text first to handle upstream errors
     const text = await fetchResponse.text();
     let data;
     
