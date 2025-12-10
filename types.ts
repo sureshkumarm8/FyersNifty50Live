@@ -1,7 +1,6 @@
 export interface FyersCredentials {
   appId: string;
   accessToken: string;
-  isDemoMode: boolean;
 }
 
 // Fyers V3 Quote Response Interface

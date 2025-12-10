@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FyersCredentials } from '../types';
-import { X, Save, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { X, Save, AlertTriangle, ShieldCheck, Upload, Download, FileJson } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -17,19 +17,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [appId, setAppId] = useState(currentCreds.appId);
   const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
-  const [isDemoMode, setIsDemoMode] = useState(currentCreds.isDemoMode);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setAppId(currentCreds.appId);
       setAccessToken(currentCreds.accessToken);
-      setIsDemoMode(currentCreds.isDemoMode);
     }
   }, [isOpen, currentCreds]);
 
   const handleSave = () => {
-    onSave({ appId, accessToken, isDemoMode });
+    onSave({ appId, accessToken });
     onClose();
+  };
+
+  const handleDownloadTemplate = () => {
+    const template = {
+      appId: "XV1234567-100",
+      accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE"
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(template, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", "fyers_config_template.json");
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const json = JSON.parse(e.target?.result as string);
+        let loaded = false;
+        
+        if (json.appId) {
+          setAppId(json.appId);
+          loaded = true;
+        }
+        if (json.accessToken) {
+          setAccessToken(json.accessToken);
+          loaded = true;
+        }
+
+        if (!loaded) {
+          alert("Invalid JSON format. File must contain 'appId' or 'accessToken' fields.");
+        }
+      } catch (err) {
+        alert("Error parsing JSON file. Please ensure it is a valid JSON.");
+      }
+    };
+    reader.readAsText(file);
+    // Reset value so same file can be selected again if needed
+    event.target.value = '';
   };
 
   if (!isOpen) return null;
@@ -53,63 +97,80 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Body */}
         <div className="p-6 space-y-6">
           
-          {/* Demo Mode Toggle */}
-          <div className="flex items-center justify-between bg-gray-800/50 p-3 rounded-lg border border-gray-700">
+          <div className="space-y-4">
+             {/* Info Box */}
+             <div className="bg-blue-900/20 border border-blue-800/50 p-3 rounded text-sm text-blue-200 flex gap-2 items-start">
+                <ShieldCheck size={16} className="mt-0.5 shrink-0 text-blue-400" />
+                <p>
+                  <strong>Secure Proxy:</strong> Requests are routed through the secure serverless backend. Credentials are stored locally in your browser.
+                </p>
+             </div>
+
+             {/* Import/Export Tools */}
+             <div className="flex gap-3 mb-4">
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileUpload} 
+                  className="hidden" 
+                  accept=".json"
+                />
+                
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
+                >
+                  <Upload size={16} />
+                  Import Config
+                </button>
+
+                <button 
+                  onClick={handleDownloadTemplate}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
+                >
+                  <Download size={16} />
+                  Get Template
+                </button>
+             </div>
+
+             <div className="relative border-t border-gray-800 my-4">
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gray-900 px-2 text-xs text-gray-500">OR ENTER MANUALLY</span>
+             </div>
+
+            {/* Inputs */}
             <div>
-              <label className="text-white font-medium block">Demo Mode</label>
-              <p className="text-xs text-gray-400">Use mock data (No API key needed)</p>
+              <label className="block text-sm font-medium text-gray-400 mb-1">
+                App ID (Client ID)
+              </label>
+              <input
+                type="text"
+                value={appId}
+                onChange={(e) => setAppId(e.target.value)}
+                placeholder="e.g., XV1234567-100"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-gray-600 font-mono text-sm"
+              />
             </div>
-            <button 
-              onClick={() => setIsDemoMode(!isDemoMode)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isDemoMode ? 'bg-blue-600' : 'bg-gray-600'}`}
-            >
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isDemoMode ? 'translate-x-6' : 'translate-x-1'}`} />
-            </button>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-1">
+                Access Token
+              </label>
+              <textarea
+                value={accessToken}
+                onChange={(e) => setAccessToken(e.target.value)}
+                placeholder="Paste your generated access token here..."
+                rows={4}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-gray-600 font-mono text-xs resize-none"
+              />
+            </div>
+
+             <div className="bg-yellow-900/20 border border-yellow-800/50 p-3 rounded text-xs text-yellow-200 flex gap-2 items-start">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0 text-yellow-500" />
+                <p>
+                  Ensure your App ID includes the suffix (e.g. -100) and the token is valid for the current session (tokens expire daily).
+                </p>
+             </div>
           </div>
-
-          {!isDemoMode && (
-            <div className="space-y-4">
-               <div className="bg-blue-900/20 border border-blue-800/50 p-3 rounded text-sm text-blue-200 flex gap-2 items-start">
-                  <ShieldCheck size={16} className="mt-0.5 shrink-0 text-blue-400" />
-                  <p>
-                    <strong>Auto-Proxy Enabled:</strong> To bypass browser CORS restrictions, requests are routed through secure public proxies (e.g. corsproxy.io) automatically.
-                  </p>
-               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1">
-                  App ID (Client ID)
-                </label>
-                <input
-                  type="text"
-                  value={appId}
-                  onChange={(e) => setAppId(e.target.value)}
-                  placeholder="e.g., XV1234567-100"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-gray-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1">
-                  Access Token
-                </label>
-                <input
-                  type="password"
-                  value={accessToken}
-                  onChange={(e) => setAccessToken(e.target.value)}
-                  placeholder="Your generated access token"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-gray-600"
-                />
-              </div>
-
-               <div className="bg-yellow-900/20 border border-yellow-800/50 p-3 rounded text-xs text-yellow-200 flex gap-2 items-start">
-                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-yellow-500" />
-                  <p>
-                    If connection fails, double check your App ID format (usually ends in -100). If issues persist, try switching to Demo Mode.
-                  </p>
-               </div>
-            </div>
-          )}
         </div>
 
         {/* Footer */}

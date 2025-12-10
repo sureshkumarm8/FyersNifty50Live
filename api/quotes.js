@@ -1,4 +1,3 @@
-
 export default async function handler(request, response) {
   // CORS configuration for Vercel Serverless
   response.setHeader('Access-Control-Allow-Credentials', true);
@@ -37,8 +36,22 @@ export default async function handler(request, response) {
       }
     });
 
-    const data = await fetchResponse.json();
+    // Safely read text first to handle upstream errors (e.g. Fyers maintenance HTML page)
+    const text = await fetchResponse.text();
+    let data;
+    
+    try {
+        data = text ? JSON.parse(text) : {};
+    } catch (e) {
+        console.error('Upstream API returned non-JSON:', text.substring(0, 100));
+        return response.status(502).json({ 
+            error: "Upstream API returned invalid response (possibly HTML)",
+            details: text.substring(0, 200)
+        });
+    }
+
     return response.status(fetchResponse.status).json(data);
+
   } catch (error) {
     console.error('API Proxy Error:', error);
     return response.status(500).json({ error: 'Internal Server Error', details: error.message });

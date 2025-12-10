@@ -1,4 +1,3 @@
-
 import http from 'http';
 import url from 'url';
 
@@ -34,10 +33,22 @@ const server = http.createServer(async (req, res) => {
       const fyersResponse = await fetch(`https://api.fyers.in/data-rest/v3/quotes?symbols=${symbols}`, {
         headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' }
       });
-      const data = await fyersResponse.json();
+      
+      const text = await fyersResponse.text();
+      let data;
+      
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch (e) {
+        // Handle upstream sending HTML or garbage
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: "Upstream API returned invalid JSON", details: text.substring(0, 100) }));
+        return;
+      }
       
       res.writeHead(fyersResponse.status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
+
     } catch (err) {
       console.error(err);
       res.writeHead(500, { 'Content-Type': 'application/json' });

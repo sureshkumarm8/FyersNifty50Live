@@ -10,7 +10,7 @@ const App: React.FC = () => {
   // --- State ---
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     const saved = localStorage.getItem('fyers_creds');
-    return saved ? JSON.parse(saved) : { appId: '', accessToken: '', isDemoMode: true };
+    return saved ? JSON.parse(saved) : { appId: '', accessToken: '' };
   });
 
   const [stocks, setStocks] = useState<FyersQuote[]>([]);
@@ -42,7 +42,7 @@ const App: React.FC = () => {
 
   const refreshData = useCallback(async () => {
     // Avoid multiple concurrent fetches
-    if (!credentials.isDemoMode && (!credentials.appId || !credentials.accessToken)) {
+    if (!credentials.appId || !credentials.accessToken) {
        if(stocks.length === 0) setError("Please configure API credentials in Settings");
        return;
     }
@@ -123,7 +123,6 @@ const App: React.FC = () => {
             <div>
               <h1 className="text-xl font-bold tracking-tight text-white">Nifty50 Live</h1>
               <div className="flex items-center gap-2 text-xs text-gray-400">
-                 {credentials.isDemoMode && <span className="bg-blue-900/50 text-blue-200 px-1.5 py-0.5 rounded border border-blue-800">DEMO MODE</span>}
                  <span>{stocks.length} Symbols</span>
               </div>
             </div>
@@ -173,12 +172,6 @@ const App: React.FC = () => {
                <span className="text-sm">{error}</span>
             </span>
             <div className="flex items-center gap-3">
-              <button 
-                onClick={() => saveCredentials({...credentials, isDemoMode: true})}
-                className="bg-red-900 hover:bg-red-800 text-white text-xs px-3 py-1.5 rounded transition-colors whitespace-nowrap border border-red-700"
-              >
-                Switch to Demo Mode
-              </button>
               <button onClick={() => setIsSettingsOpen(true)} className="text-sm underline hover:text-white whitespace-nowrap">
                 Check Settings
               </button>
