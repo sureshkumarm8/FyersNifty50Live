@@ -1,6 +1,6 @@
 import http from 'http';
 
-const PORT = 5000;
+const PORT = 5001; // Changed to 5001 to avoid EADDRINUSE on 5000
 
 // Zero-dependency local proxy server using native Node.js modules
 const server = http.createServer(async (req, res) => {
