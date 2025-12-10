@@ -135,9 +135,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
   const momentumNet = stats.weightedBuyMomemtum - stats.weightedSellMomentum;
   
   // Table Metrics
-  const weightedLp1m = stats.totalWeight > 0 ? stats.weighted_lp_1m / stats.totalWeight : 0;
   const weightedLpDay = stats.totalWeight > 0 ? stats.weighted_lp_day / stats.totalWeight : 0;
-  const totalNet1mP = ((stats.bid_qty_chg_1m_abs / (stats.total_buy_qty || 1)) * 100) - ((stats.ask_qty_chg_1m_abs / (stats.total_sell_qty || 1)) * 100);
 
   // --- NIFTYOPS PREDICTION FORMULA ---
   // 1. Trend Score (30%): Based on Weighted Breadth
@@ -236,23 +234,60 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                <table className="w-full text-sm">
                    <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
                        <tr>
-                           <th className="px-4 py-2 text-right">W. Avg LTP (1m%)</th>
-                           <th className="px-4 py-2 text-right">W. Avg LTP (Day%)</th>
-                           <th className="px-4 py-2 text-right text-bull-light">Total Bid Qty</th>
-                           <th className="px-4 py-2 text-right text-bear-light">Total Ask Qty</th>
-                           <th className="px-4 py-2 text-right">Net Qty Change (1m)</th>
-                           <th className="px-4 py-2 text-right">Net Money Flow</th>
+                           <th className="px-4 py-2 text-left">Segment</th>
+                           <th className="px-4 py-2 text-right text-bull-light">Total Buy Qty</th>
+                           <th className="px-4 py-2 text-right text-bear-light">Total Sell Qty</th>
+                           <th className="px-4 py-2 text-right">Net Qty</th>
+                           <th className="px-4 py-2 text-right">Sentiment / Flow</th>
+                           <th className="px-4 py-2 text-right">Key Metric</th>
                        </tr>
                    </thead>
                    <tbody className="divide-y divide-white/5">
+                       {/* Stocks Row */}
                        <tr className="hover:bg-white/5 transition-colors">
-                           <td className="px-4 py-3 text-right">{formatPercent(weightedLp1m)}</td>
-                           <td className="px-4 py-3 text-right">{formatPercent(weightedLpDay)}</td>
-                           <td className="px-4 py-3 text-right font-mono font-bold text-slate-200">{stats.total_buy_qty.toLocaleString()}</td>
-                           <td className="px-4 py-3 text-right font-mono font-bold text-slate-200">{stats.total_sell_qty.toLocaleString()}</td>
-                           <td className="px-4 py-3 text-right font-mono font-bold">{formatPercent(totalNet1mP)}</td>
-                           <td className={`px-4 py-3 text-right font-mono font-bold ${momentumNet > 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}`}>
-                               {formatValue(momentumNet)}
+                           <td className="px-4 py-3 font-bold text-slate-300">NIFTY50 Equity</td>
+                           <td className="px-4 py-3 text-right font-mono text-slate-300">{formatValue(stats.total_buy_qty)}</td>
+                           <td className="px-4 py-3 text-right font-mono text-slate-300">{formatValue(stats.total_sell_qty)}</td>
+                           <td className={`px-4 py-3 text-right font-mono font-bold ${stats.total_buy_qty - stats.total_sell_qty > 0 ? 'text-bull' : 'text-bear'}`}>
+                               {formatValue(stats.total_buy_qty - stats.total_sell_qty)}
+                           </td>
+                           <td className={`px-4 py-3 text-right font-mono font-bold ${momentumNet > 0 ? 'text-bull' : 'text-bear'}`}>
+                               {formatValue(momentumNet)} <span className="text-[9px] text-slate-500">Flow</span>
+                           </td>
+                           <td className="px-4 py-3 text-right font-mono text-xs">
+                              LTP Day%: {formatPercent(weightedLpDay)}
+                           </td>
+                       </tr>
+                       
+                       {/* Calls Row */}
+                       <tr className="hover:bg-white/5 transition-colors">
+                           <td className="px-4 py-3 font-bold text-slate-300">NIFTY Options (CE)</td>
+                           <td className="px-4 py-3 text-right font-mono text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsBuyQty) : '--'}</td>
+                           <td className="px-4 py-3 text-right font-mono text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsSellQty) : '--'}</td>
+                           <td className={`px-4 py-3 text-right font-mono font-bold ${latestSnapshot && (latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
+                               {latestSnapshot ? formatValue(latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) : '--'}
+                           </td>
+                           <td className={`px-4 py-3 text-right font-mono font-bold ${latestSnapshot && latestSnapshot.callSent > 0 ? 'text-bull' : 'text-bear'}`}>
+                               {latestSnapshot ? formatPercent(latestSnapshot.callSent) : '--'}
+                           </td>
+                            <td className="px-4 py-3 text-right font-mono text-xs text-slate-500">
+                              Open Interest
+                           </td>
+                       </tr>
+
+                       {/* Puts Row */}
+                        <tr className="hover:bg-white/5 transition-colors">
+                           <td className="px-4 py-3 font-bold text-slate-300">NIFTY Options (PE)</td>
+                           <td className="px-4 py-3 text-right font-mono text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsBuyQty) : '--'}</td>
+                           <td className="px-4 py-3 text-right font-mono text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsSellQty) : '--'}</td>
+                           <td className={`px-4 py-3 text-right font-mono font-bold ${latestSnapshot && (latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
+                               {latestSnapshot ? formatValue(latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) : '--'}
+                           </td>
+                           <td className={`px-4 py-3 text-right font-mono font-bold ${latestSnapshot && latestSnapshot.putSent > 0 ? 'text-bull' : 'text-bear'}`}>
+                                {latestSnapshot ? formatPercent(latestSnapshot.putSent) : '--'}
+                           </td>
+                            <td className="px-4 py-3 text-right font-mono text-xs">
+                              PCR: <span className="text-white font-bold">{latestSnapshot ? latestSnapshot.pcr.toFixed(2) : '--'}</span>
                            </td>
                        </tr>
                    </tbody>
