@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
@@ -19,6 +20,7 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [marketStatusMsg, setMarketStatusMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number>(0);
 
@@ -40,6 +42,7 @@ const App: React.FC = () => {
     setCredentials(newCreds);
     localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
     setError(null);
+    setMarketStatusMsg(null); // Reset status on cred change
   };
 
   const handleSort = (field: SortField) => {
@@ -190,11 +193,43 @@ const App: React.FC = () => {
       });
   };
 
+  const isMarketOpen = () => {
+     const now = new Date();
+     const hours = now.getHours();
+     const minutes = now.getMinutes();
+     const day = now.getDay(); // 0=Sun, 6=Sat
+
+     // Weekend check
+     if (day === 0 || day === 6) return false;
+
+     // Time check: 09:17 to 15:15
+     const totalMinutes = (hours * 60) + minutes;
+     const startMinutes = (9 * 60) + 17; // 9:17 AM
+     const endMinutes = (15 * 60) + 15;  // 3:15 PM
+
+     return totalMinutes >= startMinutes && totalMinutes <= endMinutes;
+  };
+
   const refreshData = useCallback(async () => {
     if (!credentials.appId || !credentials.accessToken) {
        if(stocks.length === 0) setError("Please configure API credentials");
        return;
     }
+
+    // Market Timing Logic
+    const open = isMarketOpen();
+    const bypass = credentials.bypassMarketHours;
+    
+    if (!open && !bypass) {
+       setMarketStatusMsg("Market Closed (09:17 - 15:15)");
+       if (stocks.length === 0 && !error) {
+           setError("Market is closed. Enable 'Test Mode' in settings to fetch data anyway.");
+       }
+       return; 
+    } else {
+       setMarketStatusMsg(null);
+    }
+
     try {
       if (stocks.length === 0) setIsLoading(true);
       const rawStocks = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
@@ -295,11 +330,19 @@ const App: React.FC = () => {
             <div className="text-right hidden md:block">
                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Latency</p>
                  <div className="flex items-center justify-end gap-2">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                    </span>
-                    <p className="text-xs font-mono text-slate-300">{lastUpdated ? 'Live' : 'Connecting...'}</p>
+                    {marketStatusMsg ? (
+                       <span className="flex items-center gap-1 text-xs font-mono text-yellow-400">
+                          <Moon size={10} /> Market Closed
+                       </span>
+                    ) : (
+                       <>
+                         <span className="relative flex h-2 w-2">
+                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                           <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                         </span>
+                         <p className="text-xs font-mono text-slate-300">{lastUpdated ? 'Live' : 'Connecting...'}</p>
+                       </>
+                    )}
                  </div>
             </div>
             <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"><Settings size={20} /></button>

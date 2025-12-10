@@ -1,6 +1,8 @@
+
 export interface FyersCredentials {
   appId: string;
   accessToken: string;
+  bypassMarketHours?: boolean; // New flag for testing
 }
 
 // Fyers V3 Quote Response Interface (Internal UI Model)

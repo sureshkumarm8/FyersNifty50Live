@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { FyersCredentials } from '../types';
-import { X, Save, AlertTriangle, ShieldCheck, Upload, Download, FileJson, Trash2 } from 'lucide-react';
+import { X, Save, AlertTriangle, ShieldCheck, Upload, Download, FileJson, Trash2, ToggleLeft, ToggleRight, Clock } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -17,17 +18,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [appId, setAppId] = useState(currentCreds.appId);
   const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
+  const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setAppId(currentCreds.appId);
       setAccessToken(currentCreds.accessToken);
+      setBypassMarketHours(currentCreds.bypassMarketHours || false);
     }
   }, [isOpen, currentCreds]);
 
   const handleSave = () => {
-    onSave({ appId, accessToken });
+    onSave({ appId, accessToken, bypassMarketHours });
     onClose();
   };
 
@@ -41,7 +44,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleDownloadTemplate = () => {
     const template = {
       appId: "XV1234567-100",
-      accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE"
+      accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE",
+      bypassMarketHours: false
     };
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(template, null, 2));
     const downloadAnchorNode = document.createElement('a');
@@ -69,6 +73,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         if (json.accessToken) {
           setAccessToken(json.accessToken);
           loaded = true;
+        }
+        if (json.bypassMarketHours !== undefined) {
+            setBypassMarketHours(json.bypassMarketHours);
         }
 
         if (!loaded) {
@@ -169,6 +176,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 rows={4}
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-gray-600 font-mono text-xs resize-none"
               />
+            </div>
+
+            {/* Market Hours Bypass Toggle */}
+            <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg border border-white/5">
+                <div className="flex items-center gap-3">
+                   <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400">
+                      <Clock size={18} />
+                   </div>
+                   <div>
+                      <p className="text-sm font-medium text-slate-200">Test Mode (Bypass Timing)</p>
+                      <p className="text-xs text-slate-500">Fetch data outside market hours (09:17 - 15:15)</p>
+                   </div>
+                </div>
+                <button 
+                  onClick={() => setBypassMarketHours(!bypassMarketHours)}
+                  className={`transition-colors duration-200 focus:outline-none ${bypassMarketHours ? 'text-green-400' : 'text-slate-600'}`}
+                >
+                    {bypassMarketHours ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
+                </button>
             </div>
 
              <div className="bg-yellow-900/20 border border-yellow-800/50 p-3 rounded text-xs text-yellow-200 flex gap-2 items-start">
