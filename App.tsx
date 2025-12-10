@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart } from 'lucide-react';
 import { StockTable } from './components/StockTable';
@@ -7,7 +8,7 @@ import { CumulativeView } from './components/CumulativeView';
 import { SettingsModal } from './components/SettingsModal';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote } from './types';
 import { fetchQuotes } from './services/fyersService';
-import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS } from './constants';
+import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS, NIFTY_WEIGHTAGE } from './constants';
 
 type ViewMode = 'dashboard' | 'options' | 'cumulative';
 
@@ -126,6 +127,11 @@ const App: React.FC = () => {
             }
         }
         
+        // 3. Inject Weight & Calculate Contribution
+        const symbolKey = curr.short_name || curr.symbol.replace('NSE:', '').replace('-EQ', '');
+        const weight = NIFTY_WEIGHTAGE[symbolKey] || 0.1; // Default low weight if unknown
+        const index_contribution = curr.chp * weight; // Simple weighted score
+
         // Update Ref for next time
         prevStocksRef.current[curr.symbol] = curr;
 
@@ -141,7 +147,10 @@ const App: React.FC = () => {
           initial_total_sell_qty: initial?.total_sell_qty,
           bid_chg_day_p,
           ask_chg_day_p,
-          day_net_strength
+          day_net_strength,
+          
+          weight,
+          index_contribution
         };
       });
 

@@ -138,4 +138,8 @@ export interface EnrichedFyersQuote extends FyersQuote {
   bid_chg_day_p?: number;     // % Change vs First Entry
   ask_chg_day_p?: number;     // % Change vs First Entry
   day_net_strength?: number;  // (Bid Day % - Ask Day %)
+  
+  // Market Impact Logic
+  weight?: number;            // Nifty 50 Weightage (%)
+  index_contribution?: number; // (Change% * Weight) - Rough impact score
 }
