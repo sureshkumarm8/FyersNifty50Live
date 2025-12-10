@@ -26,12 +26,9 @@ export default async function handler(request, response) {
 
   try {
     // CRITICAL FIX: Re-encode the symbols because request.query has decoded them.
-    // The depth API usually expects 'symbol' parameter, but supports comma separated values for multiple.
     const encodedSymbols = encodeURIComponent(symbols);
     
     // UPDATED: Use api-t1.fyers.in/data/depth
-    // Added ohlcv_flag=1 to get full OHLCV data + Depth
-    // Parameter name is 'symbol' for depth endpoint
     const fyersUrl = `https://api-t1.fyers.in/data/depth?symbol=${encodedSymbols}&ohlcv_flag=1`;
     
     // Use native fetch
@@ -54,18 +51,19 @@ export default async function handler(request, response) {
     try {
         data = text ? JSON.parse(text) : {};
     } catch (e) {
-        console.error('Upstream API returned non-JSON:', text.substring(0, 100));
+        // Log simplified error
+        console.error('Upstream API returned non-JSON response.');
         return response.status(502).json({ 
             error: "Upstream API returned invalid response (possibly HTML)",
             upstreamStatus: fetchResponse.status,
-            details: text.substring(0, 300) // Return snippet of HTML for debugging
+            details: "Invalid JSON response from upstream" 
         });
     }
 
     return response.status(fetchResponse.status).json(data);
 
   } catch (error) {
-    console.error('API Proxy Error:', error);
+    console.error('API Proxy Error');
     return response.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
 }

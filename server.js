@@ -1,4 +1,5 @@
 import http from 'http';
+import { URL } from 'url';
 
 const PORT = 5001; 
 
@@ -39,7 +40,8 @@ const server = http.createServer(async (req, res) => {
       // Using Depth Endpoint
       const fyersUrl = `https://api-t1.fyers.in/data/depth?symbol=${encodedSymbols}&ohlcv_flag=1`;
       
-      console.log(`[Proxy] Depth Request: ${symbols.substring(0, 30)}...`);
+      // Log generic info without tokens
+      console.log(`[Proxy] Depth Request for: ${symbols.substring(0, 50)}...`);
 
       const fyersResponse = await fetch(fyersUrl, {
         method: 'GET',
@@ -53,15 +55,15 @@ const server = http.createServer(async (req, res) => {
       });
       
       const text = await fyersResponse.text();
-      console.log(`[Proxy] Status: ${fyersResponse.status}`);
-      // Only log first 200 chars to avoid clutter
-      // console.log(`[Proxy] Body: ${text.substring(0, 200)}`);
+      // Only log status code, no body content that might contain sensitive data
+      console.log(`[Proxy] Upstream Status: ${fyersResponse.status}`);
 
       let data = text ? JSON.parse(text) : {};
       
       res.writeHead(fyersResponse.status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {
+      console.error("[Proxy] Error:", err.message);
       res.writeHead(500);
       res.end(JSON.stringify({ error: err.message }));
     }
@@ -101,6 +103,7 @@ const server = http.createServer(async (req, res) => {
        res.writeHead(fyersResponse.status, { 'Content-Type': 'application/json' });
        res.end(JSON.stringify(data));
      } catch(err) {
+        console.error("[Proxy] History Error:", err.message);
         res.writeHead(500);
         res.end(JSON.stringify({ error: err.message }));
      }

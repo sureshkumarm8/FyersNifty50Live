@@ -120,14 +120,15 @@ const fetchSymbolsInternal = async (
     }
     data = JSON.parse(text);
   } catch (parseError) {
-    console.error("JSON Parse Error:", parseError, "Response:", text.substring(0, 100));
+    // Log generic error without sensitive data
+    console.error("JSON Parse Error. API response might be HTML/Invalid.");
     if (text.includes("<!DOCTYPE") || text.includes("<html")) {
       if(text.includes("503 Service Temporarily Unavailable")) {
          throw new Error("Service Unavailable (503): Fyers API is temporarily down.");
       }
       throw new Error(`Server returned HTML instead of JSON. API might be down or blocked.`);
     }
-    throw new Error(`Invalid JSON response: ${text.substring(0, 30)}...`);
+    throw new Error(`Invalid JSON response`);
   }
 
   return processResponse(data);
@@ -190,9 +191,30 @@ export const fetchStockHistory = async (
    return data.candles || [];
 };
 
+// Known NSE Holidays (YYYY-MM-DD)
+// Used to shift expiry if the calculated Tuesday is a holiday
+const NSE_HOLIDAYS = [
+    "2024-10-02", // Gandhi Jayanti
+    "2024-11-01", // Diwali
+    "2024-11-15", // Guru Nanak Jayanti
+    "2024-12-25", // Christmas
+    "2025-01-26", // Republic Day
+    "2025-02-26", // Mahashivratri
+    "2025-03-14", // Holi
+    "2025-03-31", // Id-Ul-Fitr (Tentative)
+    "2025-04-14", // Ambedkar Jayanti
+    "2025-04-18", // Good Friday
+    "2025-05-01", // Maharashtra Day
+];
+
+const formatDateStr = (date: Date) => {
+    return date.toISOString().split('T')[0];
+};
+
 /**
  * Generates Nifty Option Symbols (10 Up, 10 Down) based on underlying LTP.
  * Handles "Upcoming Weekly" logic targeting TUESDAY expiry.
+ * Checks for Holidays and Monthly Expiry.
  */
 export const getNiftyOptionSymbols = (ltp: number): string[] => {
   const symbols: string[] = [];
@@ -200,22 +222,37 @@ export const getNiftyOptionSymbols = (ltp: number): string[] => {
   
   // 1. Calculate Nearest Tuesday (Upcoming Expiry)
   const expiry = new Date(now);
-  // Calculate days to add to get to Tuesday (Day 2)
   // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
-  // If today is Tuesday (2), daysToAdd is 0.
-  // If today is Wednesday (3), daysToAdd is 6 (next Tuesday).
+  // If we assume expiry is ALWAYS Tuesday (Day 2)
   let daysToAdd = (2 - expiry.getDay() + 7) % 7;
   
-  // Set expiry date
+  // If today is Tuesday (daysToAdd=0), check if market hours are over (e.g., > 3:30 PM)
+  // If trade is over, move to NEXT Tuesday
+  if (daysToAdd === 0) {
+      const currentHour = now.getHours();
+      const currentMin = now.getMinutes();
+      if (currentHour > 15 || (currentHour === 15 && currentMin >= 30)) {
+          daysToAdd = 7;
+      }
+  }
+
   expiry.setDate(expiry.getDate() + daysToAdd);
 
-  // 2. Check if this Tuesday is a Monthly Expiry (Last Tuesday of the month)
-  // Logic: If adding 7 days pushes us to next month, then this is the last Tuesday.
+  // 2. Holiday Handling
+  // If expiry falls on a holiday, move to previous trading day
+  while (NSE_HOLIDAYS.includes(formatDateStr(expiry))) {
+      expiry.setDate(expiry.getDate() - 1);
+  }
+
+  // 3. Check for Monthly Expiry (Last Tuesday of the Month)
+  // Logic: If adding 7 days pushes us to the next month, then this is the last Tuesday.
+  // Note: We check the original 'Tuesday' logic for monthly calculation, even if holiday shifted it slightly.
+  // Ideally, monthly expiry dates are fixed, but symbols follow the date.
   const checkNextWeek = new Date(expiry);
   checkNextWeek.setDate(expiry.getDate() + 7);
   const isMonthly = checkNextWeek.getMonth() !== expiry.getMonth();
 
-  // 3. Construct Symbol Prefix
+  // 4. Construct Symbol Prefix
   // Monthly Format: NSE:NIFTY{YY}{MMM}{Strike}{Opt_Type}  (e.g., NIFTY24OCT...)
   // Weekly Format:  NSE:NIFTY{YY}{M}{dd}{Strike}{Opt_Type} (e.g., NIFTY24O10...)
 
@@ -239,7 +276,7 @@ export const getNiftyOptionSymbols = (ltp: number): string[] => {
       symbolBase = `NSE:NIFTY${yy}${m}${dd}`;
   }
 
-  // 4. Generate Strikes (10 Above, 10 Below)
+  // 5. Generate Strikes (10 Above, 10 Below)
   // Round LTP to nearest 50
   const atm = Math.round(ltp / 50) * 50;
 

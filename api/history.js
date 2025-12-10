@@ -48,14 +48,14 @@ export default async function handler(request, response) {
         return response.status(502).json({ 
             error: "Upstream API returned invalid response",
             upstreamStatus: fetchResponse.status,
-            details: text.substring(0, 300)
+            details: "Invalid JSON from Upstream"
         });
     }
 
     return response.status(fetchResponse.status).json(data);
 
   } catch (error) {
-    console.error('API Proxy Error:', error);
+    console.error('API Proxy Error');
     return response.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
 }
