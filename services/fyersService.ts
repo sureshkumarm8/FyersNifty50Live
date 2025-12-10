@@ -2,6 +2,17 @@ import { FyersQuote, FyersQuoteResponse, FyersCredentials } from '../types';
 
 const BASE_URL = 'https://api.fyers.in/data-rest/v3/quotes';
 
+// List of CORS proxies to try in sequence if direct connection fails
+// These are necessary for browser-only apps to bypass CORS restrictions
+const PROXIES = [
+  // Primary: CORS Proxy IO (Fast, usually reliable)
+  (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  // Backup 1: ThingProxy
+  (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`,
+  // Backup 2: CodeTabs (Good reliability)
+  (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
+];
+
 // Helper to perform the actual fetch request
 const performRequest = async (url: string, credentials: FyersCredentials) => {
   const response = await fetch(url, {
@@ -18,13 +29,27 @@ const performRequest = async (url: string, credentials: FyersCredentials) => {
     throw new Error(`API Error: ${response.status} ${response.statusText}`);
   }
 
-  const data: FyersQuoteResponse = await response.json();
-  
-  if (data.s !== 'ok') {
-     throw new Error(data.message || "Failed to fetch data");
+  // Some proxies return the data directly, others might wrap it. 
+  // Fyers API returns JSON, so we expect valid JSON.
+  try {
+    const data: FyersQuoteResponse = await response.json();
+    if (data.s !== 'ok') {
+       // Fyers internal error structure
+       throw new Error(data.message || "Failed to fetch data from API");
+    }
+    return data;
+  } catch (e: any) {
+    // If JSON parsing fails, it's likely the proxy returned an HTML error page
+    throw new Error("Invalid response format (Proxy might be down)");
   }
-  
-  return data;
+};
+
+// Helper to extract quotes from response
+const processResponse = (data: FyersQuoteResponse): FyersQuote[] => {
+  if (data && Array.isArray(data.d)) {
+    return data.d.map(item => item.v).filter(Boolean);
+  }
+  return [];
 };
 
 export const fetchQuotes = async (
@@ -39,44 +64,44 @@ export const fetchQuotes = async (
     throw new Error("Missing Credentials");
   }
 
-  // Fyers API V3 Expects comma separated symbols
   const symbolsParam = symbols.join(',');
   const directUrl = `${BASE_URL}?symbols=${symbolsParam}`;
 
-  let data: FyersQuoteResponse;
+  let lastError: Error | null = null;
 
+  // 1. Attempt Direct Fetch
+  // Works if the user has a CORS extension or if run in a non-browser env
   try {
-    // Attempt 1: Direct Fetch
-    // This usually works if the user has a CORS extension or if the API allows the origin
-    data = await performRequest(directUrl, credentials);
+    const data = await performRequest(directUrl, credentials);
+    return processResponse(data);
   } catch (error: any) {
-    // Check if it's a network/CORS error
-    if (error.name === 'TypeError' && (error.message === 'Failed to fetch' || error.message.includes('NetworkError'))) {
-       console.warn("Direct fetch failed (likely CORS). Retrying with proxy...");
-       
-       // Attempt 2: CORS Proxy
-       // specific for browser-only environments to bypass CORS
-       const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(directUrl)}`;
-       
-       try {
-         data = await performRequest(proxyUrl, credentials);
-       } catch (proxyError: any) {
-         console.error("Proxy fetch failed:", proxyError);
-         // Throw the original or a combined error to help user debug
-         throw new Error(`Connection failed. If using Real API, ensure 'App ID' and 'Access Token' are valid. (Proxy Error: ${proxyError.message})`);
-       }
-    } else {
-       // If it was a 401/403 or other logic error, rethrow it
-       throw error;
+    // If it's explicitly an auth error, fail immediately. Do not retry via proxies.
+    if (error.message.includes("Unauthorized") || error.message.includes("Forbidden")) {
+      throw error;
+    }
+    console.warn("Direct fetch failed (likely CORS). Attempting proxies...", error.message);
+    lastError = error;
+  }
+
+  // 2. Attempt Proxies in sequence
+  for (const proxyGenerator of PROXIES) {
+    try {
+      const proxyUrl = proxyGenerator(directUrl);
+      const data = await performRequest(proxyUrl, credentials);
+      return processResponse(data);
+    } catch (error: any) {
+      console.warn(`Proxy attempt failed: ${error.message}`);
+      // Don't overwrite an Auth error if we somehow got one, but usually we just track network errors here
+      if (!lastError || (!lastError.message.includes("Unauthorized") && !lastError.message.includes("Forbidden"))) {
+         lastError = error;
+      }
     }
   }
 
-  // Fyers V3 returns data in 'd' array, where each item has a 'v' property containing the quote
-  if (data && Array.isArray(data.d)) {
-    return data.d.map(item => item.v).filter(Boolean);
-  }
-  
-  return [];
+  // If all attempts fail
+  throw new Error(
+    `Connection failed. ${lastError?.message || "Unknown error"}. \nTip: Enable 'Demo Mode' to test the UI, or install a 'Allow CORS' browser extension.`
+  );
 };
 
 // Mock Data Generator for Demo Mode

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FyersCredentials } from '../types';
-import { X, Save, AlertTriangle } from 'lucide-react';
+import { X, Save, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -36,7 +36,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden">
+      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-gray-900/50">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -69,10 +69,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {!isDemoMode && (
             <div className="space-y-4">
-               <div className="bg-yellow-900/20 border border-yellow-800/50 p-3 rounded text-sm text-yellow-200 flex gap-2 items-start">
-                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+               <div className="bg-blue-900/20 border border-blue-800/50 p-3 rounded text-sm text-blue-200 flex gap-2 items-start">
+                  <ShieldCheck size={16} className="mt-0.5 shrink-0 text-blue-400" />
                   <p>
-                    <strong>Connection Info:</strong> The app will try to connect directly. If blocked by browser (CORS), it will automatically retry via a secure proxy.
+                    <strong>Auto-Proxy Enabled:</strong> To bypass browser CORS restrictions, requests are routed through secure public proxies (e.g. corsproxy.io) automatically.
                   </p>
                </div>
 
@@ -85,7 +85,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   value={appId}
                   onChange={(e) => setAppId(e.target.value)}
                   placeholder="e.g., XV1234567-100"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-gray-600"
                 />
               </div>
 
@@ -98,9 +98,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   value={accessToken}
                   onChange={(e) => setAccessToken(e.target.value)}
                   placeholder="Your generated access token"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-gray-600"
                 />
               </div>
+
+               <div className="bg-yellow-900/20 border border-yellow-800/50 p-3 rounded text-xs text-yellow-200 flex gap-2 items-start">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-yellow-500" />
+                  <p>
+                    If connection fails, double check your App ID format (usually ends in -100). If issues persist, try switching to Demo Mode.
+                  </p>
+               </div>
             </div>
           )}
         </div>
