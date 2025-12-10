@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FyersCredentials } from '../types';
-import { X, Save, AlertTriangle, ShieldCheck, Upload, Download, FileJson } from 'lucide-react';
+import { X, Save, AlertTriangle, ShieldCheck, Upload, Download, FileJson, Trash2 } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -29,6 +29,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleSave = () => {
     onSave({ appId, accessToken });
     onClose();
+  };
+
+  const handleReset = () => {
+    if (confirm("⚠️ WARNING: This will permanently delete your API credentials and reset all application data. Are you sure you want to proceed?")) {
+        localStorage.clear();
+        window.location.reload();
+    }
   };
 
   const handleDownloadTemplate = () => {
@@ -80,9 +87,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+      <div className="glass-panel rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-gray-900/50">
+        <div className="flex items-center justify-between p-4 border-b border-white/10 glass-header">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             API Configuration
           </h2>
@@ -95,7 +102,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
           
           <div className="space-y-4">
              {/* Info Box */}
@@ -170,14 +177,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   Ensure your App ID includes the suffix (e.g. -100) and the token is valid for the current session (tokens expire daily).
                 </p>
              </div>
+             
+             {/* Danger Zone */}
+             <div className="pt-4 border-t border-white/5 mt-4">
+                 <h3 className="text-red-400 text-xs font-bold uppercase mb-2">Danger Zone</h3>
+                 <button 
+                    onClick={handleReset}
+                    className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-red-900/20 hover:bg-red-900/40 border border-red-900/50 rounded-lg text-sm text-red-300 transition-colors"
+                 >
+                    <Trash2 size={16} />
+                    Reset App Data
+                 </button>
+             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-800 flex justify-end">
+        <div className="p-4 border-t border-white/10 flex justify-end">
           <button
             onClick={handleSave}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-blue-500/20"
           >
             <Save size={18} />
             Save Configuration
