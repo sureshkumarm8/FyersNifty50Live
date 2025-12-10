@@ -34,9 +34,9 @@ export default async function handler(request, response) {
       method: 'GET',
       headers: {
         'Authorization': authHeader,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'application/json',
-        // Mimic Fyers Web Trading Headers to bypass WAF
+        // Standard Browser User-Agent
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*', 
         'Referer': 'https://trade.fyers.in/',
         'Origin': 'https://trade.fyers.in'
       }
@@ -53,7 +53,7 @@ export default async function handler(request, response) {
         return response.status(502).json({ 
             error: "Upstream API returned invalid response (possibly HTML)",
             upstreamStatus: fetchResponse.status,
-            details: text.substring(0, 200) // Return snippet of HTML for debugging
+            details: text.substring(0, 300) // Return snippet of HTML for debugging
         });
     }
 

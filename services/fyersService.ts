@@ -2,7 +2,10 @@ import { FyersQuote, FyersQuoteResponse, FyersCredentials } from '../types';
 
 // Points to the Vercel API route (api/quotes.js) or local proxy
 const PROXY_URL = '/api/quotes'; 
-const BATCH_SIZE = 25; // Split requests to avoid WAF/503 errors
+const BATCH_SIZE = 15; // Reduced batch size to prevent 503/WAF errors
+const BATCH_DELAY_MS = 300; // Delay between batches to respect rate limits
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const processResponse = (data: FyersQuoteResponse): FyersQuote[] => {
   if (!data) return [];
@@ -42,7 +45,8 @@ const fetchBatch = async (
     }
     if (response.status === 401) throw new Error("Unauthorized: Invalid App ID or Access Token");
     if (response.status === 403) throw new Error("Forbidden: Access Denied by Fyers");
-    if (response.status === 503) throw new Error("Service Unavailable (503): Fyers API is overloaded or down.");
+    if (response.status === 503) throw new Error("Service Unavailable (503): Fyers API is overloaded or blocking requests.");
+    if (response.status === 502) throw new Error("Bad Gateway (502): Upstream API rejected the request.");
     if (response.status === 504) throw new Error("Gateway Timeout: Fyers API is slow or unreachable");
     
     // Try to read error body if possible
@@ -100,12 +104,20 @@ export const fetchQuotes = async (
   }
 
   try {
-    // Fetch all batches in parallel
-    const batchPromises = chunks.map(chunk => fetchBatch(chunk, credentials));
-    const results = await Promise.all(batchPromises);
+    const allQuotes: FyersQuote[] = [];
+
+    // Process batches SERIALLY to avoid 503/Rate Limits
+    for (const chunk of chunks) {
+      const chunkQuotes = await fetchBatch(chunk, credentials);
+      allQuotes.push(...chunkQuotes);
+      
+      // Add delay between requests
+      if (chunks.length > 1) {
+        await delay(BATCH_DELAY_MS);
+      }
+    }
     
-    // Flatten results
-    return results.flat();
+    return allQuotes;
 
   } catch (error: any) {
     // Enhance error message for connection failures
