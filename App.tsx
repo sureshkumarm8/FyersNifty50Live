@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
+import { OptionChain } from './components/OptionChain';
 import { SettingsModal } from './components/SettingsModal';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote } from './types';
 import { fetchQuotes } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS } from './constants';
+
+type ViewMode = 'dashboard' | 'options';
 
 const App: React.FC = () => {
   // --- State ---
@@ -13,6 +16,8 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('fyers_creds');
     return saved ? JSON.parse(saved) : { appId: '', accessToken: '' };
   });
+
+  const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
 
   const [stocks, setStocks] = useState<EnrichedFyersQuote[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -46,6 +51,9 @@ const App: React.FC = () => {
   };
 
   const refreshData = useCallback(async () => {
+    // Only refresh stocks if we are in dashboard view
+    if (viewMode !== 'dashboard') return;
+
     if (!credentials.appId || !credentials.accessToken) {
        if(stocks.length === 0) setError("Please configure API credentials in Settings");
        return;
@@ -94,7 +102,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [credentials]); // removed stocks dependency to avoid circular ref logic
+  }, [credentials, viewMode]); 
 
   // --- Effects ---
   useEffect(() => {
@@ -145,20 +153,40 @@ const App: React.FC = () => {
       {/* Navbar */}
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-30 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setSelectedStock(null)}>
-            <div className="p-2 bg-blue-600 rounded-lg shadow-lg shadow-blue-500/20">
-              <Activity size={24} className="text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-white">Nifty50 Live</h1>
-              <div className="flex items-center gap-2 text-xs text-gray-400">
-                 <span>{stocks.length} Symbols</span>
-              </div>
-            </div>
+          
+          <div className="flex items-center gap-6">
+             <div className="flex items-center gap-3 cursor-pointer" onClick={() => setSelectedStock(null)}>
+               <div className="p-2 bg-blue-600 rounded-lg shadow-lg shadow-blue-500/20">
+                 <Activity size={24} className="text-white" />
+               </div>
+               <div>
+                 <h1 className="text-xl font-bold tracking-tight text-white">Nifty50 Live</h1>
+               </div>
+             </div>
+
+             {/* Navigation Tabs */}
+             {!selectedStock && (
+                <div className="hidden sm:flex bg-gray-800/50 p-1 rounded-lg border border-gray-700/50">
+                   <button 
+                      onClick={() => setViewMode('dashboard')}
+                      className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                   >
+                      <List size={16} />
+                      Stocks
+                   </button>
+                   <button 
+                      onClick={() => setViewMode('options')}
+                      className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'options' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                   >
+                      <BarChart3 size={16} />
+                      Options
+                   </button>
+                </div>
+             )}
           </div>
 
           <div className="flex items-center gap-4">
-             {!selectedStock && (
+             {!selectedStock && viewMode === 'dashboard' && (
                <div className="hidden md:flex items-center bg-gray-800 rounded-full px-4 py-1.5 border border-gray-700 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
                   <Search size={16} className="text-gray-500 mr-2" />
                   <input 
@@ -171,12 +199,14 @@ const App: React.FC = () => {
                </div>
              )}
 
-            <div className="text-right hidden sm:block">
-              <p className="text-xs text-gray-500">Last Updated</p>
-              <p className="text-sm font-mono text-gray-300">
-                {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : '--:--:--'}
-              </p>
-            </div>
+            {viewMode === 'dashboard' && (
+               <div className="text-right hidden sm:block">
+                 <p className="text-xs text-gray-500">Last Updated</p>
+                 <p className="text-sm font-mono text-gray-300">
+                   {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : '--:--:--'}
+                 </p>
+               </div>
+            )}
 
             <div className="h-8 w-[1px] bg-gray-800 mx-2"></div>
 
@@ -204,16 +234,24 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* View Switcher */}
+        {/* --- VIEW ROUTER --- */}
+        
+        {/* 1. STOCK DETAIL VIEW */}
         {selectedStock ? (
            <StockDetail 
               symbol={selectedStock} 
               credentials={credentials} 
               onBack={() => setSelectedStock(null)} 
            />
+        ) : viewMode === 'options' ? (
+           
+           /* 2. OPTION CHAIN VIEW */
+           <OptionChain credentials={credentials} />
+           
         ) : (
+           
+           /* 3. DASHBOARD VIEW (Original) */
            <>
-             {/* Dashboard Stats */}
              {stocks.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                    <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
@@ -272,7 +310,6 @@ const App: React.FC = () => {
                 </div>
              )}
 
-             {/* Data Table */}
              <StockTable 
                 data={filteredAndSortedStocks} 
                 sortConfig={sortConfig} 

@@ -25,6 +25,7 @@ export interface FyersQuote {
   volume: number;
   total_buy_qty?: number; // Total Bid Quantity
   total_sell_qty?: number; // Total Ask Quantity
+  oi?: number; // Open Interest
 }
 
 // Depth API Specific Types
@@ -102,7 +103,8 @@ export type SortField =
   | 'volume' 
   | 'total_buy_qty'
   | 'total_sell_qty'
-  | 'tt';
+  | 'tt'
+  | 'oi';
 
 export type SortDirection = 'asc' | 'desc';
 

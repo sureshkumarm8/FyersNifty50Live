@@ -42,7 +42,10 @@ const processResponse = (data: FyersDepthResponse): FyersQuote[] => {
         ask: info.ask && info.ask.length > 0 ? info.ask[0].price : 0,
         spread: (info.ask && info.ask.length > 0 && info.bids && info.bids.length > 0) 
                  ? info.ask[0].price - info.bids[0].price 
-                 : 0
+                 : 0,
+        
+        // Option Data
+        oi: info.oi
       };
     });
   }
@@ -185,4 +188,66 @@ export const fetchStockHistory = async (
    if (data.s !== 'ok') throw new Error(data.message || "History API error");
    
    return data.candles || [];
+};
+
+/**
+ * Generates Nifty Option Symbols (10 Up, 10 Down) based on underlying LTP.
+ * Handles "Upcoming Weekly" logic targeting TUESDAY expiry.
+ */
+export const getNiftyOptionSymbols = (ltp: number): string[] => {
+  const symbols: string[] = [];
+  const now = new Date();
+  
+  // 1. Calculate Nearest Tuesday (Upcoming Expiry)
+  const expiry = new Date(now);
+  // Calculate days to add to get to Tuesday (Day 2)
+  // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+  // If today is Tuesday (2), daysToAdd is 0.
+  // If today is Wednesday (3), daysToAdd is 6 (next Tuesday).
+  let daysToAdd = (2 - expiry.getDay() + 7) % 7;
+  
+  // Set expiry date
+  expiry.setDate(expiry.getDate() + daysToAdd);
+
+  // 2. Check if this Tuesday is a Monthly Expiry (Last Tuesday of the month)
+  // Logic: If adding 7 days pushes us to next month, then this is the last Tuesday.
+  const checkNextWeek = new Date(expiry);
+  checkNextWeek.setDate(expiry.getDate() + 7);
+  const isMonthly = checkNextWeek.getMonth() !== expiry.getMonth();
+
+  // 3. Construct Symbol Prefix
+  // Monthly Format: NSE:NIFTY{YY}{MMM}{Strike}{Opt_Type}  (e.g., NIFTY24OCT...)
+  // Weekly Format:  NSE:NIFTY{YY}{M}{dd}{Strike}{Opt_Type} (e.g., NIFTY24O10...)
+
+  const yy = expiry.getFullYear().toString().slice(-2);
+  const monthIdx = expiry.getMonth(); // 0-11
+  const dd = expiry.getDate().toString().padStart(2, '0');
+
+  let symbolBase = "";
+
+  if (isMonthly) {
+      const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+      const mmm = months[monthIdx];
+      symbolBase = `NSE:NIFTY${yy}${mmm}`;
+  } else {
+      // Fyers Weekly Month Codes: 1-9, O, N, D
+      let m = (monthIdx + 1).toString();
+      if (monthIdx === 9) m = 'O'; // October
+      if (monthIdx === 10) m = 'N'; // November
+      if (monthIdx === 11) m = 'D'; // December
+      
+      symbolBase = `NSE:NIFTY${yy}${m}${dd}`;
+  }
+
+  // 4. Generate Strikes (10 Above, 10 Below)
+  // Round LTP to nearest 50
+  const atm = Math.round(ltp / 50) * 50;
+
+  for (let i = -10; i <= 10; i++) {
+      const strike = atm + (i * 50);
+      symbols.push(`${symbolBase}${strike}CE`);
+      symbols.push(`${symbolBase}${strike}PE`);
+  }
+
+  return symbols;
 };
