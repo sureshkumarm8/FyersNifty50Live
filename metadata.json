@@ -1,0 +1,5 @@
+{
+  "name": "Nifty50 Live Dashboard",
+  "description": "Real-time stock tracking dashboard for Nifty50 stocks using Fyers API v3, featuring live quotes, dynamic sorting, and persistent configuration.",
+  "requestFramePermissions": []
+}
