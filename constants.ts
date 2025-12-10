@@ -1,5 +1,5 @@
 export const APP_TITLE = "Nifty50 Live";
-export const REFRESH_INTERVAL_MS = 2000; // 2 seconds for polling (simulate live)
+export const REFRESH_INTERVAL_MS = 60000; // 1 minute
 
 // Top Nifty 50 Symbols mapped to Fyers Symbol Format (Exchange:Symbol-Series)
 export const NIFTY50_SYMBOLS = [

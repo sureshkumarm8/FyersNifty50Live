@@ -4,11 +4,10 @@ export interface FyersCredentials {
 }
 
 // Fyers V3 Quote Response Interface
-// Based on: https://myapi.fyers.in/docsv3#tag/Market-Data/paths/~1DataApi~1quotes/get
 export interface FyersQuote {
   symbol: string;
-  ask: number;
-  bid: number;
+  ask: number; // Ask Price
+  bid: number; // Bid Price
   ch: number; // Change
   chp: number; // Change percentage
   description: string;
@@ -22,8 +21,10 @@ export interface FyersQuote {
   prev_close_price: number;
   short_name: string;
   spread: number;
-  tt: number | string; // Time (can be unix timestamp string or number)
+  tt: number | string; // Time
   volume: number;
+  total_buy_qty?: number; // Total Bid Quantity
+  total_sell_qty?: number; // Total Ask Quantity
 }
 
 // Internal interface for the raw API response structure which nests data in 'v'
@@ -40,17 +41,28 @@ export interface FyersQuoteResponse {
   d: FyersV3QuoteItem[];
 }
 
+export interface FyersHistoryCandle {
+  0: number; // Timestamp (epoch)
+  1: number; // Open
+  2: number; // High
+  3: number; // Low
+  4: number; // Close
+  5: number; // Volume
+}
+
+export interface FyersHistoryResponse {
+  s: string;
+  candles: number[][]; // Array of [time, open, high, low, close, volume]
+  message?: string;
+}
+
 export type SortField = 
   | 'symbol' 
   | 'lp' 
   | 'chp' 
   | 'volume' 
-  | 'high_price' 
-  | 'low_price'
-  | 'open_price'
-  | 'prev_close_price'
-  | 'bid'
-  | 'ask'
+  | 'total_buy_qty'
+  | 'total_sell_qty'
   | 'tt';
 
 export type SortDirection = 'asc' | 'desc';
@@ -58,4 +70,10 @@ export type SortDirection = 'asc' | 'desc';
 export interface SortConfig {
   field: SortField;
   direction: SortDirection;
+}
+
+// Extended Quote for UI with calculated fields
+export interface EnrichedFyersQuote extends FyersQuote {
+  bid_qty_chg_1m?: number;
+  ask_qty_chg_p?: number;
 }

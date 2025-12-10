@@ -1,42 +1,39 @@
 import React from 'react';
-import { FyersQuote, SortConfig, SortField } from '../types';
+import { EnrichedFyersQuote, SortConfig, SortField } from '../types';
 import { ArrowUp, ArrowDown, Minus } from 'lucide-react';
 
 interface StockTableProps {
-  data: FyersQuote[];
+  data: EnrichedFyersQuote[];
   sortConfig: SortConfig;
   onSort: (field: SortField) => void;
+  onSelect: (symbol: string) => void;
   isLoading: boolean;
 }
 
-const formatNumber = (num: number, decimals: number = 2) => {
-  if (typeof num !== 'number') return '--';
+const formatNumber = (num: number | undefined, decimals: number = 2) => {
+  if (num === undefined || num === null) return '--';
   return num.toLocaleString('en-IN', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
 };
 
-const formatVolume = (vol: number) => {
-  if (!vol) return '--';
-  if (vol >= 10000000) return `${(vol / 10000000).toFixed(2)}Cr`;
-  if (vol >= 100000) return `${(vol / 100000).toFixed(2)}L`;
-  return vol.toLocaleString('en-IN');
+const formatQty = (qty: number | undefined) => {
+   if (qty === undefined || qty === null) return '--';
+   return qty.toLocaleString('en-IN');
 };
 
 const formatTime = (timestamp: number | string) => {
   if (!timestamp) return '--:--';
   const ts = Number(timestamp);
   if (isNaN(ts)) return '--:--';
-
-  // Check if timestamp is in seconds (10 digits) or milliseconds (13 digits)
   const date = new Date(ts > 10000000000 ? ts : ts * 1000);
-  return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 };
 
-export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort, isLoading }) => {
+export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort, onSelect, isLoading }) => {
   const getSortIcon = (field: SortField) => {
-    if (sortConfig.field !== field) return <div className="w-4 h-4" />; // Placeholder
+    if (sortConfig.field !== field) return <div className="w-4 h-4" />;
     return sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
@@ -45,13 +42,10 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
     { label: 'LTP', field: 'lp', align: 'right' },
     { label: 'Chg', field: null, align: 'right' },
     { label: 'Chg%', field: 'chp', align: 'right' },
-    { label: 'Bid', field: 'bid', align: 'right' },
-    { label: 'Ask', field: 'ask', align: 'right' },
-    { label: 'Open', field: 'open_price', align: 'right' },
-    { label: 'High', field: 'high_price', align: 'right' },
-    { label: 'Low', field: 'low_price', align: 'right' },
-    { label: 'Prev. Cl', field: 'prev_close_price', align: 'right' },
-    { label: 'Volume', field: 'volume', align: 'right' },
+    { label: 'Total Bid Qty', field: 'total_buy_qty', align: 'right' },
+    { label: 'Bid Chg (1m)', field: null, align: 'right' },
+    { label: 'Total Ask Qty', field: 'total_sell_qty', align: 'right' },
+    { label: 'Ask Chg %', field: null, align: 'right' },
     { label: 'Time', field: 'tt', align: 'right' },
   ];
 
@@ -67,7 +61,6 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
      return (
         <div className="w-full h-64 flex flex-col items-center justify-center text-gray-400 space-y-4 border border-dashed border-gray-700 rounded-lg bg-gray-900/50 mt-4">
            <p className="text-lg">No data available.</p>
-           <p className="text-sm">Check your settings or connection.</p>
         </div>
      )
   }
@@ -95,10 +88,14 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
           {data.map((stock) => {
             const isPositive = stock.ch >= 0;
             const TextColor = isPositive ? 'text-green-500' : 'text-red-500';
-            const BgHover = 'hover:bg-gray-800/50';
+            const BgHover = 'hover:bg-gray-800/50 cursor-pointer';
 
             return (
-              <tr key={stock.symbol} className={`${BgHover} transition-colors`}>
+              <tr 
+                key={stock.symbol} 
+                className={`${BgHover} transition-colors`}
+                onClick={() => onSelect(stock.symbol)}
+              >
                 <td className="px-4 py-3 font-semibold text-white">
                   {stock.short_name || stock.symbol}
                   <span className="block text-xs text-gray-500 font-normal mt-0.5">{stock.exchange}</span>
@@ -109,42 +106,31 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                 </td>
 
                 <td className={`px-4 py-3 text-right font-mono ${TextColor}`}>
-                   <div className="flex items-center justify-end gap-1">
-                      {stock.ch > 0 ? <ArrowUp size={12}/> : stock.ch < 0 ? <ArrowDown size={12}/> : <Minus size={12} />}
-                      {formatNumber(Math.abs(stock.ch))}
-                   </div>
+                   {formatNumber(Math.abs(stock.ch))}
                 </td>
 
                 <td className={`px-4 py-3 text-right font-mono font-medium ${TextColor}`}>
                    {formatNumber(Math.abs(stock.chp))}%
                 </td>
 
-                <td className="px-4 py-3 text-right text-gray-300 font-mono">
-                  {formatNumber(stock.bid)}
+                {/* Total Bid Qty */}
+                <td className="px-4 py-3 text-right text-blue-300 font-mono">
+                  {formatQty(stock.total_buy_qty)}
                 </td>
 
-                <td className="px-4 py-3 text-right text-gray-300 font-mono">
-                  {formatNumber(stock.ask)}
+                {/* Bid Qty Change 1m */}
+                <td className={`px-4 py-3 text-right font-mono ${stock.bid_qty_chg_1m && stock.bid_qty_chg_1m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {stock.bid_qty_chg_1m ? (stock.bid_qty_chg_1m > 0 ? '+' : '') + formatQty(stock.bid_qty_chg_1m) : '-'}
                 </td>
 
-                <td className="px-4 py-3 text-right text-gray-400 font-mono">
-                  {formatNumber(stock.open_price)}
+                {/* Total Ask Qty */}
+                <td className="px-4 py-3 text-right text-red-300 font-mono">
+                  {formatQty(stock.total_sell_qty)}
                 </td>
 
-                <td className="px-4 py-3 text-right text-gray-400 font-mono">
-                  {formatNumber(stock.high_price)}
-                </td>
-
-                <td className="px-4 py-3 text-right text-gray-400 font-mono">
-                  {formatNumber(stock.low_price)}
-                </td>
-
-                <td className="px-4 py-3 text-right text-gray-500 font-mono">
-                  {formatNumber(stock.prev_close_price)}
-                </td>
-
-                <td className="px-4 py-3 text-right text-gray-300 font-mono">
-                  {formatVolume(stock.volume)}
+                {/* Ask Qty % Change */}
+                <td className={`px-4 py-3 text-right font-mono ${stock.ask_qty_chg_p && stock.ask_qty_chg_p >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                   {stock.ask_qty_chg_p ? (stock.ask_qty_chg_p > 0 ? '+' : '') + formatNumber(stock.ask_qty_chg_p) + '%' : '-'}
                 </td>
 
                 <td className="px-4 py-3 text-right text-gray-500 font-mono text-xs">

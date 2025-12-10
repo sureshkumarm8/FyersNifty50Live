@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle } from 'lucide-react';
 import { StockTable } from './components/StockTable';
+import { StockDetail } from './components/StockDetail';
 import { SettingsModal } from './components/SettingsModal';
-import { FyersCredentials, FyersQuote, SortConfig, SortField } from './types';
+import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote } from './types';
 import { fetchQuotes } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS } from './constants';
 
@@ -13,13 +14,18 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : { appId: '', accessToken: '' };
   });
 
-  const [stocks, setStocks] = useState<FyersQuote[]>([]);
+  const [stocks, setStocks] = useState<EnrichedFyersQuote[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedStock, setSelectedStock] = useState<string | null>(null);
   
+  // Store previous data to calculate 1min changes
+  // Key: symbol, Value: Previous Quote
+  const prevStocksRef = useRef<Record<string, FyersQuote>>({});
+
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     field: 'symbol',
     direction: 'asc',
@@ -29,7 +35,6 @@ const App: React.FC = () => {
   const saveCredentials = (newCreds: FyersCredentials) => {
     setCredentials(newCreds);
     localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
-    // Clear error on save to trigger clean refresh
     setError(null);
   };
 
@@ -41,18 +46,46 @@ const App: React.FC = () => {
   };
 
   const refreshData = useCallback(async () => {
-    // Avoid multiple concurrent fetches
     if (!credentials.appId || !credentials.accessToken) {
        if(stocks.length === 0) setError("Please configure API credentials in Settings");
        return;
     }
 
     try {
-      // Don't show loading spinner on background refreshes if we already have data
       if (stocks.length === 0) setIsLoading(true);
       
-      const quotes = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
-      setStocks(quotes);
+      const newQuotes = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
+      
+      // Calculate changes based on previous data
+      const enriched: EnrichedFyersQuote[] = newQuotes.map(curr => {
+        const prev = prevStocksRef.current[curr.symbol];
+        
+        let bid_qty_chg_1m = undefined;
+        let ask_qty_chg_p = undefined;
+
+        if (prev) {
+           // Calc Change in Total Bid Qty
+           if (curr.total_buy_qty !== undefined && prev.total_buy_qty !== undefined) {
+              bid_qty_chg_1m = curr.total_buy_qty - prev.total_buy_qty;
+           }
+
+           // Calc % Change in Total Ask Qty
+           if (curr.total_sell_qty !== undefined && prev.total_sell_qty !== undefined && prev.total_sell_qty !== 0) {
+              ask_qty_chg_p = ((curr.total_sell_qty - prev.total_sell_qty) / prev.total_sell_qty) * 100;
+           }
+        }
+        
+        // Update Ref for next time
+        prevStocksRef.current[curr.symbol] = curr;
+
+        return {
+          ...curr,
+          bid_qty_chg_1m,
+          ask_qty_chg_p
+        };
+      });
+
+      setStocks(enriched);
       setLastUpdated(Date.now());
       setError(null);
     } catch (err: any) {
@@ -61,14 +94,11 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [credentials]);
+  }, [credentials]); // removed stocks dependency to avoid circular ref logic
 
   // --- Effects ---
-  
-  // Initial load and Polling
   useEffect(() => {
     refreshData();
-    
     const intervalId = setInterval(refreshData, REFRESH_INTERVAL_MS);
     return () => clearInterval(intervalId);
   }, [refreshData]);
@@ -77,7 +107,6 @@ const App: React.FC = () => {
   const filteredAndSortedStocks = useMemo(() => {
     let data = [...stocks];
 
-    // Filter
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       data = data.filter(s => 
@@ -86,10 +115,11 @@ const App: React.FC = () => {
       );
     }
 
-    // Sort
     data.sort((a, b) => {
       const aValue = a[sortConfig.field];
       const bValue = b[sortConfig.field];
+
+      if (aValue === undefined || bValue === undefined) return 0;
 
       if (typeof aValue === 'string' && typeof bValue === 'string') {
          return sortConfig.direction === 'asc' 
@@ -115,8 +145,7 @@ const App: React.FC = () => {
       {/* Navbar */}
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-30 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setSelectedStock(null)}>
             <div className="p-2 bg-blue-600 rounded-lg shadow-lg shadow-blue-500/20">
               <Activity size={24} className="text-white" />
             </div>
@@ -129,17 +158,18 @@ const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-4">
-             {/* Search */}
-             <div className="hidden md:flex items-center bg-gray-800 rounded-full px-4 py-1.5 border border-gray-700 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
-                <Search size={16} className="text-gray-500 mr-2" />
-                <input 
-                   type="text" 
-                   placeholder="Search stock..." 
-                   className="bg-transparent border-none outline-none text-sm w-48 placeholder-gray-500 text-white"
-                   value={searchQuery}
-                   onChange={(e) => setSearchQuery(e.target.value)}
-                />
-             </div>
+             {!selectedStock && (
+               <div className="hidden md:flex items-center bg-gray-800 rounded-full px-4 py-1.5 border border-gray-700 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
+                  <Search size={16} className="text-gray-500 mr-2" />
+                  <input 
+                     type="text" 
+                     placeholder="Search..." 
+                     className="bg-transparent border-none outline-none text-sm w-48 placeholder-gray-500 text-white"
+                     value={searchQuery}
+                     onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+               </div>
+             )}
 
             <div className="text-right hidden sm:block">
               <p className="text-xs text-gray-500">Last Updated</p>
@@ -162,112 +192,96 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 overflow-y-auto w-full px-4 sm:px-6 lg:px-8 py-8">
         
         {/* Error Banner */}
         {error && (
-          <div className="mb-6 bg-red-950/40 border border-red-900 text-red-200 px-4 py-3 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="mb-6 bg-red-950/40 border border-red-900 text-red-200 px-4 py-3 rounded-lg flex items-center justify-between gap-4">
             <span className="flex items-center gap-2">
                <AlertCircle size={18} className="text-red-500 shrink-0" />
                <span className="text-sm">{error}</span>
             </span>
-            <div className="flex items-center gap-3">
-              <button onClick={() => setIsSettingsOpen(true)} className="text-sm underline hover:text-white whitespace-nowrap">
-                Check Settings
-              </button>
-            </div>
           </div>
         )}
 
-        {/* Dashboard Stats */}
-        {stocks.length > 0 && (
-           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-              <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                 <p className="text-xs text-gray-500 uppercase font-semibold">Market Trend</p>
-                 <div className="flex items-end gap-2 mt-1">
-                    <span className="text-2xl font-bold text-white">
-                       {stocks.filter(s => s.ch >= 0).length}
-                    </span>
-                    <span className="text-sm text-green-500 mb-1">Advanced</span>
-                    <span className="text-gray-600">/</span>
-                    <span className="text-2xl font-bold text-white">
-                       {stocks.filter(s => s.ch < 0).length}
-                    </span>
-                    <span className="text-sm text-red-500 mb-1">Declined</span>
-                 </div>
-              </div>
-              
-              <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                 <p className="text-xs text-gray-500 uppercase font-semibold">Top Gainer</p>
-                 <div className="mt-1">
-                    {(() => {
-                       const top = [...stocks].sort((a,b) => b.chp - a.chp)[0];
-                       if(!top) return <span className="text-gray-500">--</span>;
-                       return (
-                          <>
-                             <p className="font-bold text-white truncate">{top.short_name || top.symbol}</p>
-                             <p className="text-green-500 font-mono text-sm">+{top.chp.toFixed(2)}%</p>
-                          </>
-                       )
-                    })()}
-                 </div>
-              </div>
+        {/* View Switcher */}
+        {selectedStock ? (
+           <StockDetail 
+              symbol={selectedStock} 
+              credentials={credentials} 
+              onBack={() => setSelectedStock(null)} 
+           />
+        ) : (
+           <>
+             {/* Dashboard Stats */}
+             {stocks.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                   <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+                      <p className="text-xs text-gray-500 uppercase font-semibold">Trend</p>
+                      <div className="flex items-end gap-2 mt-1">
+                         <span className="text-2xl font-bold text-green-500">{stocks.filter(s => s.ch >= 0).length}</span>
+                         <span className="text-gray-600">/</span>
+                         <span className="text-2xl font-bold text-red-500">{stocks.filter(s => s.ch < 0).length}</span>
+                      </div>
+                   </div>
+                   
+                   <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+                      <p className="text-xs text-gray-500 uppercase font-semibold">Top Gainer</p>
+                      <div className="mt-1">
+                         {(() => {
+                            const top = [...stocks].sort((a,b) => b.chp - a.chp)[0];
+                            if(!top) return <span className="text-gray-500">--</span>;
+                            return (
+                               <>
+                                  <p className="font-bold text-white truncate">{top.short_name || top.symbol}</p>
+                                  <p className="text-green-500 font-mono text-sm">+{top.chp.toFixed(2)}%</p>
+                               </>
+                            )
+                         })()}
+                      </div>
+                   </div>
 
-               <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                 <p className="text-xs text-gray-500 uppercase font-semibold">Top Loser</p>
-                 <div className="mt-1">
-                    {(() => {
-                       const bottom = [...stocks].sort((a,b) => a.chp - b.chp)[0];
-                       if(!bottom) return <span className="text-gray-500">--</span>;
-                       return (
-                          <>
-                             <p className="font-bold text-white truncate">{bottom.short_name || bottom.symbol}</p>
-                             <p className="text-red-500 font-mono text-sm">{bottom.chp.toFixed(2)}%</p>
-                          </>
-                       )
-                    })()}
-                 </div>
-              </div>
-              
-               <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between">
-                 <div>
-                    <p className="text-xs text-gray-500 uppercase font-semibold">Status</p>
-                    <p className="text-white mt-1 font-medium flex items-center gap-2">
-                       <span className="relative flex h-3 w-3">
-                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${error ? 'bg-red-400' : 'bg-green-400'}`}></span>
-                          <span className={`relative inline-flex rounded-full h-3 w-3 ${error ? 'bg-red-500' : 'bg-green-500'}`}></span>
-                        </span>
-                        {error ? 'Error' : 'Live'}
-                    </p>
-                 </div>
-                 <button onClick={() => refreshData()} className="p-2 bg-gray-800 hover:bg-gray-700 rounded-full transition-colors">
-                    <RefreshCw size={18} className={`text-gray-400 ${isLoading ? 'animate-spin' : ''}`} />
-                 </button>
-              </div>
-           </div>
+                    <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+                      <p className="text-xs text-gray-500 uppercase font-semibold">Top Loser</p>
+                      <div className="mt-1">
+                         {(() => {
+                            const bottom = [...stocks].sort((a,b) => a.chp - b.chp)[0];
+                            if(!bottom) return <span className="text-gray-500">--</span>;
+                            return (
+                               <>
+                                  <p className="font-bold text-white truncate">{bottom.short_name || bottom.symbol}</p>
+                                  <p className="text-red-500 font-mono text-sm">{bottom.chp.toFixed(2)}%</p>
+                               </>
+                            )
+                         })()}
+                      </div>
+                   </div>
+                   
+                    <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between">
+                      <div>
+                         <p className="text-xs text-gray-500 uppercase font-semibold">Status</p>
+                         <p className="text-white mt-1 font-medium flex items-center gap-2">
+                             <span className={`relative inline-flex rounded-full h-3 w-3 ${error ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                             {error ? 'Error' : 'Live'}
+                         </p>
+                      </div>
+                      <button onClick={() => refreshData()} className="p-2 bg-gray-800 hover:bg-gray-700 rounded-full transition-colors">
+                         <RefreshCw size={18} className={`text-gray-400 ${isLoading ? 'animate-spin' : ''}`} />
+                      </button>
+                   </div>
+                </div>
+             )}
+
+             {/* Data Table */}
+             <StockTable 
+                data={filteredAndSortedStocks} 
+                sortConfig={sortConfig} 
+                onSort={handleSort}
+                onSelect={setSelectedStock}
+                isLoading={isLoading}
+             />
+           </>
         )}
-
-        {/* Search Mobile */}
-        <div className="md:hidden mb-4">
-             <div className="flex items-center bg-gray-900 rounded-lg px-4 py-2 border border-gray-800">
-                <Search size={18} className="text-gray-500 mr-2" />
-                <input 
-                   type="text" 
-                   placeholder="Search stock..." 
-                   className="bg-transparent border-none outline-none text-sm w-full text-white"
-                   value={searchQuery}
-                   onChange={(e) => setSearchQuery(e.target.value)}
-                />
-             </div>
-        </div>
-
-        {/* Data Table */}
-        <StockTable 
-           data={filteredAndSortedStocks} 
-           sortConfig={sortConfig} 
-           onSort={handleSort}
-           isLoading={isLoading}
-        />
         
       </main>
 
