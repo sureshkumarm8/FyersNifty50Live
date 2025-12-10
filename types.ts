@@ -3,11 +3,11 @@ export interface FyersCredentials {
   accessToken: string;
 }
 
-// Fyers V3 Quote Response Interface
+// Fyers V3 Quote Response Interface (Internal UI Model)
 export interface FyersQuote {
   symbol: string;
-  ask: number; // Ask Price
-  bid: number; // Bid Price
+  ask: number; // Best Ask Price
+  bid: number; // Best Bid Price
   ch: number; // Change
   chp: number; // Change percentage
   description: string;
@@ -27,7 +27,46 @@ export interface FyersQuote {
   total_sell_qty?: number; // Total Ask Quantity
 }
 
-// Internal interface for the raw API response structure which nests data in 'v'
+// Depth API Specific Types
+export interface FyersDepthLevel {
+  price: number;
+  volume: number;
+  ord: number;
+}
+
+export interface FyersDepthInfo {
+  totalbuyqty: number;
+  totalsellqty: number;
+  ask: FyersDepthLevel[];
+  bids: FyersDepthLevel[];
+  o: number; // Open
+  h: number; // High
+  l: number; // Low
+  c: number; // Previous Close
+  chp: number; // Change Percent
+  ch: number; // Change
+  ltq: number; // Last Traded Qty
+  ltt: number; // Last Traded Time
+  ltp: number; // Last Traded Price
+  v: number; // Volume
+  atp: number; // Avg Traded Price
+  lower_ckt: number;
+  upper_ckt: number;
+  oi: number;
+  oiflag: boolean;
+  pdoi: number;
+  oipercent: number;
+}
+
+// Response from Data/Depth is a dictionary: { "NSE:SBIN-EQ": { ...data } }
+export interface FyersDepthResponse {
+  s: string; // Status "ok"
+  code?: number;
+  message: string;
+  d: Record<string, FyersDepthInfo>; 
+}
+
+// Legacy Quote Response Types (kept for reference or fallback if needed)
 export interface FyersV3QuoteItem {
   n: string;
   s: string;
@@ -35,10 +74,10 @@ export interface FyersV3QuoteItem {
 }
 
 export interface FyersQuoteResponse {
-  s: string; // Status "ok" or "error"
+  s: string; 
   code: number;
   message: string;
-  d: FyersV3QuoteItem[];
+  d: FyersV3QuoteItem[] | Record<string, FyersDepthInfo>; // Union to support both if needed
 }
 
 export interface FyersHistoryCandle {

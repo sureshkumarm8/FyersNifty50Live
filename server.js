@@ -25,7 +25,7 @@ const server = http.createServer(async (req, res) => {
      return;
   }
 
-  // --- QUOTES ROUTE ---
+  // --- QUOTES ROUTE (Now Proxies to Depth) ---
   if (reqUrl.pathname === '/api/quotes' && req.method === 'GET') {
     const symbols = reqUrl.searchParams.get('symbols');
     if (!symbols) {
@@ -36,9 +36,10 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const encodedSymbols = encodeURIComponent(symbols);
-      const fyersUrl = `https://api-t1.fyers.in/data/quotes?symbols=${encodedSymbols}`;
+      // Using Depth Endpoint
+      const fyersUrl = `https://api-t1.fyers.in/data/depth?symbol=${encodedSymbols}&ohlcv_flag=1`;
       
-      console.log(`[Proxy] Quotes Request: ${symbols.substring(0, 30)}...`);
+      console.log(`[Proxy] Depth Request: ${symbols.substring(0, 30)}...`);
 
       const fyersResponse = await fetch(fyersUrl, {
         method: 'GET',
@@ -52,6 +53,10 @@ const server = http.createServer(async (req, res) => {
       });
       
       const text = await fyersResponse.text();
+      console.log(`[Proxy] Status: ${fyersResponse.status}`);
+      // Only log first 200 chars to avoid clutter
+      // console.log(`[Proxy] Body: ${text.substring(0, 200)}`);
+
       let data = text ? JSON.parse(text) : {};
       
       res.writeHead(fyersResponse.status, { 'Content-Type': 'application/json' });

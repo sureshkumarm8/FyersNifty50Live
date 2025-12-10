@@ -26,9 +26,13 @@ export default async function handler(request, response) {
 
   try {
     // CRITICAL FIX: Re-encode the symbols because request.query has decoded them.
+    // The depth API usually expects 'symbol' parameter, but supports comma separated values for multiple.
     const encodedSymbols = encodeURIComponent(symbols);
-    // UPDATED: Use api-t1.fyers.in/data/quotes as per working curl example
-    const fyersUrl = `https://api-t1.fyers.in/data/quotes?symbols=${encodedSymbols}`;
+    
+    // UPDATED: Use api-t1.fyers.in/data/depth
+    // Added ohlcv_flag=1 to get full OHLCV data + Depth
+    // Parameter name is 'symbol' for depth endpoint
+    const fyersUrl = `https://api-t1.fyers.in/data/depth?symbol=${encodedSymbols}&ohlcv_flag=1`;
     
     // Use native fetch
     const fetchResponse = await fetch(fyersUrl, {
