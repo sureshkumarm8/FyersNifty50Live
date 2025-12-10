@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Settings, RefreshCw, Activity, Search } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { SettingsModal } from './components/SettingsModal';
 import { FyersCredentials, FyersQuote, SortConfig, SortField } from './types';
@@ -29,6 +29,8 @@ const App: React.FC = () => {
   const saveCredentials = (newCreds: FyersCredentials) => {
     setCredentials(newCreds);
     localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
+    // Clear error on save to trigger clean refresh
+    setError(null);
   };
 
   const handleSort = (field: SortField) => {
@@ -41,7 +43,6 @@ const App: React.FC = () => {
   const refreshData = useCallback(async () => {
     // Avoid multiple concurrent fetches
     if (!credentials.isDemoMode && (!credentials.appId || !credentials.accessToken)) {
-       // Only clear if we were showing something else before
        if(stocks.length === 0) setError("Please configure API credentials in Settings");
        return;
     }
@@ -55,11 +56,12 @@ const App: React.FC = () => {
       setLastUpdated(Date.now());
       setError(null);
     } catch (err: any) {
+      console.error(err);
       setError(err.message || "Failed to fetch data");
     } finally {
       setIsLoading(false);
     }
-  }, [credentials]); // Intentionally exclude 'stocks' to prevent dep loop
+  }, [credentials]);
 
   // --- Effects ---
   
@@ -89,14 +91,12 @@ const App: React.FC = () => {
       const aValue = a[sortConfig.field];
       const bValue = b[sortConfig.field];
 
-      // Handle strings (symbol)
       if (typeof aValue === 'string' && typeof bValue === 'string') {
          return sortConfig.direction === 'asc' 
            ? aValue.localeCompare(bValue) 
            : bValue.localeCompare(aValue);
       }
       
-      // Handle numbers
       if (typeof aValue === 'number' && typeof bValue === 'number') {
         return sortConfig.direction === 'asc' 
           ? aValue - bValue 
@@ -167,17 +167,27 @@ const App: React.FC = () => {
         
         {/* Error Banner */}
         {error && (
-          <div className="mb-6 bg-red-900/20 border border-red-800/50 text-red-200 px-4 py-3 rounded-lg flex items-center justify-between">
+          <div className="mb-6 bg-red-950/40 border border-red-900 text-red-200 px-4 py-3 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <span className="flex items-center gap-2">
-               <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse"/> 
-               {error}
+               <AlertCircle size={18} className="text-red-500 shrink-0" />
+               <span className="text-sm">{error}</span>
             </span>
-            <button onClick={() => setIsSettingsOpen(true)} className="text-sm underline hover:text-white">Configure</button>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => saveCredentials({...credentials, isDemoMode: true})}
+                className="bg-red-900 hover:bg-red-800 text-white text-xs px-3 py-1.5 rounded transition-colors whitespace-nowrap border border-red-700"
+              >
+                Switch to Demo Mode
+              </button>
+              <button onClick={() => setIsSettingsOpen(true)} className="text-sm underline hover:text-white whitespace-nowrap">
+                Check Settings
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Dashboard Stats (Optional Summary Row) */}
-        {!error && stocks.length > 0 && (
+        {/* Dashboard Stats */}
+        {stocks.length > 0 && (
            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
                  <p className="text-xs text-gray-500 uppercase font-semibold">Market Trend</p>
@@ -199,7 +209,7 @@ const App: React.FC = () => {
                  <div className="mt-1">
                     {(() => {
                        const top = [...stocks].sort((a,b) => b.chp - a.chp)[0];
-                       if(!top) return null;
+                       if(!top) return <span className="text-gray-500">--</span>;
                        return (
                           <>
                              <p className="font-bold text-white truncate">{top.short_name || top.symbol}</p>
@@ -215,7 +225,7 @@ const App: React.FC = () => {
                  <div className="mt-1">
                     {(() => {
                        const bottom = [...stocks].sort((a,b) => a.chp - b.chp)[0];
-                       if(!bottom) return null;
+                       if(!bottom) return <span className="text-gray-500">--</span>;
                        return (
                           <>
                              <p className="font-bold text-white truncate">{bottom.short_name || bottom.symbol}</p>
@@ -231,14 +241,14 @@ const App: React.FC = () => {
                     <p className="text-xs text-gray-500 uppercase font-semibold">Status</p>
                     <p className="text-white mt-1 font-medium flex items-center gap-2">
                        <span className="relative flex h-3 w-3">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${error ? 'bg-red-400' : 'bg-green-400'}`}></span>
+                          <span className={`relative inline-flex rounded-full h-3 w-3 ${error ? 'bg-red-500' : 'bg-green-500'}`}></span>
                         </span>
-                        Live
+                        {error ? 'Error' : 'Live'}
                     </p>
                  </div>
                  <button onClick={() => refreshData()} className="p-2 bg-gray-800 hover:bg-gray-700 rounded-full transition-colors">
-                    <RefreshCw size={18} className="text-gray-400" />
+                    <RefreshCw size={18} className={`text-gray-400 ${isLoading ? 'animate-spin' : ''}`} />
                  </button>
               </div>
            </div>
