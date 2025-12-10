@@ -29,9 +29,16 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
+      // Pass symbols directly. 
+      const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${symbols}`;
+
       // Native fetch is available in Node 18+
-      const fyersResponse = await fetch(`https://api.fyers.in/data-rest/v3/quotes?symbols=${symbols}`, {
-        headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' }
+      const fyersResponse = await fetch(fyersUrl, {
+        method: 'GET',
+        headers: { 
+          'Authorization': authHeader 
+          // Content-Type removed
+        }
       });
       
       const text = await fyersResponse.text();
@@ -42,7 +49,11 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         // Handle upstream sending HTML or garbage
         res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: "Upstream API returned invalid JSON", details: text.substring(0, 100) }));
+        res.end(JSON.stringify({ 
+          error: "Upstream API returned invalid JSON", 
+          upstreamStatus: fyersResponse.status,
+          details: text.substring(0, 100) 
+        }));
         return;
       }
       

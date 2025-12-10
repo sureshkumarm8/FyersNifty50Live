@@ -25,14 +25,16 @@ export default async function handler(request, response) {
   }
 
   try {
+    // Construct Fyers URL. Note: request.query.symbols is already decoded by Vercel,
+    // but Fyers expects comma-separated list. We put it directly into the URL.
     const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${symbols}`;
     
     // Use native fetch (available in Node 18+ environment on Vercel)
     const fetchResponse = await fetch(fyersUrl, {
       method: 'GET',
       headers: {
-        'Authorization': authHeader,
-        'Content-Type': 'application/json'
+        'Authorization': authHeader
+        // Content-Type removed: Not standard for GET and can trigger WAF blocks
       }
     });
 
@@ -46,7 +48,8 @@ export default async function handler(request, response) {
         console.error('Upstream API returned non-JSON:', text.substring(0, 100));
         return response.status(502).json({ 
             error: "Upstream API returned invalid response (possibly HTML)",
-            details: text.substring(0, 200)
+            upstreamStatus: fetchResponse.status,
+            details: text.substring(0, 200) // Return snippet of HTML for debugging
         });
     }
 

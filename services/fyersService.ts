@@ -23,7 +23,12 @@ export const fetchQuotes = async (
     throw new Error("Missing Credentials");
   }
 
-  const symbolsParam = symbols.join(',');
+  // Sanitize credentials to remove accidental whitespace
+  const appId = credentials.appId.trim();
+  const token = credentials.accessToken.trim();
+
+  // Encode symbols to ensure special characters like ':' are handled correctly
+  const symbolsParam = encodeURIComponent(symbols.join(','));
   const targetUrl = `${PROXY_URL}?symbols=${symbolsParam}`;
 
   // Fetch via Proxy (Vercel API or Local Server)
@@ -31,8 +36,8 @@ export const fetchQuotes = async (
     const response = await fetch(targetUrl, {
       method: 'GET',
       headers: {
-        'Authorization': `${credentials.appId}:${credentials.accessToken}`,
-        // Note: Content-Type is not needed for GET and can trigger CORS issues on some proxies
+        'Authorization': `${appId}:${token}`,
+        // Content-Type is intentionally omitted for GET requests to avoid WAF blocks
       }
     });
 
@@ -50,7 +55,10 @@ export const fetchQuotes = async (
       console.error("JSON Parse Error:", parseError, "Response:", text.substring(0, 100));
       // If response is HTML (common for 404/500 errors), provide a hint
       if (text.includes("<!DOCTYPE") || text.includes("<html")) {
-        throw new Error(`Server returned HTML instead of JSON. Status: ${response.status}`);
+        // Try to extract title from HTML for better error message
+        const titleMatch = text.match(/<title>(.*?)<\/title>/i);
+        const title = titleMatch ? titleMatch[1] : "Unknown Error";
+        throw new Error(`Server returned HTML (${response.status} ${response.statusText}): ${title}`);
       }
       throw new Error(`Invalid JSON response: ${text.substring(0, 30)}...`);
     }
