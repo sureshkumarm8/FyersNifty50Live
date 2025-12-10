@@ -26,7 +26,6 @@ export default async function handler(request, response) {
 
   try {
     // CRITICAL FIX: Re-encode the symbols because request.query has decoded them.
-    // The Fyers API requires symbols to be URL-encoded (e.g., NSE%3ARELIANCE-EQ).
     const encodedSymbols = encodeURIComponent(symbols);
     const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${encodedSymbols}`;
     
@@ -36,7 +35,10 @@ export default async function handler(request, response) {
       headers: {
         'Authorization': authHeader,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        // Mimic Fyers Web Trading Headers to bypass WAF
+        'Referer': 'https://trade.fyers.in/',
+        'Origin': 'https://trade.fyers.in'
       }
     });
 
