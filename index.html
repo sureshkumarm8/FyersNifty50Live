@@ -3,24 +3,146 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
-    <title>Nifty50 Live Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡️</text></svg>">
+    <title>Nifty50 Live Terminal</title>
+    
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            },
+            colors: {
+              bull: '#10b981', // Emerald 500
+              'bull-light': '#34d399',
+              'bull-glow': 'rgba(16, 185, 129, 0.4)',
+              bear: '#ef4444', // Red 500
+              'bear-light': '#f87171',
+              'bear-glow': 'rgba(239, 68, 68, 0.4)',
+              dark: '#020617', // Slate 950
+              glass: 'rgba(15, 23, 42, 0.6)',
+              'glass-border': 'rgba(255, 255, 255, 0.08)',
+            },
+            boxShadow: {
+              'neon-green': '0 0 10px rgba(16, 185, 129, 0.3), 0 0 20px rgba(16, 185, 129, 0.1)',
+              'neon-red': '0 0 10px rgba(239, 68, 68, 0.3), 0 0 20px rgba(239, 68, 68, 0.1)',
+              'glass': '0 4px 30px rgba(0, 0, 0, 0.1)',
+            },
+            animation: {
+              'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'glow-green': 'glowGreen 2s ease-in-out infinite alternate',
+              'glow-red': 'glowRed 2s ease-in-out infinite alternate',
+              'float': 'float 6s ease-in-out infinite',
+              'aurora': 'aurora 20s linear infinite',
+            },
+            keyframes: {
+              glowGreen: {
+                '0%': { boxShadow: '0 0 5px rgba(16, 185, 129, 0.2)' },
+                '100%': { boxShadow: '0 0 15px rgba(16, 185, 129, 0.6)' },
+              },
+              glowRed: {
+                '0%': { boxShadow: '0 0 5px rgba(239, 68, 68, 0.2)' },
+                '100%': { boxShadow: '0 0 15px rgba(239, 68, 68, 0.6)' },
+              },
+              float: {
+                '0%, 100%': { transform: 'translateY(0)' },
+                '50%': { transform: 'translateY(-5px)' },
+              },
+              aurora: {
+                '0%': { backgroundPosition: '0% 50%' },
+                '50%': { backgroundPosition: '100% 50%' },
+                '100%': { backgroundPosition: '0% 50%' },
+              }
+            }
+          }
+        }
+      }
+    </script>
     <style>
-      /* Custom scrollbar for dark theme */
+      body {
+        background-color: #000000;
+        color: #e2e8f0;
+        /* Aurora Borealis Effect */
+        background-image: 
+          radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
+          radial-gradient(at 50% 10%, hsla(225,39%,10%,1) 0, transparent 50%), 
+          radial-gradient(at 100% 0%, hsla(339,49%,10%,1) 0, transparent 50%);
+        background-attachment: fixed;
+        background-size: cover;
+      }
+      
+      .bg-aurora {
+        background: linear-gradient(-45deg, #0f172a, #1e1b4b, #312e81, #0f172a);
+        background-size: 400% 400%;
+        animation: aurora 15s ease infinite;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: -1;
+      }
+
+      /* Glassmorphism Utilities */
+      .glass-panel {
+        background: rgba(15, 23, 42, 0.4);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+      }
+      
+      .glass-card {
+        background: rgba(30, 41, 59, 0.3);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      }
+      
+      .glass-header {
+        background: rgba(2, 6, 23, 0.7);
+        backdrop-filter: blur(20px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      /* Text Glow Utilities */
+      .text-glow-green {
+        text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+      }
+      .text-glow-red {
+        text-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+      }
+      .text-glow-blue {
+        text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+      }
+
+      /* Custom scrollbar */
       ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
+        width: 6px;
+        height: 6px;
       }
       ::-webkit-scrollbar-track {
-        background: #111827; 
+        background: transparent; 
       }
       ::-webkit-scrollbar-thumb {
-        background: #374151; 
-        border-radius: 4px;
+        background: rgba(148, 163, 184, 0.2); 
+        border-radius: 10px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #4b5563; 
+        background: rgba(148, 163, 184, 0.4); 
+      }
+      
+      /* Gauge Animation */
+      .gauge-arc {
+        transition: stroke-dasharray 1s ease-out;
       }
     </style>
   <script type="importmap">
@@ -38,8 +160,9 @@
 }
 </script>
 </head>
-  <body class="bg-gray-950 text-gray-100 antialiased font-sans h-full overflow-hidden">
-    <div id="root" class="h-full"></div>
+  <body class="h-full overflow-hidden antialiased selection:bg-blue-500/30">
+    <div class="bg-aurora"></div>
+    <div id="root" class="h-full relative z-10"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

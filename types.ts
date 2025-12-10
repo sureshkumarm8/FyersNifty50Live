@@ -1,4 +1,3 @@
-
 export interface FyersCredentials {
   appId: string;
   accessToken: string;
@@ -112,7 +111,9 @@ export type SortField =
   | 'net_strength_1m'
   | 'bid_chg_day_p'
   | 'ask_chg_day_p'
-  | 'day_net_strength';
+  | 'day_net_strength'
+  | 'lp_chg_1m_p'   // NEW
+  | 'lp_chg_day_p'; // NEW
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -134,11 +135,15 @@ export interface EnrichedFyersQuote extends FyersQuote {
   // Session / Day Metrics (vs First Entry)
   initial_total_buy_qty?: number;
   initial_total_sell_qty?: number;
+  initial_lp?: number; // Initial LTP
 
   bid_chg_day_p?: number;     // % Change vs First Entry
   ask_chg_day_p?: number;     // % Change vs First Entry
   day_net_strength?: number;  // (Bid Day % - Ask Day %)
   
+  lp_chg_1m_p?: number;       // LTP % Change 1 min
+  lp_chg_day_p?: number;      // LTP % Change vs First Entry
+
   // Market Impact Logic
   weight?: number;            // Nifty 50 Weightage (%)
   index_contribution?: number; // (Change% * Weight) - Rough impact score

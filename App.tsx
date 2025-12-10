@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
@@ -12,37 +11,31 @@ import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
 
 const App: React.FC = () => {
-  // --- State ---
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     const saved = localStorage.getItem('fyers_creds');
     return saved ? JSON.parse(saved) : { appId: '', accessToken: '' };
   });
 
-  // Default view is now 'summary' (The Dashboard)
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number>(0);
 
-  // Data State
   const [stocks, setStocks] = useState<EnrichedFyersQuote[]>([]);
   const [optionQuotes, setOptionQuotes] = useState<EnrichedFyersQuote[]>([]);
   const [niftyLtp, setNiftyLtp] = useState<number | null>(null);
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
 
-  // Selection & Search
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'symbol', direction: 'asc' });
 
-  // Refs for Tracking Changes
   const prevStocksRef = useRef<Record<string, FyersQuote>>({});
   const initialStocksRef = useRef<Record<string, FyersQuote>>({});
   const prevOptionsRef = useRef<Record<string, FyersQuote>>({});
   const initialOptionsRef = useRef<Record<string, FyersQuote>>({});
 
-  // --- Helpers ---
   const saveCredentials = (newCreds: FyersCredentials) => {
     setCredentials(newCreds);
     localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
@@ -56,7 +49,6 @@ const App: React.FC = () => {
     }));
   };
 
-  // --- Data Enrichment Logic ---
   const enrichData = (
       currentData: FyersQuote[], 
       prevRef: React.MutableRefObject<Record<string, FyersQuote>>, 
@@ -79,8 +71,9 @@ const App: React.FC = () => {
         let bid_chg_day_p = undefined;
         let ask_chg_day_p = undefined;
         let day_net_strength = undefined;
+        let lp_chg_1m_p = undefined;
+        let lp_chg_day_p = undefined;
 
-        // 1 Minute Calc
         if (prev) {
            if (curr.total_buy_qty !== undefined && prev.total_buy_qty !== undefined) {
               bid_qty_chg_1m = curr.total_buy_qty - prev.total_buy_qty;
@@ -93,9 +86,11 @@ const App: React.FC = () => {
            if (bid_qty_chg_p !== undefined && ask_qty_chg_p !== undefined) {
               net_strength_1m = bid_qty_chg_p - ask_qty_chg_p;
            }
+           if (curr.lp !== undefined && prev.lp !== undefined && prev.lp !== 0) {
+              lp_chg_1m_p = ((curr.lp - prev.lp) / prev.lp) * 100;
+           }
         }
 
-        // Day Calc
         if (initial) {
             if (curr.total_buy_qty !== undefined && initial.total_buy_qty !== undefined && initial.total_buy_qty !== 0) {
                 bid_chg_day_p = ((curr.total_buy_qty - initial.total_buy_qty) / initial.total_buy_qty) * 100;
@@ -106,9 +101,11 @@ const App: React.FC = () => {
             if (bid_chg_day_p !== undefined && ask_chg_day_p !== undefined) {
                 day_net_strength = bid_chg_day_p - ask_chg_day_p;
             }
+            if (curr.lp !== undefined && initial.lp !== undefined && initial.lp !== 0) {
+                lp_chg_day_p = ((curr.lp - initial.lp) / initial.lp) * 100;
+            }
         }
         
-        // Stock Specific: Weight
         let weight, index_contribution;
         if (isStock) {
             const symbolKey = curr.short_name || curr.symbol.replace('NSE:', '').replace('-EQ', '');
@@ -125,20 +122,15 @@ const App: React.FC = () => {
           net_strength_1m,
           initial_total_buy_qty: initial?.total_buy_qty,
           initial_total_sell_qty: initial?.total_sell_qty,
+          initial_lp: initial?.lp,
           bid_chg_day_p, ask_chg_day_p, day_net_strength,
+          lp_chg_1m_p, lp_chg_day_p,
           weight, index_contribution
         };
       });
   };
 
-  // --- Snapshot Calculation ---
-  const calculateSnapshot = (
-      stocksData: EnrichedFyersQuote[], 
-      optionsData: EnrichedFyersQuote[], 
-      ltp: number,
-      ptsChg: number
-  ) => {
-      // 1. Overall Sentiment (Weighted Breadth)
+  const calculateSnapshot = (stocksData: EnrichedFyersQuote[], optionsData: EnrichedFyersQuote[], ltp: number, ptsChg: number) => {
       let bullishW = 0, bearishW = 0, totalW = 0;
       let adv = 0, dec = 0;
       let totalStockBuy = 0, totalStockSell = 0;
@@ -151,11 +143,8 @@ const App: React.FC = () => {
           totalStockSell += s.total_sell_qty || 0;
       });
       const overallSent = totalW > 0 ? (bullishW - bearishW) / totalW * 100 : 0;
-      
-      // Stock Sentiment (Demand Ratio)
       const stockSent = totalStockSell > 0 ? ((totalStockBuy - totalStockSell) / totalStockSell) * 100 : 0;
 
-      // 2. Options Data
       let callBuy = 0, callSell = 0, putBuy = 0, putSell = 0;
       let callOI = 0, putOI = 0;
 
@@ -172,16 +161,9 @@ const App: React.FC = () => {
           }
       });
 
-      // Call Sentiment (Net Demand %)
       const callSent = callSell > 0 ? ((callBuy - callSell) / callSell) * 100 : 0;
-      
-      // Put Sentiment (Net Demand %)
       const putSent = putSell > 0 ? ((putBuy - putSell) / putSell) * 100 : 0;
-
-      // PCR (OI Based)
       const pcr = callOI > 0 ? putOI / callOI : 0;
-
-      // Options Sentiment (Relative strength of Call Demand vs Put Demand)
       const optionsSent = callSent - putSent;
 
       const snapshot: MarketSnapshot = {
@@ -203,7 +185,6 @@ const App: React.FC = () => {
 
       setHistoryLog(prev => {
           const updated = [...prev, snapshot];
-          // Keep roughly 1 full trading day (6.5 hours * 60 mins = ~390 mins)
           if (updated.length > 400) updated.shift(); 
           return updated;
       });
@@ -214,33 +195,22 @@ const App: React.FC = () => {
        if(stocks.length === 0) setError("Please configure API credentials");
        return;
     }
-
     try {
       if (stocks.length === 0) setIsLoading(true);
-      
-      // 1. Fetch Stocks
       const rawStocks = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
       const enrichedStocks = enrichData(rawStocks, prevStocksRef, initialStocksRef, true);
       setStocks(enrichedStocks);
 
-      // 2. Fetch Index & Options
-      // Fetch Index to get LTP
       const indexQuote = await fetchQuotes([NIFTY_INDEX_SYMBOL], credentials);
       const idx = indexQuote[0];
       if (idx) {
           setNiftyLtp(idx.lp);
-          
-          // Generate Option Symbols
           const optSymbols = getNiftyOptionSymbols(idx.lp);
-          // Fetch Option Quotes
           const rawOptions = await fetchQuotes(optSymbols, credentials);
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
           setOptionQuotes(enrichedOptions);
-
-          // 3. Take Snapshot
           calculateSnapshot(enrichedStocks, enrichedOptions, idx.lp, idx.ch);
       }
-
       setLastUpdated(Date.now());
       setError(null);
     } catch (err: any) {
@@ -251,14 +221,12 @@ const App: React.FC = () => {
     }
   }, [credentials]);
 
-  // --- Effects ---
   useEffect(() => {
     refreshData();
     const intervalId = setInterval(refreshData, REFRESH_INTERVAL_MS);
     return () => clearInterval(intervalId);
   }, [refreshData]);
 
-  // --- Filtered Stocks for Dashboard ---
   const filteredAndSortedStocks = useMemo(() => {
     let data = [...stocks];
     if (searchQuery) {
@@ -277,90 +245,92 @@ const App: React.FC = () => {
   }, [stocks, searchQuery, sortConfig]);
 
   return (
-    <div className="h-screen bg-gray-950 flex flex-col text-gray-100 overflow-hidden">
+    <div className="h-screen flex flex-col overflow-hidden relative font-sans">
       
-      {/* Navbar (Fixed) */}
-      <header className="flex-none bg-gray-900 border-b border-gray-800 z-30 shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      {/* Glass Header */}
+      <header className="flex-none glass-header z-30 shadow-2xl relative">
+        <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between py-3">
           
           <div className="flex items-center gap-6">
-             <div className="flex items-center gap-3 cursor-pointer" onClick={() => setSelectedStock(null)}>
-               <div className="p-2 bg-blue-600 rounded-lg shadow-lg shadow-blue-500/20">
-                 <Activity size={24} className="text-white" />
+             <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setSelectedStock(null)}>
+               <div className="p-2 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl shadow-lg shadow-blue-500/30 group-hover:shadow-blue-500/50 transition-all duration-300">
+                 <Zap size={24} className="text-white fill-white" />
                </div>
                <div>
-                 <h1 className="text-xl font-bold tracking-tight text-white hidden sm:block">Nifty50 AI Agent</h1>
+                 <h1 className="text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400 hidden sm:block">
+                   NIFTY<span className="text-blue-500">50</span>.AI
+                 </h1>
                  <h1 className="text-xl font-bold tracking-tight text-white sm:hidden">Nifty50</h1>
                </div>
              </div>
 
-             {/* Navigation Tabs - Reordered */}
              {!selectedStock && (
-                <div className="flex bg-gray-800/50 p-1 rounded-lg border border-gray-700/50">
-                   {/* 1. Dashboard (Summary) */}
-                   <button onClick={() => setViewMode('summary')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'summary' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                      <PieChart size={16} /> Dashboard
-                   </button>
-                   
-                   {/* 2. Stocks List */}
-                   <button onClick={() => setViewMode('stocks')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'stocks' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                      <List size={16} /> Stocks
-                   </button>
-                   
-                   {/* 3. Option Chain */}
-                   <button onClick={() => setViewMode('options')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'options' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                      <BarChart3 size={16} /> Option Chain
-                   </button>
-                   
-                   {/* 4. Day History */}
-                   <button onClick={() => setViewMode('history')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'history' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                      <Clock size={16} /> Day History
-                   </button>
+                <div className="flex bg-slate-900/60 p-1 rounded-xl border border-white/5 backdrop-blur-md">
+                   {[
+                     { id: 'summary', icon: PieChart, label: 'Cockpit' },
+                     { id: 'stocks', icon: List, label: 'Stocks' },
+                     { id: 'options', icon: BarChart3, label: 'Options' },
+                     { id: 'history', icon: Clock, label: 'Time Machine' }
+                   ].map((tab) => (
+                     <button 
+                       key={tab.id}
+                       onClick={() => setViewMode(tab.id as ViewMode)} 
+                       className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all duration-300 ${viewMode === tab.id ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                     >
+                        <tab.icon size={16} className={viewMode === tab.id ? 'animate-pulse' : ''} /> {tab.label}
+                     </button>
+                   ))}
                 </div>
              )}
           </div>
 
           <div className="flex items-center gap-4">
              {!selectedStock && viewMode === 'stocks' && (
-               <div className="hidden md:flex items-center bg-gray-800 rounded-full px-4 py-1.5 border border-gray-700">
-                  <Search size={16} className="text-gray-500 mr-2" />
-                  <input type="text" placeholder="Search..." className="bg-transparent border-none outline-none text-sm w-48 text-white" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+               <div className="hidden md:flex items-center bg-slate-900/50 rounded-full px-4 py-2 border border-white/10 focus-within:border-blue-500/50 focus-within:bg-slate-900/80 transition-all">
+                  <Search size={16} className="text-slate-500 mr-2" />
+                  <input type="text" placeholder="Search Symbol..." className="bg-transparent border-none outline-none text-sm w-48 text-white placeholder-slate-600" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                </div>
              )}
             <div className="text-right hidden sm:block">
-                 <p className="text-xs text-gray-500">Last Updated</p>
-                 <p className="text-sm font-mono text-gray-300">{lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : '--:--:--'}</p>
+                 <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Latency</p>
+                 <div className="flex items-center justify-end gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                    <p className="text-xs font-mono text-slate-300">{lastUpdated ? 'Live' : 'Connecting...'}</p>
+                 </div>
             </div>
-            <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all"><Settings size={20} /></button>
+            <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"><Settings size={20} /></button>
           </div>
         </div>
       </header>
 
-      {/* Main Layout */}
-      <main className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
+      <main className="flex-1 flex flex-col min-h-0 overflow-hidden relative z-10">
         {error && (
           <div className="flex-none px-4 pt-4">
-            <div className="bg-red-950/40 border border-red-900 text-red-200 px-4 py-3 rounded-lg flex items-center gap-4">
-                 <AlertCircle size={18} className="text-red-500 shrink-0" />
-                 <span className="text-sm">{error}</span>
+            <div className="glass-panel border-l-4 border-l-red-500 text-red-200 px-6 py-4 rounded-r-xl flex items-center gap-4 shadow-[0_0_20px_rgba(239,68,68,0.2)]">
+                 <AlertCircle size={24} className="text-red-500 shrink-0 animate-bounce" />
+                 <span className="text-sm font-medium">{error}</span>
             </div>
           </div>
         )}
 
         {selectedStock ? (
-           <div className="flex-1 p-4 overflow-hidden">
+           <div className="flex-1 p-6 overflow-hidden animate-in slide-in-from-right duration-300">
                <StockDetail symbol={selectedStock} credentials={credentials} onBack={() => setSelectedStock(null)} />
            </div>
         ) : viewMode === 'history' ? (
-           <div className="flex-1 p-4 overflow-hidden">
+           <div className="flex-1 p-6 overflow-hidden animate-in fade-in duration-300">
                <SentimentHistory history={historyLog} />
            </div>
         ) : viewMode === 'options' ? (
-           <div className="flex-1 p-4 overflow-hidden flex flex-col">
+           <div className="flex-1 p-6 overflow-hidden flex flex-col animate-in fade-in duration-300">
               <OptionChain quotes={optionQuotes} niftyLtp={niftyLtp} lastUpdated={lastUpdated ? new Date(lastUpdated) : null} isLoading={isLoading} />
            </div>
         ) : viewMode === 'summary' ? (
-           <div className="flex-1 overflow-y-auto">
+           <div className="flex-1 overflow-y-auto custom-scrollbar animate-in fade-in zoom-in duration-300">
               <CumulativeView 
                 data={stocks} 
                 latestSnapshot={historyLog.length > 0 ? historyLog[historyLog.length - 1] : undefined} 
@@ -369,35 +339,25 @@ const App: React.FC = () => {
               />
            </div>
         ) : (
-           /* STOCKS LIST VIEW */
            <>
-             <div className="flex-none p-4 pb-0">
+             <div className="flex-none p-6 pb-0 animate-in fade-in duration-300">
                {stocks.length > 0 && (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                     <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                        <p className="text-xs text-gray-500 uppercase font-semibold">Trend</p>
-                        <div className="flex items-end gap-2 mt-1">
-                           <span className="text-2xl font-bold text-green-500">{stocks.filter(s => s.ch >= 0).length}</span>
-                           <span className="text-gray-600">/</span>
-                           <span className="text-2xl font-bold text-red-500">{stocks.filter(s => s.ch < 0).length}</span>
+                     <div className="glass-panel p-4 rounded-xl relative overflow-hidden group">
+                        <div className="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                            <Activity size={40} />
                         </div>
-                     </div>
-                     <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between">
-                        <div>
-                           <p className="text-xs text-gray-500 uppercase font-semibold">Status</p>
-                           <p className="text-white mt-1 font-medium flex items-center gap-2">
-                               <span className={`relative inline-flex rounded-full h-3 w-3 ${error ? 'bg-red-500' : 'bg-green-500'}`}></span>
-                               {error ? 'Error' : 'Live'}
-                           </p>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Market Breadth</p>
+                        <div className="flex items-end gap-2 mt-2">
+                           <span className="text-3xl font-bold text-bull text-glow-green">{stocks.filter(s => s.ch >= 0).length}</span>
+                           <span className="text-slate-600 text-xl font-thin">/</span>
+                           <span className="text-3xl font-bold text-bear text-glow-red">{stocks.filter(s => s.ch < 0).length}</span>
                         </div>
-                        <button onClick={() => refreshData()} className="p-2 bg-gray-800 hover:bg-gray-700 rounded-full transition-colors">
-                           <RefreshCw size={18} className={`text-gray-400 ${isLoading ? 'animate-spin' : ''}`} />
-                        </button>
                      </div>
                   </div>
                )}
              </div>
-             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+             <div className="flex-1 overflow-y-auto p-6 pt-2 custom-scrollbar animate-in fade-in duration-500">
                <StockTable data={filteredAndSortedStocks} sortConfig={sortConfig} onSort={handleSort} onSelect={setSelectedStock} isLoading={isLoading} />
              </div>
            </>

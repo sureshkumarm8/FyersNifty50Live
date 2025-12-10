@@ -1,4 +1,3 @@
-
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, SortConfig, SortField } from '../types';
 import { ArrowUp, ArrowDown } from 'lucide-react';
@@ -20,14 +19,16 @@ const formatNumber = (num: number | undefined, decimals: number = 2) => {
 };
 
 const formatPercent = (num: number | undefined) => {
-    if (num === undefined || num === null || isNaN(num)) return '--';
-    const colorClass = num > 0 ? 'text-green-500' : num < 0 ? 'text-red-500' : 'text-gray-400';
-    return <span className={colorClass}>{num > 0 ? '+' : ''}{num.toFixed(2)}%</span>;
+    if (num === undefined || num === null || isNaN(num)) return <span className="text-slate-600">--</span>;
+    const isPos = num > 0;
+    const isNeg = num < 0;
+    const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
+    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(2)}%</span>;
 };
 
 const formatQty = (qty: number | undefined) => {
    if (qty === undefined || qty === null) return '--';
-   return qty.toLocaleString('en-IN');
+   return <span className="text-slate-300 tracking-tight">{qty.toLocaleString('en-IN')}</span>;
 };
 
 const formatTime = (timestamp: number | string) => {
@@ -40,132 +41,112 @@ const formatTime = (timestamp: number | string) => {
 
 export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort, onSelect, isLoading }) => {
   const getSortIcon = (field: SortField) => {
-    if (sortConfig.field !== field) return <div className="w-4 h-4" />;
-    return sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
+    if (sortConfig.field !== field) return <div className="w-3 h-3 opacity-0" />;
+    return sortConfig.direction === 'asc' ? <ArrowUp size={12} className="text-blue-400" /> : <ArrowDown size={12} className="text-blue-400" />;
   };
 
-  const headers: { label: string; field: SortField | null; align: 'left' | 'right'; width?: string }[] = [
-    { label: 'Symbol', field: 'symbol', align: 'left', width: 'w-40' },
+  const headers: { label: string; field: SortField | null; align: 'left' | 'right'; width?: string; highlight?: boolean }[] = [
+    { label: 'Symbol', field: 'symbol', align: 'left', width: 'w-48' },
     { label: 'LTP', field: 'lp', align: 'right' },
-    { label: 'Chg%', field: 'chp', align: 'right' },
+    { label: '1m %', field: 'lp_chg_1m_p', align: 'right', highlight: true },
+    { label: 'Sess %', field: 'lp_chg_day_p', align: 'right' },
+    { label: 'Day %', field: 'chp', align: 'right' },
     
     { label: 'Total Bid', field: 'total_buy_qty', align: 'right' },
-    { label: 'Bid 1m%', field: 'bid_qty_chg_p', align: 'right' },
-    { label: 'Bid Day%', field: 'bid_chg_day_p', align: 'right' }, // NEW
+    { label: 'Bid 1m%', field: 'bid_qty_chg_p', align: 'right', highlight: true },
+    { label: 'Bid Day%', field: 'bid_chg_day_p', align: 'right' }, 
     
     { label: 'Total Ask', field: 'total_sell_qty', align: 'right' },
-    { label: 'Ask 1m%', field: 'ask_qty_chg_p', align: 'right' },
-    { label: 'Ask Day%', field: 'ask_chg_day_p', align: 'right' }, // NEW
+    { label: 'Ask 1m%', field: 'ask_qty_chg_p', align: 'right', highlight: true },
+    { label: 'Ask Day%', field: 'ask_chg_day_p', align: 'right' }, 
     
-    { label: '1m Net%', field: 'net_strength_1m', align: 'right' }, 
-    { label: 'Day Net%', field: 'day_net_strength', align: 'right' }, // NEW
+    { label: '1m Net%', field: 'net_strength_1m', align: 'right', highlight: true }, 
+    { label: 'Day Net%', field: 'day_net_strength', align: 'right' }, 
 
     { label: 'Time', field: 'tt', align: 'right' },
   ];
 
-  // Calculate Cumulative Totals
   const totals = useMemo(() => {
      if (data.length === 0) return null;
-
      return data.reduce((acc, curr) => {
+        const w = curr.weight || 0.1;
         return {
            total_buy_qty: acc.total_buy_qty + (curr.total_buy_qty || 0),
            total_sell_qty: acc.total_sell_qty + (curr.total_sell_qty || 0),
-           
-           // Sum absolute changes to calculate weighted %
            bid_qty_chg_1m_abs: acc.bid_qty_chg_1m_abs + (curr.bid_qty_chg_1m || 0),
            ask_qty_chg_1m_abs: acc.ask_qty_chg_1m_abs + (curr.ask_qty_chg_1m || 0),
-
            initial_buy_qty: acc.initial_buy_qty + (curr.initial_total_buy_qty || 0),
            initial_sell_qty: acc.initial_sell_qty + (curr.initial_total_sell_qty || 0),
+           weighted_lp_1m: acc.weighted_lp_1m + ((curr.lp_chg_1m_p || 0) * w),
+           weighted_lp_day: acc.weighted_lp_day + ((curr.lp_chg_day_p || 0) * w),
+           total_weight: acc.total_weight + w,
         };
-     }, { 
-        total_buy_qty: 0, 
-        total_sell_qty: 0, 
-        bid_qty_chg_1m_abs: 0, 
-        ask_qty_chg_1m_abs: 0,
-        initial_buy_qty: 0,
-        initial_sell_qty: 0
-    });
+     }, { total_buy_qty: 0, total_sell_qty: 0, bid_qty_chg_1m_abs: 0, ask_qty_chg_1m_abs: 0, initial_buy_qty: 0, initial_sell_qty: 0, weighted_lp_1m: 0, weighted_lp_day: 0, total_weight: 0 });
   }, [data]);
 
-  // Derived Weighted percentages for Totals Row
-  
-  // 1 Minute Metrics (Weighted)
-  // Logic: Sum of (Current - Prev) / Sum of Prev * 100
   const prevTotalBid1m = totals ? totals.total_buy_qty - totals.bid_qty_chg_1m_abs : 0;
-  const totalBidChg1mP = prevTotalBid1m > 0 
-    ? (totals!.bid_qty_chg_1m_abs / prevTotalBid1m) * 100
-    : 0;
-
+  const totalBidChg1mP = prevTotalBid1m > 0 ? (totals!.bid_qty_chg_1m_abs / prevTotalBid1m) * 100 : 0;
   const prevTotalAsk1m = totals ? totals.total_sell_qty - totals.ask_qty_chg_1m_abs : 0;
-  const totalAskChg1mP = prevTotalAsk1m > 0
-     ? (totals!.ask_qty_chg_1m_abs / prevTotalAsk1m) * 100 
-     : 0;
-
+  const totalAskChg1mP = prevTotalAsk1m > 0 ? (totals!.ask_qty_chg_1m_abs / prevTotalAsk1m) * 100 : 0;
   const totalNet1mP = totalBidChg1mP - totalAskChg1mP;
-
-  // Day Metrics (Weighted)
-  const totalBidChgDayP = totals && totals.initial_buy_qty > 0
-    ? ((totals.total_buy_qty - totals.initial_buy_qty) / totals.initial_buy_qty) * 100
-    : 0;
-
-  const totalAskChgDayP = totals && totals.initial_sell_qty > 0
-    ? ((totals.total_sell_qty - totals.initial_sell_qty) / totals.initial_sell_qty) * 100
-    : 0;
-
+  const totalBidChgDayP = totals && totals.initial_buy_qty > 0 ? ((totals.total_buy_qty - totals.initial_buy_qty) / totals.initial_buy_qty) * 100 : 0;
+  const totalAskChgDayP = totals && totals.initial_sell_qty > 0 ? ((totals.total_sell_qty - totals.initial_sell_qty) / totals.initial_sell_qty) * 100 : 0;
   const totalNetDayP = totalBidChgDayP - totalAskChgDayP;
-
+  const weightedLp1m = totals && totals.total_weight > 0 ? totals.weighted_lp_1m / totals.total_weight : 0;
+  const weightedLpDay = totals && totals.total_weight > 0 ? totals.weighted_lp_day / totals.total_weight : 0;
 
   if (isLoading && data.length === 0) {
     return (
-      <div className="w-full h-full flex items-center justify-center text-gray-500 min-h-[200px]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="w-full h-full flex items-center justify-center min-h-[300px]">
+         <div className="relative">
+             <div className="w-16 h-16 rounded-full border-4 border-slate-700 border-t-blue-500 animate-spin"></div>
+             <div className="absolute inset-0 flex items-center justify-center">
+                 <div className="w-2 h-2 bg-blue-500 rounded-full shadow-[0_0_10px_#3b82f6]"></div>
+             </div>
+         </div>
       </div>
     );
   }
 
   if (data.length === 0) {
      return (
-        <div className="w-full h-64 flex flex-col items-center justify-center text-gray-400 space-y-4 border border-dashed border-gray-800 rounded-xl">
-           <p>No data available</p>
+        <div className="w-full h-64 flex flex-col items-center justify-center text-slate-500 space-y-4 glass-panel rounded-xl">
+           <p className="font-mono uppercase tracking-widest">System Offline / No Data</p>
         </div>
      );
   }
 
   return (
-    <div className="w-full bg-gray-900 border border-gray-800 rounded-xl overflow-hidden flex flex-col h-full shadow-2xl">
+    <div className="w-full glass-panel rounded-2xl overflow-hidden flex flex-col h-full shadow-2xl relative">
       <div className="overflow-auto flex-1 custom-scrollbar">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-950 text-gray-400 sticky top-0 z-10 shadow-sm uppercase text-xs font-semibold tracking-wider">
-            {/* Totals Row */}
+        <table className="w-full text-sm border-collapse">
+          <thead className="glass-header text-slate-400 sticky top-0 z-20 uppercase text-[10px] font-bold tracking-widest">
             {totals && (
-               <tr className="bg-gray-900/90 text-gray-200 font-bold border-b border-gray-800 backdrop-blur-sm">
-                 <td className="px-4 py-3 text-left text-blue-400">TOTALS</td>
-                 <td className="px-4 py-3 text-right">--</td>
-                 <td className="px-4 py-3 text-right">--</td>
+               <tr className="bg-slate-900/80 backdrop-blur text-slate-200 border-b border-white/10 shadow-lg">
+                 <td className="px-4 py-4 text-left text-blue-400 font-bold border-r border-white/5 bg-blue-900/10">MARKET AGGREGATE</td>
+                 <td className="px-4 py-4 text-right"></td>
+                 <td className="px-4 py-4 text-right bg-white/5 border-l border-white/5">{formatPercent(weightedLp1m)}</td>
+                 <td className="px-4 py-4 text-right bg-white/5">{formatPercent(weightedLpDay)}</td>
+                 <td className="px-4 py-4 text-right"></td>
                  
-                 <td className="px-4 py-3 text-right font-mono text-gray-300">{formatQty(totals.total_buy_qty)}</td>
-                 <td className="px-4 py-3 text-right font-mono">{formatPercent(totalBidChg1mP)}</td>
-                 <td className="px-4 py-3 text-right font-mono">{formatPercent(totalBidChgDayP)}</td>
+                 <td className="px-4 py-4 text-right border-l border-white/5">{formatQty(totals.total_buy_qty)}</td>
+                 <td className="px-4 py-4 text-right bg-bull/5 border-l border-white/5">{formatPercent(totalBidChg1mP)}</td>
+                 <td className="px-4 py-4 text-right bg-bull/5">{formatPercent(totalBidChgDayP)}</td>
                  
-                 <td className="px-4 py-3 text-right font-mono text-gray-300">{formatQty(totals.total_sell_qty)}</td>
-                 <td className="px-4 py-3 text-right font-mono">{formatPercent(totalAskChg1mP)}</td>
-                 <td className="px-4 py-3 text-right font-mono">{formatPercent(totalAskChgDayP)}</td>
+                 <td className="px-4 py-4 text-right border-l border-white/5">{formatQty(totals.total_sell_qty)}</td>
+                 <td className="px-4 py-4 text-right bg-bear/5 border-l border-white/5">{formatPercent(totalAskChg1mP)}</td>
+                 <td className="px-4 py-4 text-right bg-bear/5">{formatPercent(totalAskChgDayP)}</td>
                  
-                 <td className="px-4 py-3 text-right font-mono border-l border-gray-800 bg-gray-900/50">{formatPercent(totalNet1mP)}</td>
-                 <td className="px-4 py-3 text-right font-mono bg-gray-900/50">{formatPercent(totalNetDayP)}</td>
-                 
-                 <td className="px-4 py-3 text-right">--</td>
+                 <td className="px-4 py-4 text-right border-l border-white/5 bg-slate-800/50">{formatPercent(totalNet1mP)}</td>
+                 <td className="px-4 py-4 text-right bg-slate-800/50">{formatPercent(totalNetDayP)}</td>
+                 <td className="px-4 py-4 text-right"></td>
                </tr>
             )}
-
-            {/* Column Headers */}
             <tr>
               {headers.map((header, idx) => (
                 <th
                   key={idx}
-                  className={`px-4 py-3 cursor-pointer hover:bg-gray-800 transition-colors ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.label.includes('Net') ? 'border-l border-gray-800 bg-gray-900/30' : ''}`}
+                  className={`px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200' : ''}`}
                   onClick={() => header.field && onSort(header.field)}
                 >
                   <div className={`flex items-center gap-1 ${header.align === 'right' ? 'justify-end' : 'justify-start'}`}>
@@ -176,57 +157,61 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-800">
+          <tbody className="divide-y divide-white/5 bg-slate-900/20">
             {data.map((stock) => (
               <tr 
                 key={stock.symbol} 
-                className="hover:bg-gray-800/50 transition-colors cursor-pointer group"
+                className="hover:bg-white/5 transition-all duration-200 cursor-pointer group"
                 onClick={() => onSelect(stock.symbol)}
               >
-                <td className="px-4 py-3 font-medium text-white group-hover:text-blue-400 transition-colors">
+                <td className="px-4 py-3 font-semibold text-slate-200 group-hover:text-blue-400 transition-colors border-r border-white/5 bg-slate-900/30">
                   {stock.short_name || stock.symbol}
-                  <span className="block text-[10px] text-gray-500 font-normal">{stock.exchange}</span>
+                  <span className="block text-[9px] text-slate-500 font-normal uppercase tracking-wider">{stock.exchange}</span>
                 </td>
                 
-                <td className="px-4 py-3 text-right font-mono text-gray-300">
+                <td className="px-4 py-3 text-right font-mono text-slate-300 group-hover:text-white">
                   {formatNumber(stock.lp)}
                 </td>
                 
-                <td className={`px-4 py-3 text-right font-mono font-medium ${stock.chp >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {stock.chp > 0 ? '+' : ''}{formatNumber(stock.chp)}%
+                <td className="px-4 py-3 text-right font-mono bg-white/5 border-l border-white/5 border-r border-white/5">
+                  {formatPercent(stock.lp_chg_1m_p)}
+                </td>
+                <td className="px-4 py-3 text-right font-mono bg-white/5 border-r border-white/5">
+                  {formatPercent(stock.lp_chg_day_p)}
                 </td>
 
-                {/* BID SECTION */}
-                <td className="px-4 py-3 text-right font-mono text-blue-200/80">
+                <td className="px-4 py-3 text-right font-mono font-medium">
+                  {formatPercent(stock.chp)}
+                </td>
+
+                <td className="px-4 py-3 text-right font-mono text-bull-light border-l border-white/5 opacity-80">
                   {formatQty(stock.total_buy_qty)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono">
+                <td className="px-4 py-3 text-right font-mono bg-bull/5 border-l border-white/5">
                   {formatPercent(stock.bid_qty_chg_p)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-blue-900/10">
+                <td className="px-4 py-3 text-right font-mono bg-bull/5">
                   {formatPercent(stock.bid_chg_day_p)}
                 </td>
 
-                {/* ASK SECTION */}
-                <td className="px-4 py-3 text-right font-mono text-red-200/80">
+                <td className="px-4 py-3 text-right font-mono text-bear-light border-l border-white/5 opacity-80">
                   {formatQty(stock.total_sell_qty)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono">
+                <td className="px-4 py-3 text-right font-mono bg-bear/5 border-l border-white/5">
                   {formatPercent(stock.ask_qty_chg_p)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-red-900/10">
+                <td className="px-4 py-3 text-right font-mono bg-bear/5">
                   {formatPercent(stock.ask_chg_day_p)}
                 </td>
 
-                {/* NET SECTION */}
-                <td className="px-4 py-3 text-right font-mono border-l border-gray-800 bg-gray-900/30">
+                <td className="px-4 py-3 text-right font-mono border-l border-white/10 bg-slate-800/40 font-bold border-r border-white/10">
                   {formatPercent(stock.net_strength_1m)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-gray-900/30 font-semibold">
+                <td className="px-4 py-3 text-right font-mono bg-slate-800/40 text-slate-300">
                   {formatPercent(stock.day_net_strength)}
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono text-gray-500 text-xs">
+                <td className="px-4 py-3 text-right font-mono text-slate-600 text-[10px]">
                   {formatTime(stock.tt)}
                 </td>
               </tr>
