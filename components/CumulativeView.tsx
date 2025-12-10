@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, BarChart4 } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
@@ -14,6 +14,13 @@ const formatValue = (val: number) => {
     if (absVal >= 10000000) return `${(val / 10000000).toFixed(2)} Cr`;
     if (absVal >= 100000) return `${(val / 100000).toFixed(2)} L`;
     return val.toLocaleString('en-IN');
+};
+
+const formatPercent = (num: number) => {
+    const isPos = num > 0;
+    const isNeg = num < 0;
+    const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
+    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(2)}%</span>;
 };
 
 // --- Gauge Component ---
@@ -58,6 +65,14 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       weightedSellValue: 0,
       weightedBuyMomemtum: 0,
       weightedSellMomentum: 0,
+      
+      // Totals for Table
+      total_buy_qty: 0,
+      total_sell_qty: 0,
+      bid_qty_chg_1m_abs: 0,
+      ask_qty_chg_1m_abs: 0,
+      weighted_lp_1m: 0,
+      weighted_lp_day: 0,
     };
 
     if (data.length === 0) return initialStats;
@@ -75,10 +90,21 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
        acc.weightedBuyValue += (buyVal * w);
        acc.weightedSellValue += (sellVal * w);
 
+       // Momentum: Money Flow (Qty Change * Price * Weight)
        const buyChgVal = (curr.bid_qty_chg_1m || 0) * ltp;
        const sellChgVal = (curr.ask_qty_chg_1m || 0) * ltp;
+       
+       // Only count momentum if it's significant
        acc.weightedBuyMomemtum += (buyChgVal * w);
        acc.weightedSellMomentum += (sellChgVal * w);
+
+       // Table Aggregates
+       acc.total_buy_qty += (curr.total_buy_qty || 0);
+       acc.total_sell_qty += (curr.total_sell_qty || 0);
+       acc.bid_qty_chg_1m_abs += (curr.bid_qty_chg_1m || 0);
+       acc.ask_qty_chg_1m_abs += (curr.ask_qty_chg_1m || 0);
+       acc.weighted_lp_1m += ((curr.lp_chg_1m_p || 0) * w);
+       acc.weighted_lp_day += ((curr.lp_chg_day_p || 0) * w);
 
        return acc;
     }, initialStats);
@@ -100,37 +126,59 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       );
   }
 
+  // --- DERIVED METRICS ---
   const bullishPct = stats.totalWeight > 0 ? (stats.bullishWeight / stats.totalWeight) * 100 : 0;
   const totalValuePressure = stats.weightedBuyValue + stats.weightedSellValue;
   const buyPressureRatio = totalValuePressure > 0 ? (stats.weightedBuyValue / totalValuePressure) * 100 : 0;
   
+  // Net Money Flow Momentum (Weighted)
   const momentumNet = stats.weightedBuyMomemtum - stats.weightedSellMomentum;
   
-  // AI Prediction Logic
-  let prediction = "Analyzing...";
-  let predictionColor = "text-slate-400";
-  let predictionDesc = "Gathering sufficient momentum data for prediction...";
+  // Table Metrics
+  const weightedLp1m = stats.totalWeight > 0 ? stats.weighted_lp_1m / stats.totalWeight : 0;
+  const weightedLpDay = stats.totalWeight > 0 ? stats.weighted_lp_day / stats.totalWeight : 0;
+  const totalNet1mP = ((stats.bid_qty_chg_1m_abs / (stats.total_buy_qty || 1)) * 100) - ((stats.ask_qty_chg_1m_abs / (stats.total_sell_qty || 1)) * 100);
+
+  // --- NIFTYOPS PREDICTION FORMULA ---
+  // 1. Trend Score (30%): Based on Weighted Breadth
+  const trendScore = (bullishPct - 50) * 2; // -100 to +100
   
-  if (momentumNet > 1000000 && bullishPct > 60) {
-      prediction = "Strong Bullish";
+  // 2. Flow Score (40%): Based on 1-min Momentum
+  // Normalize momentum (Arbitrary scaling factor based on typical Nifty volume)
+  const flowScoreRaw = momentumNet / 100000; 
+  const flowScore = Math.max(Math.min(flowScoreRaw, 100), -100);
+
+  // 3. Option Score (30%): Based on Net Option Demand
+  const optionScore = latestSnapshot ? Math.max(Math.min(latestSnapshot.optionsSent * 2, 100), -100) : 0;
+
+  // Composite Signal Score
+  const compositeScore = (trendScore * 0.3) + (flowScore * 0.4) + (optionScore * 0.3);
+
+  let prediction = "NEUTRAL";
+  let predictionColor = "text-yellow-400";
+  let predictionDesc = "Market is consolidating. Wait for volume confirmation.";
+  let signalClass = "bg-yellow-500/10 border-yellow-500/50";
+
+  if (compositeScore > 35) {
+      prediction = "STRONG BUY";
       predictionColor = "text-bull text-glow-green";
-      predictionDesc = "High buying momentum with broad market participation. Look for long entries.";
-  } else if (momentumNet < -1000000 && bullishPct < 40) {
-      prediction = "Strong Bearish";
-      predictionColor = "text-bear text-glow-red";
-      predictionDesc = "Significant selling pressure detected. Support levels may break.";
-  } else if (momentumNet > 0 && bullishPct > 50) {
-      prediction = "Mild Bullish";
+      predictionDesc = "High institutional buying + Bullish Options Flow. Trend is accelerating.";
+      signalClass = "bg-bull/20 border-bull/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]";
+  } else if (compositeScore > 10) {
+      prediction = "BUY DIPS";
       predictionColor = "text-green-400";
-      predictionDesc = "Positive drift, but momentum is not explosive.";
-  } else if (momentumNet < 0 && bullishPct < 50) {
-      prediction = "Mild Bearish";
+      predictionDesc = "Positive momentum detected. Look for entries on small pullbacks.";
+      signalClass = "bg-green-500/10 border-green-500/50";
+  } else if (compositeScore < -35) {
+      prediction = "STRONG SELL";
+      predictionColor = "text-bear text-glow-red";
+      predictionDesc = "Heavy selling pressure across weights & options. Do not catch falling knives.";
+      signalClass = "bg-bear/20 border-bear/50 shadow-[0_0_30px_rgba(239,68,68,0.3)]";
+  } else if (compositeScore < -10) {
+      prediction = "SELL RALLIES";
       predictionColor = "text-red-400";
-      predictionDesc = "Negative drift, selling is present but controlled.";
-  } else if (stats.totalWeight > 0) {
-      prediction = "Neutral / Chop";
-      predictionColor = "text-yellow-400";
-      predictionDesc = "Market is consolidating. Wait for clear volume breakout.";
+      predictionDesc = "Negative drift. Rallies are likely to be sold into.";
+      signalClass = "bg-red-500/10 border-red-500/50";
   }
 
   // Top Movers
@@ -142,23 +190,73 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
     <div className="flex flex-col gap-6 p-4 max-w-7xl mx-auto w-full">
        
        {/* AI Prediction Header */}
-       <div className="glass-panel p-6 rounded-2xl relative overflow-hidden group">
-           <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-500/20 blur-3xl rounded-full pointer-events-none group-hover:bg-blue-500/30 transition-all"></div>
-           <div className="flex items-start justify-between relative z-10">
-               <div>
-                   <div className="flex items-center gap-2 mb-1">
-                       <BrainCircuit size={20} className="text-blue-400" />
-                       <h2 className="text-sm font-bold text-blue-300 uppercase tracking-widest">AI Market Pulse</h2>
+       <div className={`glass-panel p-6 rounded-2xl relative overflow-hidden transition-all duration-500 border-2 ${signalClass}`}>
+           <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/5 blur-3xl rounded-full pointer-events-none"></div>
+           <div className="flex flex-col md:flex-row md:items-center justify-between relative z-10 gap-6">
+               <div className="flex-1">
+                   <div className="flex items-center gap-2 mb-2">
+                       <BrainCircuit size={20} className="text-blue-300" />
+                       <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">NiftyOps Prediction Engine</h2>
                    </div>
-                   <h1 className={`text-4xl font-bold font-mono mt-2 ${predictionColor}`}>{prediction}</h1>
-                   <p className="text-slate-400 mt-2 max-w-xl">{predictionDesc}</p>
+                   <h1 className={`text-5xl font-black font-mono tracking-tight ${predictionColor}`}>{prediction}</h1>
+                   <div className="mt-3 flex items-center gap-3">
+                      <div className="h-2 w-32 bg-slate-800 rounded-full overflow-hidden">
+                          <div className={`h-full transition-all duration-1000 ${compositeScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.abs(compositeScore)}%` }}></div>
+                      </div>
+                      <span className="font-mono text-xs text-slate-400">Signal Strength: {Math.abs(compositeScore).toFixed(0)}%</span>
+                   </div>
+                   <p className="text-slate-300 mt-2 text-sm">{predictionDesc}</p>
                </div>
-               <div className="text-right hidden sm:block">
-                   <p className="text-xs text-slate-500 uppercase">Net Momentum (1m)</p>
-                   <p className={`text-2xl font-mono font-bold ${momentumNet > 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}`}>
-                       {momentumNet > 0 ? '+' : ''}{formatValue(momentumNet)}
-                   </p>
+
+               {/* Stats Grid */}
+               <div className="grid grid-cols-2 gap-4 text-right">
+                   <div>
+                       <p className="text-[10px] text-slate-500 uppercase">Inst. Money Flow (1m)</p>
+                       <p className={`text-xl font-mono font-bold ${momentumNet > 0 ? 'text-bull' : 'text-bear'}`}>
+                           {momentumNet > 0 ? '+' : ''}{formatValue(momentumNet)}
+                       </p>
+                   </div>
+                   <div>
+                       <p className="text-[10px] text-slate-500 uppercase">Option Sentiment</p>
+                       <p className={`text-xl font-mono font-bold ${latestSnapshot?.optionsSent && latestSnapshot.optionsSent > 0 ? 'text-bull' : 'text-bear'}`}>
+                           {latestSnapshot?.optionsSent ? formatPercent(latestSnapshot.optionsSent) : '--'}
+                       </p>
+                   </div>
                </div>
+           </div>
+       </div>
+
+       {/* MARKET AGGREGATE TABLE (New Request) */}
+       <div className="glass-panel rounded-xl overflow-hidden p-0">
+           <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
+               <Scale size={16} className="text-purple-400" />
+               <h3 className="text-xs font-bold text-purple-200 uppercase tracking-widest">Market Aggregate (Cumulative)</h3>
+           </div>
+           <div className="overflow-x-auto">
+               <table className="w-full text-sm">
+                   <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
+                       <tr>
+                           <th className="px-4 py-2 text-right">W. Avg LTP (1m%)</th>
+                           <th className="px-4 py-2 text-right">W. Avg LTP (Day%)</th>
+                           <th className="px-4 py-2 text-right text-bull-light">Total Bid Qty</th>
+                           <th className="px-4 py-2 text-right text-bear-light">Total Ask Qty</th>
+                           <th className="px-4 py-2 text-right">Net Qty Change (1m)</th>
+                           <th className="px-4 py-2 text-right">Net Money Flow</th>
+                       </tr>
+                   </thead>
+                   <tbody className="divide-y divide-white/5">
+                       <tr className="hover:bg-white/5 transition-colors">
+                           <td className="px-4 py-3 text-right">{formatPercent(weightedLp1m)}</td>
+                           <td className="px-4 py-3 text-right">{formatPercent(weightedLpDay)}</td>
+                           <td className="px-4 py-3 text-right font-mono font-bold text-slate-200">{stats.total_buy_qty.toLocaleString()}</td>
+                           <td className="px-4 py-3 text-right font-mono font-bold text-slate-200">{stats.total_sell_qty.toLocaleString()}</td>
+                           <td className="px-4 py-3 text-right font-mono font-bold">{formatPercent(totalNet1mP)}</td>
+                           <td className={`px-4 py-3 text-right font-mono font-bold ${momentumNet > 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}`}>
+                               {formatValue(momentumNet)}
+                           </td>
+                       </tr>
+                   </tbody>
+               </table>
            </div>
        </div>
 
@@ -167,7 +265,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
           {/* Sentiment Gauge */}
           <div onClick={() => onNavigate('stocks')} className="glass-panel p-6 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-all">
               <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
-                 <Compass size={16} /> Weighted Sentiment
+                 <Compass size={16} /> Weighted Trend
               </h3>
               <Gauge value={bullishPct} label="Bullish Impact" />
           </div>
@@ -175,9 +273,9 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
           {/* Pressure Gauge */}
           <div onClick={() => onNavigate('stocks')} className="glass-panel p-6 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-all">
               <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
-                 <Activity size={16} /> Buy vs Sell Pressure
+                 <Activity size={16} /> Volume Pressure
               </h3>
-              <Gauge value={buyPressureRatio} label="Buy Value %" />
+              <Gauge value={buyPressureRatio} label="Buy Vol %" />
           </div>
 
           {/* Options Gauge */}
@@ -185,7 +283,6 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
               <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
                  <Target size={16} /> Option Sentiment
               </h3>
-               {/* Custom Linear Gauge for Options */}
                <div className="w-full px-4 mt-6">
                    <div className="flex justify-between text-xs font-mono font-bold mb-2">
                        <span className="text-bull">CALLS</span>
