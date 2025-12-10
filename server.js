@@ -1,5 +1,4 @@
 import http from 'http';
-import url from 'url';
 
 const PORT = 5000;
 
@@ -16,10 +15,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const parsedUrl = url.parse(req.url, true);
+  // Use WHATWG URL API instead of deprecated url.parse
+  const protocol = req.socket.encrypted ? 'https' : 'http';
+  const host = req.headers.host || `localhost:${PORT}`;
+  const reqUrl = new URL(req.url, `${protocol}://${host}`);
   
-  if (parsedUrl.pathname === '/api/quotes' && req.method === 'GET') {
-    const { symbols } = parsedUrl.query;
+  if (reqUrl.pathname === '/api/quotes' && req.method === 'GET') {
+    const symbols = reqUrl.searchParams.get('symbols');
     const authHeader = req.headers['authorization'];
 
     if (!authHeader) {
@@ -35,7 +37,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      // CRITICAL FIX: Re-encode the symbols because parsedUrl.query has decoded them.
+      // CRITICAL FIX: Re-encode the symbols because searchParams.get() has decoded them.
       const encodedSymbols = encodeURIComponent(symbols);
       const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${encodedSymbols}`;
 
