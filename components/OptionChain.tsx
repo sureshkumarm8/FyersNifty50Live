@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote } from '../types';
 import { fetchQuotes, getNiftyOptionSymbols } from '../services/fyersService';
@@ -24,6 +25,9 @@ export const OptionChain: React.FC<OptionChainProps> = ({ credentials }) => {
 
   // Track previous data for 1min change calculations
   const prevOptionsRef = useRef<Record<string, FyersQuote>>({});
+  
+  // Track Initial data for Day Session calculation
+  const initialOptionsRef = useRef<Record<string, FyersQuote>>({});
 
   const handleSort = (field: SortField) => {
     setSortConfig((prev) => ({
@@ -58,39 +62,56 @@ export const OptionChain: React.FC<OptionChainProps> = ({ credentials }) => {
       // 3. Fetch Option Quotes
       const rawQuotes = await fetchQuotes(symbols, credentials);
       
-      // 4. Enrich Quotes with 1min Changes
+      // 4. Enrich Quotes with 1min Changes & Day Changes
       const enriched: EnrichedFyersQuote[] = rawQuotes.map(curr => {
         const prev = prevOptionsRef.current[curr.symbol];
         
+        // Initialize Initial Reference if not exists
+        if (!initialOptionsRef.current[curr.symbol]) {
+           initialOptionsRef.current[curr.symbol] = curr;
+        }
+        const initial = initialOptionsRef.current[curr.symbol];
+
         let bid_qty_chg_1m = undefined;
         let bid_qty_chg_p = undefined;
         let ask_qty_chg_1m = undefined;
         let ask_qty_chg_p = undefined;
         let net_strength_1m = undefined;
 
+        let bid_chg_day_p = undefined;
+        let ask_chg_day_p = undefined;
+        let day_net_strength = undefined;
+
+        // 1 Minute Calc
         if (prev) {
-           // --- BID CALCULATIONS ---
            if (curr.total_buy_qty !== undefined && prev.total_buy_qty !== undefined) {
               bid_qty_chg_1m = curr.total_buy_qty - prev.total_buy_qty;
-              
               if (prev.total_buy_qty !== 0) {
                  bid_qty_chg_p = (bid_qty_chg_1m / prev.total_buy_qty) * 100;
               }
            }
-
-           // --- ASK CALCULATIONS ---
            if (curr.total_sell_qty !== undefined && prev.total_sell_qty !== undefined) {
               ask_qty_chg_1m = curr.total_sell_qty - prev.total_sell_qty;
-              
               if (prev.total_sell_qty !== 0) {
                  ask_qty_chg_p = (ask_qty_chg_1m / prev.total_sell_qty) * 100;
               }
            }
-
-           // --- NET STRENGTH (Bid % - Ask %) ---
            if (bid_qty_chg_p !== undefined && ask_qty_chg_p !== undefined) {
               net_strength_1m = bid_qty_chg_p - ask_qty_chg_p;
            }
+        }
+
+        // Day Session Calc
+        if (initial) {
+            if (curr.total_buy_qty !== undefined && initial.total_buy_qty !== undefined && initial.total_buy_qty !== 0) {
+                bid_chg_day_p = ((curr.total_buy_qty - initial.total_buy_qty) / initial.total_buy_qty) * 100;
+            }
+            if (curr.total_sell_qty !== undefined && initial.total_sell_qty !== undefined && initial.total_sell_qty !== 0) {
+                ask_chg_day_p = ((curr.total_sell_qty - initial.total_sell_qty) / initial.total_sell_qty) * 100;
+            }
+            if (bid_chg_day_p !== undefined && ask_chg_day_p !== undefined) {
+                day_net_strength = bid_chg_day_p - ask_chg_day_p;
+            }
         }
         
         // Update Ref for next time
@@ -102,7 +123,13 @@ export const OptionChain: React.FC<OptionChainProps> = ({ credentials }) => {
           bid_qty_chg_p,
           ask_qty_chg_1m,
           ask_qty_chg_p,
-          net_strength_1m
+          net_strength_1m,
+          
+          initial_total_buy_qty: initial?.total_buy_qty,
+          initial_total_sell_qty: initial?.total_sell_qty,
+          bid_chg_day_p,
+          ask_chg_day_p,
+          day_net_strength
         };
       });
 
@@ -152,10 +179,10 @@ export const OptionChain: React.FC<OptionChainProps> = ({ credentials }) => {
   }, [optionQuotes, sortConfig]);
 
   return (
-    <div className="flex flex-col h-full space-y-4">
+    <div className="flex flex-col h-full overflow-hidden">
       
-      {/* Header Stats */}
-      <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between">
+      {/* Header Stats (Fixed) */}
+      <div className="flex-none mb-4 bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between">
          <div>
             <h2 className="text-gray-400 text-sm font-semibold uppercase">NIFTY 50 Spot</h2>
             <div className="flex items-baseline gap-3 mt-1">
@@ -185,14 +212,16 @@ export const OptionChain: React.FC<OptionChainProps> = ({ credentials }) => {
          </div>
       </div>
 
-      {/* Reusing StockTable for consistent UI */}
-      <StockTable 
-        data={sortedQuotes}
-        sortConfig={sortConfig}
-        onSort={handleSort}
-        onSelect={() => {}} // Option detail view not requested yet
-        isLoading={loading && optionQuotes.length === 0}
-      />
+      {/* Table (Scrolling) */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <StockTable 
+          data={sortedQuotes}
+          sortConfig={sortConfig}
+          onSort={handleSort}
+          onSelect={() => {}} 
+          isLoading={loading && optionQuotes.length === 0}
+        />
+      </div>
     </div>
   );
 };

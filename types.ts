@@ -1,3 +1,4 @@
+
 export interface FyersCredentials {
   appId: string;
   accessToken: string;
@@ -106,8 +107,12 @@ export type SortField =
   | 'tt'
   | 'oi'
   | 'bid_qty_chg_1m'
+  | 'bid_qty_chg_p'
   | 'ask_qty_chg_p'
-  | 'net_strength_1m';
+  | 'net_strength_1m'
+  | 'bid_chg_day_p'
+  | 'ask_chg_day_p'
+  | 'day_net_strength';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -119,10 +124,18 @@ export interface SortConfig {
 // Extended Quote for UI with calculated fields
 export interface EnrichedFyersQuote extends FyersQuote {
   bid_qty_chg_1m?: number;    // Absolute change
-  bid_qty_chg_p?: number;     // Percent change
+  bid_qty_chg_p?: number;     // Percent change (1 min)
   
   ask_qty_chg_1m?: number;    // Absolute change
-  ask_qty_chg_p?: number;     // Percent change
+  ask_qty_chg_p?: number;     // Percent change (1 min)
   
-  net_strength_1m?: number;   // (Bid% - Ask%)
+  net_strength_1m?: number;   // (Bid% - Ask%) 1 min
+
+  // Session / Day Metrics (vs First Entry)
+  initial_total_buy_qty?: number;
+  initial_total_sell_qty?: number;
+
+  bid_chg_day_p?: number;     // % Change vs First Entry
+  ask_chg_day_p?: number;     // % Change vs First Entry
+  day_net_strength?: number;  // (Bid Day % - Ask Day %)
 }

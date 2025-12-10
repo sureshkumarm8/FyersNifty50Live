@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List } from 'lucide-react';
 import { StockTable } from './components/StockTable';
@@ -28,8 +29,10 @@ const App: React.FC = () => {
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
   
   // Store previous data to calculate 1min changes
-  // Key: symbol, Value: Previous Quote
   const prevStocksRef = useRef<Record<string, FyersQuote>>({});
+  
+  // Store INITIAL data for Day Session calculation
+  const initialStocksRef = useRef<Record<string, FyersQuote>>({});
 
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     field: 'symbol',
@@ -68,35 +71,59 @@ const App: React.FC = () => {
       const enriched: EnrichedFyersQuote[] = newQuotes.map(curr => {
         const prev = prevStocksRef.current[curr.symbol];
         
+        // Initialize Initial Reference if not exists (First data point of session)
+        if (!initialStocksRef.current[curr.symbol]) {
+           initialStocksRef.current[curr.symbol] = curr;
+        }
+        const initial = initialStocksRef.current[curr.symbol];
+
         let bid_qty_chg_1m = undefined;
         let bid_qty_chg_p = undefined;
         let ask_qty_chg_1m = undefined;
         let ask_qty_chg_p = undefined;
         let net_strength_1m = undefined;
+        
+        // Day Session Metrics
+        let bid_chg_day_p = undefined;
+        let ask_chg_day_p = undefined;
+        let day_net_strength = undefined;
 
+        // 1. Calculate 1 Minute Changes
         if (prev) {
-           // --- BID CALCULATIONS ---
+           // BID
            if (curr.total_buy_qty !== undefined && prev.total_buy_qty !== undefined) {
               bid_qty_chg_1m = curr.total_buy_qty - prev.total_buy_qty;
-              
               if (prev.total_buy_qty !== 0) {
                  bid_qty_chg_p = (bid_qty_chg_1m / prev.total_buy_qty) * 100;
               }
            }
-
-           // --- ASK CALCULATIONS ---
+           // ASK
            if (curr.total_sell_qty !== undefined && prev.total_sell_qty !== undefined) {
               ask_qty_chg_1m = curr.total_sell_qty - prev.total_sell_qty;
-              
               if (prev.total_sell_qty !== 0) {
                  ask_qty_chg_p = (ask_qty_chg_1m / prev.total_sell_qty) * 100;
               }
            }
-
-           // --- NET STRENGTH (Bid % - Ask %) ---
+           // NET 1m
            if (bid_qty_chg_p !== undefined && ask_qty_chg_p !== undefined) {
               net_strength_1m = bid_qty_chg_p - ask_qty_chg_p;
            }
+        }
+
+        // 2. Calculate Day Session Changes (vs Initial)
+        if (initial) {
+            // BID Day %
+            if (curr.total_buy_qty !== undefined && initial.total_buy_qty !== undefined && initial.total_buy_qty !== 0) {
+                bid_chg_day_p = ((curr.total_buy_qty - initial.total_buy_qty) / initial.total_buy_qty) * 100;
+            }
+            // ASK Day %
+            if (curr.total_sell_qty !== undefined && initial.total_sell_qty !== undefined && initial.total_sell_qty !== 0) {
+                ask_chg_day_p = ((curr.total_sell_qty - initial.total_sell_qty) / initial.total_sell_qty) * 100;
+            }
+            // Net Day
+            if (bid_chg_day_p !== undefined && ask_chg_day_p !== undefined) {
+                day_net_strength = bid_chg_day_p - ask_chg_day_p;
+            }
         }
         
         // Update Ref for next time
@@ -108,7 +135,13 @@ const App: React.FC = () => {
           bid_qty_chg_p,
           ask_qty_chg_1m,
           ask_qty_chg_p,
-          net_strength_1m
+          net_strength_1m,
+          
+          initial_total_buy_qty: initial?.total_buy_qty,
+          initial_total_sell_qty: initial?.total_sell_qty,
+          bid_chg_day_p,
+          ask_chg_day_p,
+          day_net_strength
         };
       });
 
@@ -167,10 +200,10 @@ const App: React.FC = () => {
 
   // --- Render ---
   return (
-    <div className="min-h-screen bg-gray-950 flex flex-col text-gray-100">
+    <div className="h-screen bg-gray-950 flex flex-col text-gray-100 overflow-hidden">
       
-      {/* Navbar */}
-      <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-30 shadow-md">
+      {/* Navbar (Fixed) */}
+      <header className="flex-none bg-gray-900 border-b border-gray-800 z-30 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           
           <div className="flex items-center gap-6">
@@ -240,105 +273,116 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+      {/* Main Layout */}
+      <main className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
         
         {/* Error Banner */}
         {error && (
-          <div className="mb-6 bg-red-950/40 border border-red-900 text-red-200 px-4 py-3 rounded-lg flex items-center justify-between gap-4">
-            <span className="flex items-center gap-2">
-               <AlertCircle size={18} className="text-red-500 shrink-0" />
-               <span className="text-sm">{error}</span>
-            </span>
+          <div className="flex-none px-4 pt-4">
+            <div className="bg-red-950/40 border border-red-900 text-red-200 px-4 py-3 rounded-lg flex items-center justify-between gap-4">
+              <span className="flex items-center gap-2">
+                 <AlertCircle size={18} className="text-red-500 shrink-0" />
+                 <span className="text-sm">{error}</span>
+              </span>
+            </div>
           </div>
         )}
 
         {/* --- VIEW ROUTER --- */}
         
-        {/* 1. STOCK DETAIL VIEW */}
+        {/* 1. STOCK DETAIL VIEW (Full Height overlay or replacement) */}
         {selectedStock ? (
-           <StockDetail 
-              symbol={selectedStock} 
-              credentials={credentials} 
-              onBack={() => setSelectedStock(null)} 
-           />
+           <div className="flex-1 p-4 overflow-hidden">
+               <StockDetail 
+                  symbol={selectedStock} 
+                  credentials={credentials} 
+                  onBack={() => setSelectedStock(null)} 
+               />
+           </div>
         ) : viewMode === 'options' ? (
            
            /* 2. OPTION CHAIN VIEW */
-           <OptionChain credentials={credentials} />
+           <div className="flex-1 p-4 overflow-hidden flex flex-col">
+              <OptionChain credentials={credentials} />
+           </div>
            
         ) : (
            
-           /* 3. DASHBOARD VIEW (Original) */
+           /* 3. DASHBOARD VIEW */
            <>
-             {stocks.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                   <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                      <p className="text-xs text-gray-500 uppercase font-semibold">Trend</p>
-                      <div className="flex items-end gap-2 mt-1">
-                         <span className="text-2xl font-bold text-green-500">{stocks.filter(s => s.ch >= 0).length}</span>
-                         <span className="text-gray-600">/</span>
-                         <span className="text-2xl font-bold text-red-500">{stocks.filter(s => s.ch < 0).length}</span>
-                      </div>
-                   </div>
-                   
-                   <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                      <p className="text-xs text-gray-500 uppercase font-semibold">Top Gainer</p>
-                      <div className="mt-1">
-                         {(() => {
-                            const top = [...stocks].sort((a,b) => b.chp - a.chp)[0];
-                            if(!top) return <span className="text-gray-500">--</span>;
-                            return (
-                               <>
-                                  <p className="font-bold text-white truncate">{top.short_name || top.symbol}</p>
-                                  <p className="text-green-500 font-mono text-sm">+{top.chp.toFixed(2)}%</p>
-                               </>
-                            )
-                         })()}
-                      </div>
-                   </div>
+             {/* Fixed Stats Area (Non-scrolling) */}
+             <div className="flex-none p-4 pb-0">
+               {stocks.length > 0 && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                     <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+                        <p className="text-xs text-gray-500 uppercase font-semibold">Trend</p>
+                        <div className="flex items-end gap-2 mt-1">
+                           <span className="text-2xl font-bold text-green-500">{stocks.filter(s => s.ch >= 0).length}</span>
+                           <span className="text-gray-600">/</span>
+                           <span className="text-2xl font-bold text-red-500">{stocks.filter(s => s.ch < 0).length}</span>
+                        </div>
+                     </div>
+                     
+                     <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+                        <p className="text-xs text-gray-500 uppercase font-semibold">Top Gainer</p>
+                        <div className="mt-1">
+                           {(() => {
+                              const top = [...stocks].sort((a,b) => b.chp - a.chp)[0];
+                              if(!top) return <span className="text-gray-500">--</span>;
+                              return (
+                                 <>
+                                    <p className="font-bold text-white truncate">{top.short_name || top.symbol}</p>
+                                    <p className="text-green-500 font-mono text-sm">+{top.chp.toFixed(2)}%</p>
+                                 </>
+                              )
+                           })()}
+                        </div>
+                     </div>
 
-                    <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                      <p className="text-xs text-gray-500 uppercase font-semibold">Top Loser</p>
-                      <div className="mt-1">
-                         {(() => {
-                            const bottom = [...stocks].sort((a,b) => a.chp - b.chp)[0];
-                            if(!bottom) return <span className="text-gray-500">--</span>;
-                            return (
-                               <>
-                                  <p className="font-bold text-white truncate">{bottom.short_name || bottom.symbol}</p>
-                                  <p className="text-red-500 font-mono text-sm">{bottom.chp.toFixed(2)}%</p>
-                               </>
-                            )
-                         })()}
-                      </div>
-                   </div>
-                   
-                    <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between">
-                      <div>
-                         <p className="text-xs text-gray-500 uppercase font-semibold">Status</p>
-                         <p className="text-white mt-1 font-medium flex items-center gap-2">
-                             <span className={`relative inline-flex rounded-full h-3 w-3 ${error ? 'bg-red-500' : 'bg-green-500'}`}></span>
-                             {error ? 'Error' : 'Live'}
-                         </p>
-                      </div>
-                      <button onClick={() => refreshData()} className="p-2 bg-gray-800 hover:bg-gray-700 rounded-full transition-colors">
-                         <RefreshCw size={18} className={`text-gray-400 ${isLoading ? 'animate-spin' : ''}`} />
-                      </button>
-                   </div>
-                </div>
-             )}
+                      <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+                        <p className="text-xs text-gray-500 uppercase font-semibold">Top Loser</p>
+                        <div className="mt-1">
+                           {(() => {
+                              const bottom = [...stocks].sort((a,b) => a.chp - b.chp)[0];
+                              if(!bottom) return <span className="text-gray-500">--</span>;
+                              return (
+                                 <>
+                                    <p className="font-bold text-white truncate">{bottom.short_name || bottom.symbol}</p>
+                                    <p className="text-red-500 font-mono text-sm">{bottom.chp.toFixed(2)}%</p>
+                                 </>
+                              )
+                           })()}
+                        </div>
+                     </div>
+                     
+                      <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between">
+                        <div>
+                           <p className="text-xs text-gray-500 uppercase font-semibold">Status</p>
+                           <p className="text-white mt-1 font-medium flex items-center gap-2">
+                               <span className={`relative inline-flex rounded-full h-3 w-3 ${error ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                               {error ? 'Error' : 'Live'}
+                           </p>
+                        </div>
+                        <button onClick={() => refreshData()} className="p-2 bg-gray-800 hover:bg-gray-700 rounded-full transition-colors">
+                           <RefreshCw size={18} className={`text-gray-400 ${isLoading ? 'animate-spin' : ''}`} />
+                        </button>
+                     </div>
+                  </div>
+               )}
+             </div>
 
-             <StockTable 
-                data={filteredAndSortedStocks} 
-                sortConfig={sortConfig} 
-                onSort={handleSort}
-                onSelect={setSelectedStock}
-                isLoading={isLoading}
-             />
+             {/* Scrolling Table Area */}
+             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+               <StockTable 
+                  data={filteredAndSortedStocks} 
+                  sortConfig={sortConfig} 
+                  onSort={handleSort}
+                  onSelect={setSelectedStock}
+                  isLoading={isLoading}
+               />
+             </div>
            </>
         )}
-        
       </main>
 
       {/* Settings Modal */}
