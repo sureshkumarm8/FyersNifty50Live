@@ -22,7 +22,7 @@ export interface FyersQuote {
   prev_close_price: number;
   short_name: string;
   spread: number;
-  tt: number; // Time
+  tt: number | string; // Time (can be unix timestamp string or number)
   volume: number;
 }
 

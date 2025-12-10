@@ -38,29 +38,36 @@ const fetchBatch = async (
     }
   });
 
-  // 1. Check HTTP Status FIRST
+  // Check HTTP Status
   if (!response.ok) {
+    // Try to read error body to get the real reason from the proxy
+    const errText = await response.text();
+    let errMsg = `Server Error (${response.status})`;
+    
+    try {
+      const errJson = JSON.parse(errText);
+      // Construct a detailed error message
+      if (errJson.details) {
+         errMsg = `${errJson.error || 'Error'}: ${errJson.details.substring(0, 100)}`;
+         if (errJson.upstreamStatus) errMsg += ` (Upstream: ${errJson.upstreamStatus})`;
+      } else if (errJson.error) {
+         errMsg = errJson.error;
+      } else if (errJson.message) {
+         errMsg = errJson.message;
+      }
+    } catch (e) {
+      // If raw text (e.g. HTML from 404/503)
+      if (errText.length < 200) errMsg += `: ${errText}`;
+    }
+
     if (response.status === 404) {
-      throw new Error("API Endpoint not found. (If local: run 'npm run server'. If Vercel: check deployment)");
+      throw new Error(`API Endpoint not found. ${errMsg}`);
     }
     if (response.status === 401) throw new Error("Unauthorized: Invalid App ID or Access Token");
     if (response.status === 403) throw new Error("Forbidden: Access Denied by Fyers");
-    if (response.status === 503) throw new Error("Service Unavailable (503): Fyers API is overloaded or blocking requests.");
-    if (response.status === 502) throw new Error("Bad Gateway (502): Upstream API rejected the request.");
-    if (response.status === 504) throw new Error("Gateway Timeout: Fyers API is slow or unreachable");
+    if (response.status === 503) throw new Error("Service Unavailable (503): Fyers API is overloaded.");
+    if (response.status === 502) throw new Error(`Bad Gateway (502): ${errMsg}`);
     
-    // Try to read error body if possible
-    const errText = await response.text();
-    let errMsg = `Server Error (${response.status})`;
-    try {
-      const errJson = JSON.parse(errText);
-      if (errJson.error) errMsg = errJson.error;
-      else if (errJson.message) errMsg = errJson.message;
-      
-      if (errJson.details) errMsg += ` - ${errJson.details.substring(0, 50)}...`;
-    } catch (e) {
-      if (errText.length < 50) errMsg += `: ${errText}`;
-    }
     throw new Error(errMsg);
   }
 
@@ -76,7 +83,6 @@ const fetchBatch = async (
   } catch (parseError) {
     console.error("JSON Parse Error:", parseError, "Response:", text.substring(0, 100));
     if (text.includes("<!DOCTYPE") || text.includes("<html")) {
-      // Check for common HTML error titles
       if(text.includes("503 Service Temporarily Unavailable")) {
          throw new Error("Service Unavailable (503): Fyers API is temporarily down.");
       }

@@ -39,7 +39,13 @@ const server = http.createServer(async (req, res) => {
     try {
       // CRITICAL FIX: Re-encode the symbols because searchParams.get() has decoded them.
       const encodedSymbols = encodeURIComponent(symbols);
-      const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${encodedSymbols}`;
+      // UPDATED: Use api-t1.fyers.in/data/quotes as per working curl example
+      const fyersUrl = `https://api-t1.fyers.in/data/quotes?symbols=${encodedSymbols}`;
+
+      console.log(`\n[Proxy] ---------------------------------------------------`);
+      console.log(`[Proxy] Incoming Request for ${symbols.split(',').length} symbols`);
+      console.log(`[Proxy] Upstream URL: ${fyersUrl}`);
+      console.log(`[Proxy] Auth Header (masked): ${authHeader.substring(0, 15)}...`);
 
       // Native fetch is available in Node 18+
       const fyersResponse = await fetch(fyersUrl, {
@@ -54,18 +60,22 @@ const server = http.createServer(async (req, res) => {
         }
       });
       
+      console.log(`[Proxy] Upstream Status: ${fyersResponse.status}`);
+
       const text = await fyersResponse.text();
-      let data;
+      console.log(`[Proxy] Upstream Body Preview: ${text.substring(0, 200)}`);
       
+      let data;
       try {
         data = text ? JSON.parse(text) : {};
       } catch (e) {
+        console.error(`[Proxy] JSON Parse Error: ${e.message}`);
         // Handle upstream sending HTML or garbage
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
           error: "Upstream API returned invalid JSON", 
           upstreamStatus: fyersResponse.status,
-          details: text.substring(0, 100) 
+          details: text // Send full text to client for better debugging
         }));
         return;
       }
@@ -74,7 +84,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(data));
 
     } catch (err) {
-      console.error(err);
+      console.error(`[Proxy] Internal Error:`, err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }

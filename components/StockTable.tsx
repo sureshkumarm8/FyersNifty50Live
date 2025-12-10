@@ -24,10 +24,13 @@ const formatVolume = (vol: number) => {
   return vol.toLocaleString('en-IN');
 };
 
-const formatTime = (timestamp: number) => {
+const formatTime = (timestamp: number | string) => {
   if (!timestamp) return '--:--';
+  const ts = Number(timestamp);
+  if (isNaN(ts)) return '--:--';
+
   // Check if timestamp is in seconds (10 digits) or milliseconds (13 digits)
-  const date = new Date(timestamp > 10000000000 ? timestamp : timestamp * 1000);
+  const date = new Date(ts > 10000000000 ? ts : ts * 1000);
   return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 };
 

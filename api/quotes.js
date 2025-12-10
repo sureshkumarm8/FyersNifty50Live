@@ -27,7 +27,8 @@ export default async function handler(request, response) {
   try {
     // CRITICAL FIX: Re-encode the symbols because request.query has decoded them.
     const encodedSymbols = encodeURIComponent(symbols);
-    const fyersUrl = `https://api.fyers.in/data-rest/v3/quotes?symbols=${encodedSymbols}`;
+    // UPDATED: Use api-t1.fyers.in/data/quotes as per working curl example
+    const fyersUrl = `https://api-t1.fyers.in/data/quotes?symbols=${encodedSymbols}`;
     
     // Use native fetch
     const fetchResponse = await fetch(fyersUrl, {
