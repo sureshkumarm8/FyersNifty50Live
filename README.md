@@ -1,16 +1,32 @@
 # Nifty50 Live Dashboard
 
-A real-time stock tracking dashboard for **Nifty50** stocks, built with **React**, **TypeScript**, and **Tailwind CSS**, powered by the **Fyers API v3**.
+A high-performance real-time stock tracking and analysis dashboard for **Nifty50** stocks and **Nifty Options**, built with **React**, **TypeScript**, and **Tailwind CSS**, powered by the **Fyers API v3**.
 
 ![Dashboard Preview](https://via.placeholder.com/800x400.png?text=Nifty50+Live+Dashboard)
 
 ## 🚀 Features
 
-*   **Live Quotes**: Fetches real-time data for all Nifty50 stocks in a single efficient request.
-*   **Smart Analysis**: Displays `LTP`, `Change %`, `Total Bid/Ask Qty` and calculates **1-minute volume changes** dynamically.
-*   **Intraday History**: Click on any stock to view minute-by-minute OHLCV data for the current day.
-*   **Sort & Search**: Instantly filter stocks or sort by any metric (Gainers, Losers, Volume, etc.).
-*   **Secure Proxy**: Includes a local Node.js proxy server (and Vercel API routes) to handle CORS and secure API communication.
+### 📊 Live Equity Dashboard
+*   **Real-time Quotes**: Fetches live data for all Nifty50 stocks instantly.
+*   **Session Metrics**: Tracks **Day % Change** relative to the session start (when you opened the app).
+*   **Momentum Analysis**: Displays **1-minute Net % Strength** based on Bid/Ask pressure changes.
+*   **Totals Row**: Cumulative weighted averages for Bid/Ask changes fixed at the top.
+
+### 📈 Smart Cumulative Summary (New!)
+*   **Weighted Analysis**: Unlike standard dashboards that just sum quantities, this view calculates impact based on **Nifty 50 Weightage**.
+*   **Market Breadth**: Visualizes Bullish vs Bearish weight impact.
+*   **Buying/Selling Pressure**: Aggregates `Volume * Price * Weight` to show true institutional money flow.
+*   **Index Movers**: Lists stocks by **Index Contribution points**, not just percentage change.
+
+### ⛓️ Nifty Options Chain
+*   **Auto-Expiry**: Automatically calculates the nearest **Tuesday Expiry** (Weekly/Monthly), handling holidays and market hours.
+*   **Dynamic Strikes**: Generates ATM + 10 strikes up/down based on live Spot Price.
+*   **Live Greeks Proxy**: Tracks Open Interest (OI) and Bid/Ask strength for all option contracts.
+
+### 🛠️ Technical Capabilities
+*   **Intraday History**: Click on any stock to view minute-by-minute OHLCV candles.
+*   **Smart Scrolling**: Fixed headers and stats with independently scrollable data tables.
+*   **Secure Proxy**: Includes a local Node.js proxy server (and Vercel Serverless Functions) to handle CORS and secure API communication.
 *   **Config Management**: Import/Export API credentials via JSON templates.
 
 ## 🛠️ Prerequisites
@@ -87,10 +103,12 @@ This project is configured for seamless deployment on Vercel.
 
 ## 📁 Project Structure
 
-*   `src/App.tsx`: Main dashboard logic.
-*   `src/components/StockTable.tsx`: The main grid view.
+*   `src/App.tsx`: Main dashboard logic and data enrichment.
+*   `src/components/StockTable.tsx`: The advanced data grid with weighted totals.
+*   `src/components/CumulativeView.tsx`: Weighted market analysis dashboard.
+*   `src/components/OptionChain.tsx`: Nifty options logic and view.
 *   `src/components/StockDetail.tsx`: Intraday history view.
-*   `src/services/fyersService.ts`: API interaction logic.
+*   `src/services/fyersService.ts`: API interaction, symbol generation, and response mapping.
 *   `server.js`: Local Node.js proxy server.
 *   `api/`: Vercel Serverless Functions (Backend).
 

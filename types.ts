@@ -143,3 +143,27 @@ export interface EnrichedFyersQuote extends FyersQuote {
   weight?: number;            // Nifty 50 Weightage (%)
   index_contribution?: number; // (Change% * Weight) - Rough impact score
 }
+
+export interface MarketSnapshot {
+  time: string;
+  niftyLtp: number;
+  ptsChg: number;
+  
+  // Sentiments
+  overallSent: number; // Weighted Breadth Net %
+  adv: number;
+  dec: number;
+  stockSent: number; // Aggregate Demand % (Buy-Sell)/Sell
+  
+  // Options
+  callSent: number;
+  putSent: number;
+  pcr: number;
+  optionsSent: number; // (Call Sent - Put Sent)
+  
+  // Flows (in Millions)
+  callsBuyQty: number;
+  callsSellQty: number;
+  putsBuyQty: number;
+  putsSellQty: number;
+}
