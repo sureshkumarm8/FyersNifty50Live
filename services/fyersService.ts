@@ -2,10 +2,6 @@ import { FyersQuote, FyersQuoteResponse, FyersCredentials } from '../types';
 
 // Points to the Vercel API route (api/quotes.js) or local proxy
 const PROXY_URL = '/api/quotes'; 
-const BATCH_SIZE = 15; // Reduced batch size to prevent 503/WAF errors
-const BATCH_DELAY_MS = 300; // Delay between batches to respect rate limits
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const processResponse = (data: FyersQuoteResponse): FyersQuote[] => {
   if (!data) return [];
@@ -20,15 +16,16 @@ const processResponse = (data: FyersQuoteResponse): FyersQuote[] => {
   return [];
 };
 
-const fetchBatch = async (
-  batchSymbols: string[], 
+const fetchSymbolsInternal = async (
+  symbols: string[], 
   credentials: FyersCredentials
 ): Promise<FyersQuote[]> => {
   const appId = credentials.appId.trim();
   const token = credentials.accessToken.trim();
 
   // Encode symbols to ensure special characters like ':' are handled correctly
-  const symbolsParam = encodeURIComponent(batchSymbols.join(','));
+  // Sending all symbols in one request (up to 50 supported) to minimize request count
+  const symbolsParam = encodeURIComponent(symbols.join(','));
   const targetUrl = `${PROXY_URL}?symbols=${symbolsParam}`;
 
   const response = await fetch(targetUrl, {
@@ -103,27 +100,10 @@ export const fetchQuotes = async (
     throw new Error("Missing Credentials");
   }
 
-  // Chunk the symbols into smaller batches
-  const chunks: string[][] = [];
-  for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
-    chunks.push(symbols.slice(i, i + BATCH_SIZE));
-  }
-
   try {
-    const allQuotes: FyersQuote[] = [];
-
-    // Process batches SERIALLY to avoid 503/Rate Limits
-    for (const chunk of chunks) {
-      const chunkQuotes = await fetchBatch(chunk, credentials);
-      allQuotes.push(...chunkQuotes);
-      
-      // Add delay between requests
-      if (chunks.length > 1) {
-        await delay(BATCH_DELAY_MS);
-      }
-    }
-    
-    return allQuotes;
+    // Fyers Data API v3 supports up to 50 symbols per request.
+    // We send all Nifty50 symbols in a single call to be efficient and avoid rate limits.
+    return await fetchSymbolsInternal(symbols, credentials);
 
   } catch (error: any) {
     // Enhance error message for connection failures
