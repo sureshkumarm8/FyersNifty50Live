@@ -23,7 +23,7 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history }) =
       <div className="p-4 border-b border-gray-800 bg-gray-900/90 backdrop-blur">
           <h2 className="text-xl font-bold text-blue-400 flex items-center gap-2">
              <Clock size={24} />
-             1-Hour Sentiment & Momentum History
+             Day Sentiment & Momentum History
           </h2>
       </div>
       

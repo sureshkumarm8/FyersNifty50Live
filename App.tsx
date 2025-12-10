@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, BrainCircuit } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
@@ -11,7 +11,7 @@ import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
 
-type ViewMode = 'dashboard' | 'options' | 'cumulative' | 'analyzer';
+type ViewMode = 'summary' | 'stocks' | 'options' | 'history';
 
 const App: React.FC = () => {
   // --- State ---
@@ -20,7 +20,8 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : { appId: '', accessToken: '' };
   });
 
-  const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
+  // Default view is now 'summary' (The Dashboard)
+  const [viewMode, setViewMode] = useState<ViewMode>('summary');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -57,7 +58,7 @@ const App: React.FC = () => {
     }));
   };
 
-  // --- Data Enrichment Logic (Reuse for both stocks and options) ---
+  // --- Data Enrichment Logic ---
   const enrichData = (
       currentData: FyersQuote[], 
       prevRef: React.MutableRefObject<Record<string, FyersQuote>>, 
@@ -204,11 +205,11 @@ const App: React.FC = () => {
 
       setHistoryLog(prev => {
           const updated = [...prev, snapshot];
-          if (updated.length > 60) updated.shift(); // Keep last 60 mins
+          // Keep roughly 1 full trading day (6.5 hours * 60 mins = ~390 mins)
+          if (updated.length > 400) updated.shift(); 
           return updated;
       });
   };
-
 
   const refreshData = useCallback(async () => {
     if (!credentials.appId || !credentials.accessToken) {
@@ -250,8 +251,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [credentials]); // Dependencies minimized to avoid loops
-
+  }, [credentials]);
 
   // --- Effects ---
   useEffect(() => {
@@ -296,27 +296,34 @@ const App: React.FC = () => {
                </div>
              </div>
 
-             {/* Navigation Tabs */}
+             {/* Navigation Tabs - Reordered */}
              {!selectedStock && (
                 <div className="flex bg-gray-800/50 p-1 rounded-lg border border-gray-700/50">
-                   <button onClick={() => setViewMode('dashboard')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
+                   {/* 1. Dashboard (Summary) */}
+                   <button onClick={() => setViewMode('summary')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'summary' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
+                      <PieChart size={16} /> Dashboard
+                   </button>
+                   
+                   {/* 2. Stocks List */}
+                   <button onClick={() => setViewMode('stocks')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'stocks' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
                       <List size={16} /> Stocks
                    </button>
-                   <button onClick={() => setViewMode('cumulative')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'cumulative' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                      <PieChart size={16} /> Summary
-                   </button>
+                   
+                   {/* 3. Option Chain */}
                    <button onClick={() => setViewMode('options')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'options' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                      <BarChart3 size={16} /> Options
+                      <BarChart3 size={16} /> Option Chain
                    </button>
-                   <button onClick={() => setViewMode('analyzer')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'analyzer' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
-                      <BrainCircuit size={16} /> AI Analyzer
+                   
+                   {/* 4. Day History */}
+                   <button onClick={() => setViewMode('history')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${viewMode === 'history' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>
+                      <Clock size={16} /> Day History
                    </button>
                 </div>
              )}
           </div>
 
           <div className="flex items-center gap-4">
-             {!selectedStock && viewMode === 'dashboard' && (
+             {!selectedStock && viewMode === 'stocks' && (
                <div className="hidden md:flex items-center bg-gray-800 rounded-full px-4 py-1.5 border border-gray-700">
                   <Search size={16} className="text-gray-500 mr-2" />
                   <input type="text" placeholder="Search..." className="bg-transparent border-none outline-none text-sm w-48 text-white" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
@@ -346,7 +353,7 @@ const App: React.FC = () => {
            <div className="flex-1 p-4 overflow-hidden">
                <StockDetail symbol={selectedStock} credentials={credentials} onBack={() => setSelectedStock(null)} />
            </div>
-        ) : viewMode === 'analyzer' ? (
+        ) : viewMode === 'history' ? (
            <div className="flex-1 p-4 overflow-hidden">
                <SentimentHistory history={historyLog} />
            </div>
@@ -354,17 +361,16 @@ const App: React.FC = () => {
            <div className="flex-1 p-4 overflow-hidden flex flex-col">
               <OptionChain quotes={optionQuotes} niftyLtp={niftyLtp} lastUpdated={lastUpdated ? new Date(lastUpdated) : null} isLoading={isLoading} />
            </div>
-        ) : viewMode === 'cumulative' ? (
+        ) : viewMode === 'summary' ? (
            <div className="flex-1 overflow-y-auto">
-              <CumulativeView data={stocks} />
+              <CumulativeView data={stocks} latestSnapshot={historyLog.length > 0 ? historyLog[historyLog.length - 1] : undefined} />
            </div>
         ) : (
-           /* DASHBOARD */
+           /* STOCKS LIST VIEW */
            <>
              <div className="flex-none p-4 pb-0">
                {stocks.length > 0 && (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                     {/* Existing Stats Cards */}
                      <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
                         <p className="text-xs text-gray-500 uppercase font-semibold">Trend</p>
                         <div className="flex items-end gap-2 mt-1">

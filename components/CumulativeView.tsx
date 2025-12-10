@@ -1,10 +1,11 @@
 
 import React, { useMemo } from 'react';
-import { EnrichedFyersQuote } from '../types';
-import { TrendingUp, TrendingDown, Activity, Scale, ArrowUpRight, ArrowDownRight, BarChart2, DollarSign } from 'lucide-react';
+import { EnrichedFyersQuote, MarketSnapshot } from '../types';
+import { TrendingUp, TrendingDown, Activity, ArrowUpRight, ArrowDownRight, BarChart2, DollarSign, Scale } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
+  latestSnapshot?: MarketSnapshot;
 }
 
 const formatValue = (val: number) => {
@@ -15,11 +16,12 @@ const formatValue = (val: number) => {
     return val.toLocaleString('en-IN');
 };
 
-const formatPercent = (num: number) => {
-    return `${num > 0 ? '+' : ''}${num.toFixed(2)}%`;
+const formatMillions = (num: number) => {
+  const val = num / 1000000;
+  return `${val.toFixed(2)}M`;
 };
 
-export const CumulativeView: React.FC<CumulativeViewProps> = ({ data }) => {
+export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot }) => {
   
   // --- Weighted Aggregation Logic ---
   const stats = useMemo(() => {
@@ -71,7 +73,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data }) => {
   // --- Derived Metrics ---
 
   // Weighted Breadth
-  const bullishPct = (stats.bullishWeight / stats.totalWeight) * 100;
+  const bullishPct = stats.totalWeight > 0 ? (stats.bullishWeight / stats.totalWeight) * 100 : 50;
   const bearishPct = 100 - bullishPct;
 
   // Weighted Value Pressure Ratio
@@ -96,8 +98,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data }) => {
        <div className="bg-blue-900/20 border border-blue-800/50 p-3 rounded-lg flex items-center gap-2 text-sm text-blue-200">
           <Activity size={16} />
           <span>
-            <strong>Smart View:</strong> All metrics below are <strong>weighted</strong> by Nifty 50 stock weightage. 
-            This reflects actual market impact rather than raw quantities.
+            <strong>Weighted Dashboard:</strong> Metrics weighted by Nifty 50 stock weightage. Reflects actual market impact.
           </span>
        </div>
 
@@ -170,7 +171,59 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data }) => {
 
        </div>
 
-       {/* Row 2: Net Weighted Strength */}
+       {/* Row 2: Options Data (If available) */}
+       {latestSnapshot && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg">
+             <div className="flex items-center gap-2 mb-4">
+                 <Scale size={20} className="text-yellow-400" />
+                 <h3 className="text-gray-200 font-bold uppercase">Options Market Sentiment</h3>
+             </div>
+             
+             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                 <div>
+                     <p className="text-xs text-gray-500 uppercase">Put-Call Ratio (PCR)</p>
+                     <p className={`text-2xl font-mono font-bold ${latestSnapshot.pcr > 1 ? 'text-green-400' : 'text-red-400'}`}>
+                        {latestSnapshot.pcr.toFixed(2)}
+                     </p>
+                 </div>
+                 
+                 <div>
+                     <p className="text-xs text-gray-500 uppercase">Call Demand</p>
+                     <p className={`text-xl font-mono font-bold ${latestSnapshot.callSent > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {latestSnapshot.callSent > 0 ? '+' : ''}{latestSnapshot.callSent.toFixed(2)}%
+                     </p>
+                     <p className="text-[10px] text-gray-500 mt-1">
+                        B: {formatMillions(latestSnapshot.callsBuyQty)} / S: {formatMillions(latestSnapshot.callsSellQty)}
+                     </p>
+                 </div>
+                 
+                 <div>
+                     <p className="text-xs text-gray-500 uppercase">Put Demand</p>
+                     <p className={`text-xl font-mono font-bold ${latestSnapshot.putSent > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {latestSnapshot.putSent > 0 ? '+' : ''}{latestSnapshot.putSent.toFixed(2)}%
+                     </p>
+                     <p className="text-[10px] text-gray-500 mt-1">
+                        B: {formatMillions(latestSnapshot.putsBuyQty)} / S: {formatMillions(latestSnapshot.putsSellQty)}
+                     </p>
+                 </div>
+                 
+                 <div>
+                     <p className="text-xs text-gray-500 uppercase">Net Option Flow</p>
+                     <p className={`text-xl font-mono font-bold ${latestSnapshot.optionsSent > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                         {latestSnapshot.optionsSent > 0 ? 'BULLISH' : 'BEARISH'}
+                     </p>
+                     <div className="h-1.5 w-full bg-gray-800 rounded-full mt-2 overflow-hidden">
+                        <div 
+                          className={`h-full ${latestSnapshot.optionsSent > 0 ? 'bg-green-500' : 'bg-red-500'}`} 
+                          style={{ width: `${Math.min(Math.abs(latestSnapshot.optionsSent), 100)}%` }}
+                        ></div>
+                     </div>
+                 </div>
+             </div>
+        </div>
+       )}
+
+       {/* Row 3: Net Weighted Strength */}
        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
              <div className="flex items-center justify-between mb-2">
                 <h3 className="text-gray-300 text-sm font-bold flex items-center gap-2">
@@ -181,9 +234,6 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data }) => {
                    {momentumNet > 0 ? 'BULLISH' : 'BEARISH'} ({formatValue(momentumNet)})
                 </span>
              </div>
-             <p className="text-xs text-gray-500 mb-4">
-               Shows the net flow of weighted value in the last minute. Positive means heavyweights are seeing more buying interest.
-             </p>
              
              {/* Center Zero Gauge */}
              <div className="relative h-6 bg-gray-800 rounded-full overflow-hidden flex">
@@ -206,7 +256,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data }) => {
              </div>
        </div>
 
-       {/* Row 3: Index Impact Lists */}
+       {/* Row 4: Index Impact Lists */}
        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 min-h-0">
           
           {/* Top Lifters */}
