@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon } from 'lucide-react';
 import { StockTable } from './components/StockTable';
@@ -93,14 +92,16 @@ const App: React.FC = () => {
   }, [sessionHistory]);
 
   const saveCredentials = (newCreds: FyersCredentials) => {
-    setCredentials(newCreds);
+    // Only update credentials, do not reset any other state
+    setCredentials(newCreds); 
     localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
     setError(null);
     setMarketStatusMsg(null);
   };
 
   const handleSetViewMode = (mode: ViewMode) => {
-    if (mode !== 'settings') {
+    // Before navigating TO settings, save where we came from.
+    if (mode === 'settings' && viewMode !== 'settings') {
       prevViewModeRef.current = viewMode;
     }
     setViewMode(mode);
@@ -164,8 +165,19 @@ const App: React.FC = () => {
       return currentData.map(curr => {
         const prev = prevRef.current[curr.symbol];
         
+        // Load initial data from session history if available, otherwise set it
         if (!initialRef.current[curr.symbol]) {
-           initialRef.current[curr.symbol] = curr;
+           const sessionStartData = sessionHistory[curr.symbol]?.[0];
+           if(sessionStartData) {
+              initialRef.current[curr.symbol] = {
+                 ...curr,
+                 lp: sessionStartData.lp,
+                 total_buy_qty: sessionStartData.total_buy_qty,
+                 total_sell_qty: sessionStartData.total_sell_qty,
+              };
+           } else {
+              initialRef.current[curr.symbol] = curr;
+           }
         }
         const initial = initialRef.current[curr.symbol];
 
