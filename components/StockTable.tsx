@@ -1,7 +1,7 @@
 
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, SortConfig, SortField } from '../types';
-import { ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowUp, ArrowDown, BarChart2, TrendingUp, TrendingDown, Activity } from 'lucide-react';
 
 interface StockTableProps {
   data: EnrichedFyersQuote[];
@@ -19,17 +19,33 @@ const formatNumber = (num: number | undefined, decimals: number = 2) => {
   });
 };
 
-const formatPercent = (num: number | undefined) => {
-    if (num === undefined || num === null || isNaN(num)) return <span className="text-slate-600">--</span>;
-    const isPos = num > 0;
-    const isNeg = num < 0;
-    const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
-    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(1)}%</span>;
+const PercentBadge = ({ val, highlight = false }: { val: number | undefined, highlight?: boolean }) => {
+    if (val === undefined || val === null || isNaN(val)) return <span className="text-slate-600">--</span>;
+    const isPos = val > 0;
+    const isNeg = val < 0;
+    
+    // Base colors
+    const bgClass = isPos ? 'bg-emerald-500/10' : isNeg ? 'bg-rose-500/10' : 'bg-slate-800/50';
+    const textClass = isPos ? 'text-emerald-400' : isNeg ? 'text-rose-400' : 'text-slate-400';
+    const borderClass = isPos ? 'border-emerald-500/20' : isNeg ? 'border-rose-500/20' : 'border-transparent';
+    
+    // Highlight adds a glow/border for key metrics
+    const glowClass = highlight 
+        ? (isPos ? 'shadow-[0_0_10px_rgba(16,185,129,0.1)]' : isNeg ? 'shadow-[0_0_10px_rgba(244,63,94,0.1)]' : '') 
+        : '';
+
+    return (
+        <div className={`inline-flex items-center justify-end px-2 py-1 rounded-md border ${bgClass} ${borderClass} ${glowClass} min-w-[60px]`}>
+            <span className={`font-mono text-xs font-bold ${textClass}`}>
+                {isPos ? '+' : ''}{val.toFixed(2)}%
+            </span>
+        </div>
+    );
 };
 
 const formatQty = (qty: number | undefined) => {
    if (qty === undefined || qty === null) return '--';
-   return <span className="text-slate-300 tracking-tight">{qty.toLocaleString('en-IN')}</span>;
+   return <span className="text-slate-400 font-mono tracking-tight text-[11px]">{qty.toLocaleString('en-IN')}</span>;
 };
 
 const formatTime = (timestamp: number | string) => {
@@ -46,26 +62,24 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
     return sortConfig.direction === 'asc' ? <ArrowUp size={12} className="text-blue-400" /> : <ArrowDown size={12} className="text-blue-400" />;
   };
 
-  const headers: { label: string; field: SortField | null; align: 'left' | 'right'; width?: string; highlight?: boolean; responsive?: string }[] = [
+  // Define Headers with precise styling
+  const headers: { label: string; field: SortField | null; align: 'left' | 'right'; width?: string; highlight?: boolean; responsive?: string; icon?: React.ElementType }[] = [
     { label: 'Symbol', field: 'symbol', align: 'left', width: 'w-32 sm:w-48' },
     { label: 'LTP', field: 'lp', align: 'right' },
     { label: '1m %', field: 'lp_chg_1m_p', align: 'right', highlight: true },
-    // Renamed Sess % to Day % (lp_chg_day_p is the session change)
     { label: 'Day %', field: 'lp_chg_day_p', align: 'right' },
-    // Removed old Day % (chp)
-    { label: 'Vol', field: 'volume', align: 'right', responsive: 'hidden md:table-cell' },
+    { label: 'Vol', field: 'volume', align: 'right', responsive: 'hidden md:table-cell', icon: BarChart2 },
     
     { label: 'Total Bid', field: 'total_buy_qty', align: 'right', responsive: 'hidden lg:table-cell' },
-    { label: 'Bid 1m%', field: 'bid_qty_chg_p', align: 'right', highlight: true, responsive: 'hidden md:table-cell' },
+    { label: 'Bid 1m%', field: 'bid_qty_chg_p', align: 'right', responsive: 'hidden md:table-cell' },
     { label: 'Bid Day%', field: 'bid_chg_day_p', align: 'right', responsive: 'hidden lg:table-cell' }, 
     
     { label: 'Total Ask', field: 'total_sell_qty', align: 'right', responsive: 'hidden lg:table-cell' },
-    { label: 'Ask 1m%', field: 'ask_qty_chg_p', align: 'right', highlight: true, responsive: 'hidden md:table-cell' },
+    { label: 'Ask 1m%', field: 'ask_qty_chg_p', align: 'right', responsive: 'hidden md:table-cell' },
     { label: 'Ask Day%', field: 'ask_chg_day_p', align: 'right', responsive: 'hidden lg:table-cell' }, 
     
-    { label: '1m Net%', field: 'net_strength_1m', align: 'right', highlight: true }, 
-    // Renamed Day Net % to Day Str (Strength)
-    { label: 'Day Str', field: 'day_net_strength', align: 'right' }, 
+    { label: '1m Net Str', field: 'net_strength_1m', align: 'right', highlight: true, icon: Activity }, 
+    { label: 'Day Strength', field: 'day_net_strength', align: 'right' }, 
 
     { label: 'Time', field: 'tt', align: 'right', responsive: 'hidden md:table-cell' },
   ];
@@ -98,9 +112,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
   const totalBidChgDayP = totals && totals.initial_buy_qty > 0 ? ((totals.total_buy_qty - totals.initial_buy_qty) / totals.initial_buy_qty) * 100 : 0;
   const totalAskChgDayP = totals && totals.initial_sell_qty > 0 ? ((totals.total_sell_qty - totals.initial_sell_qty) / totals.initial_sell_qty) * 100 : 0;
   
-  // Weighted Average Strength for Total Row
   const weightedDayStr = totals && totals.total_weight > 0 ? totals.weighted_net_strength / totals.total_weight : 0;
-  
   const weightedLp1m = totals && totals.total_weight > 0 ? totals.weighted_lp_1m / totals.total_weight : 0;
   const weightedLpDay = totals && totals.total_weight > 0 ? totals.weighted_lp_day / totals.total_weight : 0;
 
@@ -120,45 +132,52 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
   if (data.length === 0) {
      return (
         <div className="w-full h-64 flex flex-col items-center justify-center text-slate-500 space-y-4 glass-panel rounded-xl">
-           <p className="font-mono uppercase tracking-widest">System Offline / No Data</p>
+           <Activity size={40} className="text-slate-700" />
+           <p className="font-mono uppercase tracking-widest text-xs">Awaiting Data Feed...</p>
         </div>
      );
   }
 
   return (
-    <div className="w-full glass-panel rounded-2xl overflow-hidden flex flex-col h-full shadow-2xl relative">
+    <div className="w-full glass-panel rounded-2xl overflow-hidden flex flex-col h-full shadow-2xl relative border border-slate-800">
       <div className="overflow-auto flex-1 custom-scrollbar">
         <table className="w-full text-xs sm:text-sm border-collapse whitespace-nowrap">
-          <thead className="glass-header text-slate-400 sticky top-0 z-20 uppercase text-[10px] font-bold tracking-widest">
+          <thead className="glass-header text-slate-500 sticky top-0 z-20 uppercase text-[10px] font-bold tracking-wider">
             {totals && (
-               <tr className="bg-slate-900/80 backdrop-blur text-slate-200 border-b border-white/10 shadow-lg">
-                 <td className="px-4 py-4 text-left text-blue-400 font-bold border-r border-white/5 bg-blue-900/10 sticky left-0 z-10 backdrop-blur-md">MARKET AGGREGATE</td>
-                 <td className="px-4 py-4 text-right"></td>
-                 <td className="px-4 py-4 text-right bg-white/5 border-l border-white/5 border-r border-white/5">{formatPercent(weightedLp1m)}</td>
-                 <td className="px-4 py-4 text-right bg-white/5">{formatPercent(weightedLpDay)}</td>
-                 <td className="px-4 py-4 text-right hidden md:table-cell">{formatQty(totals.total_volume)}</td>
+               <tr className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 backdrop-blur-md border-b border-blue-500/20 shadow-lg relative z-20">
+                 <td className="px-4 py-3 text-left font-bold border-r border-white/5 sticky left-0 z-20 bg-slate-900/95 backdrop-blur-md">
+                    <div className="flex items-center gap-2">
+                        <span className="w-1 h-4 bg-blue-500 rounded-full"></span>
+                        <span className="text-blue-200">MARKET AGGREGATE</span>
+                    </div>
+                 </td>
+                 <td className="px-4 py-3 text-right"></td>
+                 <td className="px-4 py-3 text-right"><PercentBadge val={weightedLp1m} /></td>
+                 <td className="px-4 py-3 text-right"><PercentBadge val={weightedLpDay} /></td>
+                 <td className="px-4 py-3 text-right hidden md:table-cell text-slate-300 font-mono">{formatQty(totals.total_volume)}</td>
                  
-                 <td className="px-4 py-4 text-right border-l border-white/5 hidden lg:table-cell">{formatQty(totals.total_buy_qty)}</td>
-                 <td className="px-4 py-4 text-right bg-bull/5 border-l border-white/5 hidden md:table-cell">{formatPercent(totalBidChg1mP)}</td>
-                 <td className="px-4 py-4 text-right bg-bull/5 hidden lg:table-cell">{formatPercent(totalBidChgDayP)}</td>
+                 <td className="px-4 py-3 text-right border-l border-white/5 hidden lg:table-cell text-slate-400">{formatQty(totals.total_buy_qty)}</td>
+                 <td className="px-4 py-3 text-right hidden md:table-cell"><PercentBadge val={totalBidChg1mP} /></td>
+                 <td className="px-4 py-3 text-right hidden lg:table-cell"><PercentBadge val={totalBidChgDayP} /></td>
                  
-                 <td className="px-4 py-4 text-right border-l border-white/5 hidden lg:table-cell">{formatQty(totals.total_sell_qty)}</td>
-                 <td className="px-4 py-4 text-right bg-bear/5 border-l border-white/5 hidden md:table-cell">{formatPercent(totalAskChg1mP)}</td>
-                 <td className="px-4 py-4 text-right bg-bear/5 hidden lg:table-cell">{formatPercent(totalAskChgDayP)}</td>
+                 <td className="px-4 py-3 text-right border-l border-white/5 hidden lg:table-cell text-slate-400">{formatQty(totals.total_sell_qty)}</td>
+                 <td className="px-4 py-3 text-right hidden md:table-cell"><PercentBadge val={totalAskChg1mP} /></td>
+                 <td className="px-4 py-3 text-right hidden lg:table-cell"><PercentBadge val={totalAskChgDayP} /></td>
                  
-                 <td className="px-4 py-4 text-right border-l border-white/5 bg-slate-800/50">{formatPercent(totalNet1mP)}</td>
-                 <td className="px-4 py-4 text-right bg-slate-800/50">{formatPercent(weightedDayStr)}</td>
-                 <td className="px-4 py-4 text-right hidden md:table-cell"></td>
+                 <td className="px-4 py-3 text-right border-l border-white/10 bg-slate-800/30"><PercentBadge val={totalNet1mP} highlight /></td>
+                 <td className="px-4 py-3 text-right bg-slate-800/30"><PercentBadge val={weightedDayStr} highlight /></td>
+                 <td className="px-4 py-3 text-right hidden md:table-cell"></td>
                </tr>
             )}
-            <tr>
+            <tr className="bg-slate-950/80">
               {headers.map((header, idx) => (
                 <th
                   key={idx}
-                  className={`px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200' : ''} ${header.field === 'symbol' ? 'sticky left-0 bg-slate-900/90 z-10 backdrop-blur' : ''} ${header.responsive || ''}`}
+                  className={`px-4 py-3 cursor-pointer hover:text-white transition-colors border-b border-white/5 ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200/80' : ''} ${header.field === 'symbol' ? 'sticky left-0 bg-slate-950 z-10' : ''} ${header.responsive || ''}`}
                   onClick={() => header.field && onSort(header.field)}
                 >
                   <div className={`flex items-center gap-1 ${header.align === 'right' ? 'justify-end' : 'justify-start'}`}>
+                    {header.icon && <header.icon size={10} className="text-slate-600" />}
                     {header.label}
                     {header.field && getSortIcon(header.field)}
                   </div>
@@ -166,61 +185,71 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5 bg-slate-900/20">
+          <tbody className="divide-y divide-slate-800/50 bg-slate-900/10">
             {data.map((stock) => (
               <tr 
                 key={stock.symbol} 
-                className="hover:bg-white/5 transition-all duration-200 cursor-pointer group"
+                className="group hover:bg-slate-800/60 transition-all duration-200 cursor-pointer relative"
                 onClick={() => onSelect(stock.symbol)}
               >
-                <td className="px-4 py-3 font-semibold text-slate-200 group-hover:text-blue-400 transition-colors border-r border-white/5 bg-slate-900/30 sticky left-0 z-10 backdrop-blur-sm">
-                  {stock.short_name || stock.symbol}
-                  <span className="block text-[9px] text-slate-500 font-normal uppercase tracking-wider">{stock.exchange}</span>
+                {/* Active Indicator Bar on Hover */}
+                <td className="absolute left-0 top-0 bottom-0 w-[3px] bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity z-30"></td>
+
+                <td className="px-4 py-3 font-semibold text-slate-200 group-hover:text-blue-300 transition-colors border-r border-white/5 bg-slate-900/80 sticky left-0 z-10 backdrop-blur-sm">
+                  <div className="flex flex-col">
+                      <span>{stock.short_name || stock.symbol}</span>
+                      <span className="text-[9px] text-slate-600 font-mono font-normal uppercase tracking-widest group-hover:text-slate-500">{stock.exchange}</span>
+                  </div>
                 </td>
                 
-                <td className="px-4 py-3 text-right font-mono text-slate-300 group-hover:text-white">
+                <td className="px-4 py-3 text-right font-mono text-white text-sm font-bold tracking-tight">
                   {formatNumber(stock.lp)}
                 </td>
                 
-                <td className="px-4 py-3 text-right font-mono bg-white/5 border-l border-white/5 border-r border-white/5">
-                  {formatPercent(stock.lp_chg_1m_p)}
+                <td className="px-4 py-3 text-right border-l border-white/5 border-r border-white/5 bg-white/[0.02]">
+                   <PercentBadge val={stock.lp_chg_1m_p} />
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-white/5 border-r border-white/5">
-                  {formatPercent(stock.lp_chg_day_p)}
+                <td className="px-4 py-3 text-right border-r border-white/5">
+                   <PercentBadge val={stock.lp_chg_day_p} />
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono text-slate-400 hidden md:table-cell">
+                <td className="px-4 py-3 text-right hidden md:table-cell opacity-80 group-hover:opacity-100 transition-opacity">
                   {formatQty(stock.volume)}
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono text-bull-light border-l border-white/5 opacity-80 hidden lg:table-cell">
+                <td className="px-4 py-3 text-right border-l border-white/5 hidden lg:table-cell opacity-60">
                   {formatQty(stock.total_buy_qty)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-bull/5 border-l border-white/5 hidden md:table-cell">
-                  {formatPercent(stock.bid_qty_chg_p)}
+                <td className="px-4 py-3 text-right hidden md:table-cell">
+                   <PercentBadge val={stock.bid_qty_chg_p} />
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-bull/5 hidden lg:table-cell">
-                  {formatPercent(stock.bid_chg_day_p)}
+                <td className="px-4 py-3 text-right hidden lg:table-cell">
+                   <PercentBadge val={stock.bid_chg_day_p} />
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono text-bear-light border-l border-white/5 opacity-80 hidden lg:table-cell">
+                <td className="px-4 py-3 text-right border-l border-white/5 hidden lg:table-cell opacity-60">
                   {formatQty(stock.total_sell_qty)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-bear/5 border-l border-white/5 hidden md:table-cell">
-                  {formatPercent(stock.ask_qty_chg_p)}
+                <td className="px-4 py-3 text-right hidden md:table-cell">
+                   <PercentBadge val={stock.ask_qty_chg_p} />
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-bear/5 hidden lg:table-cell">
-                  {formatPercent(stock.ask_chg_day_p)}
-                </td>
-
-                <td className="px-4 py-3 text-right font-mono border-l border-white/10 bg-slate-800/40 font-bold border-r border-white/10">
-                  {formatPercent(stock.net_strength_1m)}
-                </td>
-                <td className="px-4 py-3 text-right font-mono bg-slate-800/40 text-slate-300">
-                  {formatPercent(stock.day_net_strength)}
+                <td className="px-4 py-3 text-right hidden lg:table-cell">
+                   <PercentBadge val={stock.ask_chg_day_p} />
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono text-slate-600 text-[10px] hidden md:table-cell">
+                {/* Net Strength with Heatmap style border */}
+                <td className={`px-4 py-3 text-right border-l border-white/10 border-r border-white/10 font-bold bg-slate-800/20`}>
+                   <div className="flex justify-end">
+                       <PercentBadge val={stock.net_strength_1m} highlight />
+                   </div>
+                </td>
+                <td className="px-4 py-3 text-right bg-slate-800/20">
+                    <div className="flex justify-end">
+                        <PercentBadge val={stock.day_net_strength} />
+                    </div>
+                </td>
+
+                <td className="px-4 py-3 text-right font-mono text-slate-600 text-[10px] hidden md:table-cell group-hover:text-slate-400">
                   {formatTime(stock.tt)}
                 </td>
               </tr>
