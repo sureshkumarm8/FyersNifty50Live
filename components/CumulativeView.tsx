@@ -88,24 +88,32 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
        const w = curr.weight || 0.1;
        const ltp = curr.lp || 0;
        
-       if (curr.ch >= 0) acc.bullishWeight += w;
+       // UPDATED: Use Session Change % (lp_chg_day_p)
+       const sessionChg = curr.lp_chg_day_p || 0;
+       
+       if (sessionChg >= 0) acc.bullishWeight += w;
        else acc.bearishWeight += w;
        acc.totalWeight += w;
 
-       const buyVal = (curr.total_buy_qty || 0) * ltp;
-       const sellVal = (curr.total_sell_qty || 0) * ltp;
+       // UPDATED: Use DELTA Qty (Session Qty) for Pressure calculations
+       const deltaBuy = (curr.total_buy_qty || 0) - (curr.initial_total_buy_qty || 0);
+       const deltaSell = (curr.total_sell_qty || 0) - (curr.initial_total_sell_qty || 0);
+
+       const buyVal = deltaBuy * ltp;
+       const sellVal = deltaSell * ltp;
+       
        acc.weightedBuyValue += (buyVal * w);
        acc.weightedSellValue += (sellVal * w);
 
-       // Momentum: Money Flow (Qty Change * Price * Weight)
+       // Momentum: Money Flow (Qty Change 1m * Price * Weight)
+       // This stays the same as it's 1-min change
        const buyChgVal = (curr.bid_qty_chg_1m || 0) * ltp;
        const sellChgVal = (curr.ask_qty_chg_1m || 0) * ltp;
        
-       // Only count momentum if it's significant
        acc.weightedBuyMomemtum += (buyChgVal * w);
        acc.weightedSellMomentum += (sellChgVal * w);
 
-       // Table Aggregates
+       // Table Aggregates - Use Totals for Table display, but Analysis uses Deltas
        acc.total_buy_qty += (curr.total_buy_qty || 0);
        acc.total_sell_qty += (curr.total_sell_qty || 0);
        acc.bid_qty_chg_1m_abs += (curr.bid_qty_chg_1m || 0);
@@ -155,6 +163,8 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
 
   // --- DERIVED METRICS ---
   const bullishPct = stats.totalWeight > 0 ? (stats.bullishWeight / stats.totalWeight) * 100 : 0;
+  
+  // Use Pressure Ratio based on Session Delta
   const totalValuePressure = stats.weightedBuyValue + stats.weightedSellValue;
   const buyPressureRatio = totalValuePressure > 0 ? (stats.weightedBuyValue / totalValuePressure) * 100 : 0;
   

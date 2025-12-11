@@ -115,7 +115,8 @@ const App: React.FC = () => {
         if (isStock) {
             const symbolKey = curr.short_name || curr.symbol.replace('NSE:', '').replace('-EQ', '');
             weight = NIFTY_WEIGHTAGE[symbolKey] || 0.1; 
-            index_contribution = curr.chp * weight;
+            // UPDATED: Index contribution based on Session Change % (lp_chg_day_p), not Daily Change %
+            index_contribution = (lp_chg_day_p || 0) * weight;
         }
 
         prevRef.current[curr.symbol] = curr;
@@ -138,36 +139,53 @@ const App: React.FC = () => {
   const calculateSnapshot = (stocksData: EnrichedFyersQuote[], optionsData: EnrichedFyersQuote[], ltp: number, ptsChg: number) => {
       let bullishW = 0, bearishW = 0, totalW = 0;
       let adv = 0, dec = 0;
-      let totalStockBuy = 0, totalStockSell = 0;
+      let totalStockBuyDelta = 0, totalStockSellDelta = 0;
 
       stocksData.forEach(s => {
           const w = s.weight || 0.1;
-          if (s.ch >= 0) { bullishW += w; adv++; } else { bearishW += w; dec++; }
+          // UPDATED: Use Session Change % (lp_chg_day_p) for sentiment baseline
+          const sessionChg = s.lp_chg_day_p || 0;
+          
+          if (sessionChg >= 0) { bullishW += w; adv++; } 
+          else { bearishW += w; dec++; }
+          
           totalW += w;
-          totalStockBuy += s.total_buy_qty || 0;
-          totalStockSell += s.total_sell_qty || 0;
+
+          // UPDATED: Calculate Delta Volume (Session Volume)
+          const buyDelta = (s.total_buy_qty || 0) - (s.initial_total_buy_qty || 0);
+          const sellDelta = (s.total_sell_qty || 0) - (s.initial_total_sell_qty || 0);
+          
+          totalStockBuyDelta += buyDelta;
+          totalStockSellDelta += sellDelta;
       });
       const overallSent = totalW > 0 ? (bullishW - bearishW) / totalW * 100 : 0;
-      const stockSent = totalStockSell > 0 ? ((totalStockBuy - totalStockSell) / totalStockSell) * 100 : 0;
+      
+      // Stock Sent based on Delta Volume
+      const stockSent = totalStockSellDelta > 0 ? ((totalStockBuyDelta - totalStockSellDelta) / totalStockSellDelta) * 100 : 0;
 
-      let callBuy = 0, callSell = 0, putBuy = 0, putSell = 0;
+      let callBuyDelta = 0, callSellDelta = 0, putBuyDelta = 0, putSellDelta = 0;
       let callOI = 0, putOI = 0;
 
       optionsData.forEach(o => {
+          // Calculate Delta Volume
+          const buyDelta = (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
+          const sellDelta = (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
+
           const isCE = o.symbol.endsWith('CE');
           if (isCE) {
-              callBuy += o.total_buy_qty || 0;
-              callSell += o.total_sell_qty || 0;
+              callBuyDelta += buyDelta;
+              callSellDelta += sellDelta;
               callOI += o.oi || 0;
           } else {
-              putBuy += o.total_buy_qty || 0;
-              putSell += o.total_sell_qty || 0;
+              putBuyDelta += buyDelta;
+              putSellDelta += sellDelta;
               putOI += o.oi || 0;
           }
       });
 
-      const callSent = callSell > 0 ? ((callBuy - callSell) / callSell) * 100 : 0;
-      const putSent = putSell > 0 ? ((putBuy - putSell) / putSell) * 100 : 0;
+      // Sentiments based on Delta
+      const callSent = callSellDelta > 0 ? ((callBuyDelta - callSellDelta) / callSellDelta) * 100 : 0;
+      const putSent = putSellDelta > 0 ? ((putBuyDelta - putSellDelta) / putSellDelta) * 100 : 0;
       const pcr = callOI > 0 ? putOI / callOI : 0;
       const optionsSent = callSent - putSent;
 
@@ -182,10 +200,11 @@ const App: React.FC = () => {
           putSent,
           pcr,
           optionsSent,
-          callsBuyQty: callBuy,
-          callsSellQty: callSell,
-          putsBuyQty: putBuy,
-          putsSellQty: putSell
+          // Store Delta Quantities in History Log
+          callsBuyQty: callBuyDelta,
+          callsSellQty: callSellDelta,
+          putsBuyQty: putBuyDelta,
+          putsSellQty: putSellDelta
       };
 
       setHistoryLog(prev => {
@@ -404,11 +423,11 @@ const App: React.FC = () => {
                         <div className="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
                             <Activity size={40} />
                         </div>
-                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Breadth</p>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Breadth (Session)</p>
                         <div className="flex items-end gap-2 mt-2">
-                           <span className="text-2xl sm:text-3xl font-bold text-bull text-glow-green">{stocks.filter(s => s.ch >= 0).length}</span>
+                           <span className="text-2xl sm:text-3xl font-bold text-bull text-glow-green">{stocks.filter(s => (s.lp_chg_day_p || 0) >= 0).length}</span>
                            <span className="text-slate-600 text-lg sm:text-xl font-thin">/</span>
-                           <span className="text-2xl sm:text-3xl font-bold text-bear text-glow-red">{stocks.filter(s => s.ch < 0).length}</span>
+                           <span className="text-2xl sm:text-3xl font-bold text-bear text-glow-red">{stocks.filter(s => (s.lp_chg_day_p || 0) < 0).length}</span>
                         </div>
                      </div>
                   </div>
