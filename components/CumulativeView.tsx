@@ -1,4 +1,5 @@
 
+
 import React, { useMemo, useState } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
 import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer } from 'lucide-react';
@@ -73,7 +74,7 @@ const Sparkline: React.FC<{ data: number[]; color: string; height?: number }> = 
     );
 };
 
-// Helper to parse HH:MM:SS to today's date object
+// Fallback Helper to parse HH:MM:SS to today's date object if timestamp missing
 const parseTime = (timeStr: string) => {
     const [h, m, s] = timeStr.split(':').map(Number);
     const d = new Date();
@@ -139,28 +140,46 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       if (historyLog.length < 2) return null;
       
       const currentSnap = historyLog[historyLog.length - 1];
-      const currentTime = parseTime(currentSnap.time);
+      const currentTs = currentSnap.timestamp || parseTime(currentSnap.time).getTime();
       
-      // Find snapshot closest to 'decisionWindow' minutes ago
+      // Target time we want to find
+      const targetTime = currentTs - (decisionWindow * 60 * 1000);
+      
       let pastSnap = historyLog[0];
       let foundIndex = 0;
+      let effectiveDurationMins = 0;
+
+      // Find the snapshot closest to targetTime (but not newer than it, if possible)
+      // Since array is chronological, we want the last snapshot where timestamp <= targetTime
+      // Or simply, iterate backwards and find the first snapshot where timestamp <= targetTime + tolerance?
+      // Simple logic: Find index where diff is closest to decisionWindow
+      
+      let bestDiff = -1;
 
       for (let i = historyLog.length - 2; i >= 0; i--) {
-          const snapTime = parseTime(historyLog[i].time);
-          const diffMins = (currentTime.getTime() - snapTime.getTime()) / 60000;
+          const snapTs = historyLog[i].timestamp || parseTime(historyLog[i].time).getTime();
+          const diffMins = (currentTs - snapTs) / 60000;
           
           if (diffMins >= decisionWindow) {
-              pastSnap = historyLog[i];
-              foundIndex = i;
-              break;
+             // We found a snapshot older than the window. 
+             // This is good. It means we have covered the full window.
+             pastSnap = historyLog[i];
+             foundIndex = i;
+             effectiveDurationMins = diffMins;
+             break;
           }
-          // If we run out of history (e.g. app open for 2 mins, selected 10 mins),
-          // loop naturally ends and we use historyLog[0] (Session Start)
+          
+          // If we are at the start of the array and haven't met the condition,
+          // it means the entire history is shorter than the requested window.
+          if (i === 0) {
+             pastSnap = historyLog[0];
+             foundIndex = 0;
+             effectiveDurationMins = diffMins;
+          }
       }
 
       // Calculate Deltas over the window
       const priceDelta = currentSnap.niftyLtp - pastSnap.niftyLtp;
-      const priceDeltaP = (priceDelta / pastSnap.niftyLtp) * 100;
       
       // Net Option Flow calculation: (Current Net - Past Net) gives the flow *during* the window
       const currentNetOpt = (currentSnap.callsBuyQty - currentSnap.callsSellQty) - (currentSnap.putsBuyQty - currentSnap.putsSellQty);
@@ -198,7 +217,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       if (totalScore > 40) {
           prediction = "STRONG BUY";
           color = "text-bull text-glow-green";
-          desc = `Aggressive momentum in last ${decisionWindow}m.`;
+          desc = `Aggressive momentum in last ${effectiveDurationMins.toFixed(1)}m.`;
           signalClass = "bg-bull/20 border-bull/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]";
       } else if (totalScore > 15) {
           prediction = "BULLISH";
@@ -208,7 +227,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       } else if (totalScore < -40) {
           prediction = "STRONG SELL";
           color = "text-bear text-glow-red";
-          desc = `Heavy selling pressure in last ${decisionWindow}m.`;
+          desc = `Heavy selling pressure in last ${effectiveDurationMins.toFixed(1)}m.`;
           signalClass = "bg-bear/20 border-bear/50 shadow-[0_0_30px_rgba(239,68,68,0.3)]";
       } else if (totalScore < -15) {
           prediction = "BEARISH";
@@ -230,10 +249,14 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
              signalClass = "bg-orange-500/10 border-orange-500/50 animate-pulse";
           }
       }
+      
+      // Determine if fallback warning is needed
+      const isFallback = effectiveDurationMins < (decisionWindow * 0.8) && effectiveDurationMins > 0.1;
 
       return {
           prediction, color, desc, signalClass, divergence,
-          priceDelta, flowDelta, sentimentTrend, totalScore
+          priceDelta, flowDelta, sentimentTrend, totalScore,
+          effectiveDurationMins, isFallback
       };
 
   }, [historyLog, decisionWindow]);
@@ -296,13 +319,24 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                    <div className="flex items-center justify-between mb-2">
                        <div className="flex items-center gap-2">
                            <BrainCircuit size={18} className="text-blue-300" />
-                           <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Decision Engine ({decisionWindow}m)</h2>
+                           <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">
+                             Decision Engine ({windowAnalysis && windowAnalysis.isFallback ? `${windowAnalysis.effectiveDurationMins.toFixed(1)}m` : `${decisionWindow}m`})
+                           </h2>
                        </div>
-                       {windowAnalysis?.divergence && (
-                           <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse mr-32 sm:mr-0">
-                               <AlertTriangle size={12} /> DIV
-                           </div>
-                       )}
+                       
+                       <div className="flex gap-2">
+                            {windowAnalysis?.isFallback && (
+                                <div className="flex items-center gap-1 text-slate-400 bg-slate-800/50 px-2 py-1 rounded text-[10px] border border-white/5 mr-12 sm:mr-0">
+                                   <Clock size={12} />
+                                   <span>Building History...</span>
+                                </div>
+                            )}
+                            {windowAnalysis?.divergence && (
+                                <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse mr-32 sm:mr-0">
+                                    <AlertTriangle size={12} /> DIV
+                                </div>
+                            )}
+                       </div>
                    </div>
                    
                    <h1 className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${windowAnalysis?.color || 'text-slate-500'}`}>
@@ -332,14 +366,14 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                {/* Window Specific Stats */}
                <div className="w-full md:w-64 flex flex-col gap-3 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6 bg-slate-900/20 md:bg-transparent rounded-lg p-3 md:p-0">
                    <div className="flex justify-between items-center text-xs">
-                       <span className="text-slate-400 flex items-center gap-1"><Timer size={10}/> Nifty Move ({decisionWindow}m)</span>
+                       <span className="text-slate-400 flex items-center gap-1"><Timer size={10}/> Nifty Move ({windowAnalysis?.effectiveDurationMins.toFixed(0)}m)</span>
                        <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.priceDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
                            {windowAnalysis ? `${windowAnalysis.priceDelta > 0 ? '+' : ''}${windowAnalysis.priceDelta.toFixed(1)}` : '--'}
                        </span>
                    </div>
                    
                    <div className="flex justify-between items-center text-xs">
-                       <span className="text-slate-400 flex items-center gap-1"><Target size={10}/> Net Flow ({decisionWindow}m)</span>
+                       <span className="text-slate-400 flex items-center gap-1"><Target size={10}/> Net Flow ({windowAnalysis?.effectiveDurationMins.toFixed(0)}m)</span>
                        <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.flowDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
                             {windowAnalysis ? formatMillions(windowAnalysis.flowDelta) : '--'}
                        </span>

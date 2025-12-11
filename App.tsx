@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon } from 'lucide-react';
 import { StockTable } from './components/StockTable';
@@ -313,6 +314,7 @@ const App: React.FC = () => {
 
       const snapshot: MarketSnapshot = {
           time: new Date().toLocaleTimeString('en-IN', { hour12: false }),
+          timestamp: Date.now(), // Added explicit timestamp
           niftyLtp: ltp,
           ptsChg: ptsChg,
           overallSent,

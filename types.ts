@@ -1,4 +1,5 @@
 
+
 export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings';
 
 export interface FyersCredentials {
@@ -156,6 +157,7 @@ export interface EnrichedFyersQuote extends FyersQuote {
 
 export interface MarketSnapshot {
   time: string;
+  timestamp?: number; // Epoch for accurate diffs
   niftyLtp: number;
   ptsChg: number;
   
