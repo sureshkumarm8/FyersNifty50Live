@@ -173,7 +173,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
               {headers.map((header, idx) => (
                 <th
                   key={idx}
-                  className={`px-4 py-3 cursor-pointer hover:text-white transition-colors border-b border-white/5 ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200/80' : ''} ${header.field === 'symbol' ? 'sticky left-0 bg-slate-950 z-10' : ''} ${header.responsive || ''}`}
+                  className={`px-4 py-3 cursor-pointer hover:text-white transition-colors border-b border-white/5 ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200/80' : ''} ${header.field === 'symbol' ? 'sticky left-0 bg-slate-950 z-30' : ''} ${header.responsive || ''}`}
                   onClick={() => header.field && onSort(header.field)}
                 >
                   <div className={`flex items-center gap-1 ${header.align === 'right' ? 'justify-end' : 'justify-start'}`}>
@@ -192,11 +192,11 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                 className="group hover:bg-slate-800/60 transition-all duration-200 cursor-pointer relative"
                 onClick={() => onSelect(stock.symbol)}
               >
-                {/* Active Indicator Bar on Hover */}
-                <td className="absolute left-0 top-0 bottom-0 w-[3px] bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity z-30"></td>
-
-                <td className="px-4 py-3 font-semibold text-slate-200 group-hover:text-blue-300 transition-colors border-r border-white/5 bg-slate-900/80 sticky left-0 z-10 backdrop-blur-sm">
-                  <div className="flex flex-col">
+                {/* Active Indicator Bar moved inside the first cell for correct alignment */}
+                <td className="px-4 py-3 font-semibold text-slate-200 group-hover:text-blue-300 transition-colors border-r border-white/5 bg-slate-900/80 sticky left-0 z-10 backdrop-blur-sm relative overflow-hidden">
+                  <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                  
+                  <div className="flex flex-col relative z-10 pl-1">
                       <span>{stock.short_name || stock.symbol}</span>
                       <span className="text-[9px] text-slate-600 font-mono font-normal uppercase tracking-widest group-hover:text-slate-500">{stock.exchange}</span>
                   </div>
