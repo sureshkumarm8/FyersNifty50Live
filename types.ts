@@ -1,3 +1,4 @@
+
 export interface FyersCredentials {
   appId: string;
   accessToken: string;
@@ -172,6 +173,20 @@ export interface MarketSnapshot {
   callsSellQty: number;
   putsBuyQty: number;
   putsSellQty: number;
+}
+
+// Local Session History for individual stocks
+export interface SessionCandle {
+  time: string;
+  lp: number;
+  total_buy_qty: number;
+  total_sell_qty: number;
+  net_strength: number;
+  timestamp: number;
+}
+
+export interface SessionHistoryMap {
+  [symbol: string]: SessionCandle[];
 }
 
 export type ViewMode = 'summary' | 'stocks' | 'options' | 'history';

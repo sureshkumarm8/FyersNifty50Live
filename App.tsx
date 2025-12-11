@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon } from 'lucide-react';
 import { StockTable } from './components/StockTable';
@@ -6,12 +7,13 @@ import { OptionChain } from './components/OptionChain';
 import { CumulativeView } from './components/CumulativeView';
 import { SentimentHistory } from './components/SentimentHistory';
 import { SettingsModal } from './components/SettingsModal';
-import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode } from './types';
+import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle } from './types';
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
 
 const HISTORY_STORAGE_KEY = 'nifty50_history_log';
 const HISTORY_DATE_KEY = 'nifty50_history_date';
+const SESSION_DATA_KEY = 'nifty50_session_data';
 
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
@@ -30,24 +32,36 @@ const App: React.FC = () => {
   const [optionQuotes, setOptionQuotes] = useState<EnrichedFyersQuote[]>([]);
   const [niftyLtp, setNiftyLtp] = useState<number | null>(null);
   
-  // Initialize history from LocalStorage with daily reset logic
+  // Initialize Global History (Cockpit)
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>(() => {
       try {
           const savedDate = localStorage.getItem(HISTORY_DATE_KEY);
           const today = new Date().toDateString();
-          
-          // If stored data is from today, load it. Otherwise, start fresh.
           if (savedDate === today) {
               const savedLog = localStorage.getItem(HISTORY_STORAGE_KEY);
               return savedLog ? JSON.parse(savedLog) : [];
           } else {
               localStorage.setItem(HISTORY_DATE_KEY, today);
               localStorage.removeItem(HISTORY_STORAGE_KEY);
+              localStorage.removeItem(SESSION_DATA_KEY); // Also clear stock session data
               return [];
           }
       } catch (e) {
           return [];
       }
+  });
+
+  // Initialize Per-Stock Session History
+  const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>(() => {
+      try {
+          const savedDate = localStorage.getItem(HISTORY_DATE_KEY);
+          const today = new Date().toDateString();
+          if (savedDate === today) {
+              const saved = localStorage.getItem(SESSION_DATA_KEY);
+              return saved ? JSON.parse(saved) : {};
+          }
+          return {};
+      } catch (e) { return {}; }
   });
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,21 +73,35 @@ const App: React.FC = () => {
   const prevOptionsRef = useRef<Record<string, FyersQuote>>({});
   const initialOptionsRef = useRef<Record<string, FyersQuote>>({});
   
-  // Track previous Nifty LTP to calculate 1-min change for snapshot
   const prevNiftyLtpRef = useRef<number | null>(null);
 
-  // Persist History Log whenever it changes
+  // Persist Global History
   useEffect(() => {
       if (historyLog.length > 0) {
           localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyLog));
       }
   }, [historyLog]);
 
+  // Persist Session Data
+  useEffect(() => {
+      // Debounce saving session data slightly as it can be large
+      const handler = setTimeout(() => {
+          if (Object.keys(sessionHistory).length > 0) {
+              try {
+                  localStorage.setItem(SESSION_DATA_KEY, JSON.stringify(sessionHistory));
+              } catch(e) {
+                  console.error("Storage quota exceeded", e);
+              }
+          }
+      }, 2000);
+      return () => clearTimeout(handler);
+  }, [sessionHistory]);
+
   const saveCredentials = (newCreds: FyersCredentials) => {
     setCredentials(newCreds);
     localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
     setError(null);
-    setMarketStatusMsg(null); // Reset status on cred change
+    setMarketStatusMsg(null);
   };
 
   const handleSort = (field: SortField) => {
@@ -81,6 +109,42 @@ const App: React.FC = () => {
       field,
       direction: prev.field === field && prev.direction === 'asc' ? 'desc' : 'asc',
     }));
+  };
+
+  const updateSessionHistory = (quotes: EnrichedFyersQuote[]) => {
+      const nowStr = new Date().toLocaleTimeString('en-IN', { hour12: false });
+      const nowTs = Date.now();
+
+      setSessionHistory(prev => {
+          const nextState = { ...prev };
+          
+          quotes.forEach(q => {
+              if (!nextState[q.symbol]) {
+                  nextState[q.symbol] = [];
+              }
+              
+              // Only add if time changed or it's a new entry
+              const history = nextState[q.symbol];
+              const lastEntry = history.length > 0 ? history[history.length - 1] : null;
+              
+              // Avoid duplicates in same minute if processing happens multiple times
+              if (!lastEntry || lastEntry.time !== nowStr) {
+                  const candle: SessionCandle = {
+                      time: nowStr,
+                      lp: q.lp,
+                      total_buy_qty: q.total_buy_qty || 0,
+                      total_sell_qty: q.total_sell_qty || 0,
+                      net_strength: q.net_strength_1m || 0,
+                      timestamp: nowTs
+                  };
+                  
+                  // Keep last 400 mins (full session)
+                  if (history.length > 400) history.shift();
+                  history.push(candle);
+              }
+          });
+          return nextState;
+      });
   };
 
   const enrichData = (
@@ -144,8 +208,6 @@ const App: React.FC = () => {
         if (isStock) {
             const symbolKey = curr.short_name || curr.symbol.replace('NSE:', '').replace('-EQ', '');
             weight = NIFTY_WEIGHTAGE[symbolKey] || 0.1; 
-            // UPDATED: Index contribution based on Session Change % (lp_chg_day_p), not Daily Change %
-            // This ensures "Movers" are based on session impact, not pre-session gap ups/downs.
             index_contribution = (lp_chg_day_p || 0) * weight;
         }
 
@@ -173,43 +235,26 @@ const App: React.FC = () => {
 
       stocksData.forEach(s => {
           const w = s.weight || 0.1;
-          // UPDATED: Use Session Change % (lp_chg_day_p) for sentiment baseline
           const sessionChg = s.lp_chg_day_p || 0;
           
-          // Strict check: 0 is Neutral (Unchanged), not Bullish
-          if (sessionChg > 0.001) { 
-              bullishW += w; 
-              adv++; 
-          } 
-          else if (sessionChg < -0.001) { 
-              bearishW += w; 
-              dec++; 
-          }
-          // Neutral stocks contribute to Total Weight but not to Bullish/Bearish Weight numerator
-          
+          if (sessionChg > 0.001) { bullishW += w; adv++; } 
+          else if (sessionChg < -0.001) { bearishW += w; dec++; }
           totalW += w;
 
-          // UPDATED: Calculate Delta Volume (Session Volume)
-          // This removes any volume that existed before the app was opened.
           const buyDelta = (s.total_buy_qty || 0) - (s.initial_total_buy_qty || 0);
           const sellDelta = (s.total_sell_qty || 0) - (s.initial_total_sell_qty || 0);
-          
           totalStockBuyDelta += buyDelta;
           totalStockSellDelta += sellDelta;
       });
       const overallSent = totalW > 0 ? (bullishW - bearishW) / totalW * 100 : 0;
-      
-      // Stock Sent based on Delta Volume
       const stockSent = totalStockSellDelta > 0 ? ((totalStockBuyDelta - totalStockSellDelta) / totalStockSellDelta) * 100 : 0;
 
       let callBuyDelta = 0, callSellDelta = 0, putBuyDelta = 0, putSellDelta = 0;
       let callOI = 0, putOI = 0;
 
       optionsData.forEach(o => {
-          // Calculate Delta Volume for Options
           const buyDelta = (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
           const sellDelta = (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
-
           const isCE = o.symbol.endsWith('CE');
           if (isCE) {
               callBuyDelta += buyDelta;
@@ -222,7 +267,6 @@ const App: React.FC = () => {
           }
       });
 
-      // Sentiments based on Delta
       const callSent = callSellDelta > 0 ? ((callBuyDelta - callSellDelta) / callSellDelta) * 100 : 0;
       const putSent = putSellDelta > 0 ? ((putBuyDelta - putSellDelta) / putSellDelta) * 100 : 0;
       const pcr = callOI > 0 ? putOI / callOI : 0;
@@ -239,7 +283,6 @@ const App: React.FC = () => {
           putSent,
           pcr,
           optionsSent,
-          // Store Delta Quantities in History Log for graph/table
           callsBuyQty: callBuyDelta,
           callsSellQty: callSellDelta,
           putsBuyQty: putBuyDelta,
@@ -248,7 +291,6 @@ const App: React.FC = () => {
 
       setHistoryLog(prev => {
           const updated = [...prev, snapshot];
-          // Limit to one trading session (approx 375 mins)
           if (updated.length > 400) updated.shift(); 
           return updated;
       });
@@ -258,16 +300,11 @@ const App: React.FC = () => {
      const now = new Date();
      const hours = now.getHours();
      const minutes = now.getMinutes();
-     const day = now.getDay(); // 0=Sun, 6=Sat
-
-     // Weekend check
+     const day = now.getDay(); 
      if (day === 0 || day === 6) return false;
-
-     // Time check: 09:17 to 15:15
      const totalMinutes = (hours * 60) + minutes;
-     const startMinutes = (9 * 60) + 17; // 9:17 AM
-     const endMinutes = (15 * 60) + 15;  // 3:15 PM
-
+     const startMinutes = (9 * 60) + 17; 
+     const endMinutes = (15 * 60) + 15;  
      return totalMinutes >= startMinutes && totalMinutes <= endMinutes;
   };
 
@@ -277,13 +314,11 @@ const App: React.FC = () => {
        return;
     }
 
-    // Market Timing Logic
     const open = isMarketOpen();
     const bypass = credentials.bypassMarketHours;
     
     if (!open && !bypass) {
        setMarketStatusMsg("Market Closed (09:17 - 15:15)");
-       // Only show error if no data loaded yet
        if (stocks.length === 0 && !error) {
            setError("Market is closed. Enable 'Test Mode' in settings to fetch data anyway.");
        }
@@ -303,8 +338,6 @@ const App: React.FC = () => {
       if (idx) {
           setNiftyLtp(idx.lp);
           
-          // Calculate 1-min change for Snapshot
-          // If prevNiftyLtpRef is null (first run), change is 0
           const prevLtp = prevNiftyLtpRef.current || idx.lp; 
           const nifty1MinChange = idx.lp - prevLtp;
           prevNiftyLtpRef.current = idx.lp;
@@ -314,8 +347,10 @@ const App: React.FC = () => {
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
           setOptionQuotes(enrichedOptions);
           
-          // Pass 1-min change (nifty1MinChange) instead of Day Change (idx.ch)
           calculateSnapshot(enrichedStocks, enrichedOptions, idx.lp, nifty1MinChange);
+          
+          // Accumulate Session History
+          updateSessionHistory([...enrichedStocks, ...enrichedOptions]);
       }
       setLastUpdated(Date.now());
       setError(null);
@@ -433,7 +468,12 @@ const App: React.FC = () => {
 
         {selectedStock ? (
            <div className="flex-1 p-2 sm:p-6 overflow-hidden animate-in slide-in-from-right duration-300">
-               <StockDetail symbol={selectedStock} credentials={credentials} onBack={() => setSelectedStock(null)} />
+               <StockDetail 
+                  symbol={selectedStock} 
+                  credentials={credentials} 
+                  onBack={() => setSelectedStock(null)} 
+                  sessionData={sessionHistory[selectedStock]} // Pass collected session history
+               />
            </div>
         ) : viewMode === 'history' ? (
            <div className="flex-1 p-2 sm:p-6 overflow-hidden animate-in fade-in duration-300">
@@ -451,7 +491,7 @@ const App: React.FC = () => {
                 historyLog={historyLog}
                 onNavigate={setViewMode}
                 onSelectStock={setSelectedStock}
-                marketStatus={marketStatusMsg} // Pass market status here
+                marketStatus={marketStatusMsg} 
               />
            </div>
         ) : (

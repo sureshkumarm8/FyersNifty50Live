@@ -1,12 +1,14 @@
+
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Clock, AlertCircle, TrendingUp, TrendingDown } from 'lucide-react';
-import { FyersCredentials } from '../types';
+import { ArrowLeft, Clock, AlertCircle, TrendingUp, TrendingDown, Database } from 'lucide-react';
+import { FyersCredentials, SessionCandle } from '../types';
 import { fetchStockHistory } from '../services/fyersService';
 
 interface StockDetailProps {
   symbol: string;
   credentials: FyersCredentials;
   onBack: () => void;
+  sessionData?: SessionCandle[]; // Data collected locally during the session
 }
 
 interface Candle {
@@ -17,9 +19,10 @@ interface Candle {
   close: number;
   volume: number;
   epoch: number;
+  source: 'API' | 'LIVE';
 }
 
-export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, onBack }) => {
+export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, onBack, sessionData }) => {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,8 +33,6 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
   let optionDetails = { expiry: '', strike: '', type: '' };
 
   if (isOption) {
-      // Regex to extract Nifty Option parts: NIFTY + Year(2) + Month/Date(3/1) + Strike + Type(2)
-      // Enhanced Regex: Handles Strikes 3-6 digits and various month formats
       const match = displayName.match(/([A-Z]+)(\d{2})([A-Z0-9]{1,3})(\d{3,6})(CE|PE)/);
       if (match) {
           const [_, underlying, yy, mmm, strike, type] = match;
@@ -45,22 +46,54 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
       try {
         setLoading(true);
         setError(null);
-        const rawCandles = await fetchStockHistory(symbol, credentials);
-        
-        // Fyers format: [epoch, open, high, low, close, volume]
-        const formatted = rawCandles.map(c => ({
-          time: new Date(c[0] * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-          open: c[1],
-          high: c[2],
-          low: c[3],
-          close: c[4],
-          volume: c[5],
-          epoch: c[0]
-        }))
-        // Ensure strictly sorted by time descending
-        .sort((a, b) => b.epoch - a.epoch);
+        let allCandles: Candle[] = [];
 
-        setCandles(formatted);
+        // 1. Convert Local Session Data
+        if (sessionData && sessionData.length > 0) {
+            const localCandles: Candle[] = sessionData.map(s => ({
+                time: s.time,
+                open: s.lp, // Approximation for 1-min snapshot
+                high: s.lp,
+                low: s.lp,
+                close: s.lp,
+                volume: s.total_buy_qty + s.total_sell_qty, // Snapshot Total Volume
+                epoch: Math.floor(s.timestamp / 1000),
+                source: 'LIVE'
+            }));
+            allCandles = [...localCandles];
+        }
+
+        // 2. Try Fetching API History (Only if local data is sparse or user wants full day)
+        // Note: Ideally, we merge. For now, let's prioritize showing data immediately.
+        // If we have local data, show it. If purely empty, try API.
+        
+        if (allCandles.length < 5) {
+             try {
+                const rawCandles = await fetchStockHistory(symbol, credentials);
+                const apiCandles: Candle[] = rawCandles.map(c => ({
+                  time: new Date(c[0] * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                  open: c[1],
+                  high: c[2],
+                  low: c[3],
+                  close: c[4],
+                  volume: c[5],
+                  epoch: c[0],
+                  source: 'API'
+                }));
+                // Merge strategies could be complex (deduplication). 
+                // Simple strategy: Use API if available, else Local.
+                if (apiCandles.length > 0) {
+                    allCandles = apiCandles;
+                }
+             } catch(e) {
+                 console.warn("API History fetch failed, using local only", e);
+             }
+        }
+
+        // Sort descending by time
+        allCandles.sort((a, b) => b.epoch - a.epoch);
+        setCandles(allCandles);
+
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -69,7 +102,7 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
     };
     
     loadHistory();
-  }, [symbol, credentials]);
+  }, [symbol, credentials, sessionData]);
 
   return (
     <div className="flex flex-col h-full animate-in fade-in zoom-in duration-200">
@@ -92,7 +125,7 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
            <p className="text-xs text-gray-400 font-mono flex items-center gap-2">
                {isOption ? `EXP: ${optionDetails.expiry}` : 'EQUITY'} 
                <span className="w-1 h-1 bg-gray-600 rounded-full"></span>
-               1-Min Intraday
+               {candles.length > 0 && candles[0].source === 'LIVE' ? 'Local Session Feed' : '1-Min Intraday'}
            </p>
         </div>
       </div>
@@ -119,10 +152,10 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
       {!loading && !error && candles.length === 0 && (
         <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
             <div className="p-4 bg-slate-900 rounded-full mb-4">
-                <Clock size={32} className="text-slate-600" />
+                <Database size={32} className="text-slate-600" />
             </div>
             <h3 className="text-lg font-bold text-slate-300">No Data Available</h3>
-            <p className="text-sm max-w-xs text-center mt-2">No trading activity recorded for this symbol in the current session.</p>
+            <p className="text-sm max-w-xs text-center mt-2">No trading activity recorded locally or via API.</p>
         </div>
       )}
 
@@ -132,24 +165,25 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
               <thead className="bg-slate-900/90 text-slate-400 sticky top-0 z-10 uppercase text-[10px] font-bold tracking-widest backdrop-blur-md">
                  <tr>
                     <th className="px-6 py-4 text-left">Time</th>
-                    <th className="px-6 py-4">Open</th>
+                    <th className="px-6 py-4">LTP / Close</th>
                     <th className="px-6 py-4">High</th>
                     <th className="px-6 py-4">Low</th>
-                    <th className="px-6 py-4">Close</th>
                     <th className="px-6 py-4">Volume</th>
+                    <th className="px-6 py-4">Source</th>
                  </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                  {candles.map((c, idx) => {
-                    const isGreen = c.close >= c.open;
+                    const prev = candles[idx + 1];
+                    const isGreen = prev ? c.close >= prev.close : true;
                     return (
                         <tr key={idx} className="hover:bg-white/5 transition-colors group">
                            <td className="px-6 py-3 text-left font-mono text-slate-500 group-hover:text-slate-300">{c.time}</td>
-                           <td className="px-6 py-3 font-mono text-slate-400">{c.open}</td>
-                           <td className="px-6 py-3 font-mono text-green-400/80">{c.high}</td>
-                           <td className="px-6 py-3 font-mono text-red-400/80">{c.low}</td>
                            <td className={`px-6 py-3 font-mono font-bold ${isGreen ? 'text-bull' : 'text-bear'}`}>{c.close}</td>
+                           <td className="px-6 py-3 font-mono text-green-400/50">{c.high}</td>
+                           <td className="px-6 py-3 font-mono text-red-400/50">{c.low}</td>
                            <td className="px-6 py-3 font-mono text-slate-300 opacity-80">{c.volume.toLocaleString()}</td>
+                           <td className="px-6 py-3 font-mono text-[9px] text-slate-600">{c.source}</td>
                         </tr>
                     );
                  })}
