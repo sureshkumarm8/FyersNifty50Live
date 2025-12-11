@@ -1,10 +1,11 @@
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, BarChart4 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
   latestSnapshot?: MarketSnapshot;
+  historyLog?: MarketSnapshot[]; // Add historyLog prop
   onNavigate: (mode: ViewMode) => void;
   onSelectStock: (symbol: string) => void;
 }
@@ -54,7 +55,7 @@ const Gauge: React.FC<{ value: number; label: string }> = ({ value, label }) => 
     );
 };
 
-export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot, onNavigate, onSelectStock }) => {
+export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot, historyLog = [], onNavigate, onSelectStock }) => {
   
   const stats = useMemo(() => {
     const initialStats = {
@@ -379,7 +380,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                 <TrendingUp size={16} className="text-bull" />
                 <h3 className="font-bold text-bull-light text-xs uppercase">Drivers (Bullish)</h3>
              </div>
-             <div className="flex-1 overflow-auto">
+             <div className="flex-1 overflow-auto max-h-60">
                 <table className="w-full text-xs sm:text-sm">
                    <tbody className="divide-y divide-white/5">
                       {topLifters.map(stock => (
@@ -399,7 +400,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                 <TrendingDown size={16} className="text-bear" />
                 <h3 className="font-bold text-bear-light text-xs uppercase">Draggers (Bearish)</h3>
              </div>
-             <div className="flex-1 overflow-auto">
+             <div className="flex-1 overflow-auto max-h-60">
                 <table className="w-full text-xs sm:text-sm">
                    <tbody className="divide-y divide-white/5">
                       {topDraggers.map(stock => (
@@ -413,6 +414,52 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
              </div>
           </div>
        </div>
+
+       {/* RECENT SENTIMENT LOG (New) */}
+       {historyLog.length > 0 && (
+          <div className="glass-panel rounded-xl overflow-hidden">
+             <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
+                 <Clock size={16} className="text-blue-400" />
+                 <h3 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Recent Pulse (Last 5 Mins)</h3>
+             </div>
+             <div className="overflow-x-auto custom-scrollbar">
+               <table className="w-full text-xs sm:text-sm whitespace-nowrap text-center">
+                  <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
+                     <tr>
+                        <th className="px-3 py-2 text-left">Time</th>
+                        <th className="px-3 py-2">Nifty 1m%</th>
+                        <th className="px-3 py-2">Sentiment</th>
+                        <th className="px-3 py-2">Inst. Flow</th>
+                        <th className="px-3 py-2">Opt. Sentiment</th>
+                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                     {historyLog.slice().reverse().slice(0, 5).map((snap, idx) => (
+                        <tr key={idx} className="hover:bg-white/5 transition-colors">
+                           <td className="px-3 py-2 text-left font-mono text-slate-400">{snap.time}</td>
+                           <td className={`px-3 py-2 font-mono font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>
+                              {snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg.toFixed(2)}
+                           </td>
+                           <td className={`px-3 py-2 font-bold ${snap.overallSent >= 0 ? 'text-bull' : 'text-bear'}`}>
+                              {formatPercent(snap.overallSent)}
+                           </td>
+                           <td className={`px-3 py-2 font-mono font-bold ${(snap.callsBuyQty - snap.callsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
+                              {/* Rough approximation using calls flow vs puts flow diff */}
+                              {/* Re-calculating net flow for display consistency */}
+                              {/* Or just show Stock Flow if available, but MarketSnapshot uses Option Flow mostly. */}
+                              {/* Let's show Options Net Flow here for consistency with Snapshot data available */}
+                              {formatValue((snap.callsBuyQty - snap.callsSellQty) - (snap.putsBuyQty - snap.putsSellQty))}
+                           </td>
+                           <td className={`px-3 py-2 font-bold ${snap.optionsSent >= 0 ? 'text-bull' : 'text-bear'}`}>
+                              {formatPercent(snap.optionsSent)}
+                           </td>
+                        </tr>
+                     ))}
+                  </tbody>
+               </table>
+             </div>
+          </div>
+       )}
 
     </div>
   );

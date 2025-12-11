@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Clock } from 'lucide-react';
+import { ArrowLeft, Clock, AlertCircle } from 'lucide-react';
 import { FyersCredentials } from '../types';
 import { fetchStockHistory } from '../services/fyersService';
 
@@ -77,8 +77,16 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
         </div>
       )}
 
-      {!loading && !error && (
-        <div className="flex-1 overflow-auto bg-gray-900 border border-gray-800 rounded-xl">
+      {!loading && !error && candles.length === 0 && (
+        <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+            <AlertCircle size={48} className="text-gray-600 mb-2" />
+            <h3 className="text-lg font-semibold">No Data Available</h3>
+            <p className="text-sm">No trading history found for this session.</p>
+        </div>
+      )}
+
+      {!loading && !error && candles.length > 0 && (
+        <div className="flex-1 overflow-auto bg-gray-900 border border-gray-800 rounded-xl custom-scrollbar">
            <table className="w-full text-sm text-right">
               <thead className="bg-gray-950 text-gray-400 sticky top-0">
                  <tr>

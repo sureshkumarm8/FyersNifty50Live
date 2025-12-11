@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon } from 'lucide-react';
 import { StockTable } from './components/StockTable';
@@ -37,6 +36,9 @@ const App: React.FC = () => {
   const initialStocksRef = useRef<Record<string, FyersQuote>>({});
   const prevOptionsRef = useRef<Record<string, FyersQuote>>({});
   const initialOptionsRef = useRef<Record<string, FyersQuote>>({});
+  
+  // Track previous Nifty LTP to calculate 1-min change for snapshot
+  const prevNiftyLtpRef = useRef<number | null>(null);
 
   const saveCredentials = (newCreds: FyersCredentials) => {
     setCredentials(newCreds);
@@ -222,6 +224,7 @@ const App: React.FC = () => {
     
     if (!open && !bypass) {
        setMarketStatusMsg("Market Closed (09:17 - 15:15)");
+       // Only show error if no data loaded yet
        if (stocks.length === 0 && !error) {
            setError("Market is closed. Enable 'Test Mode' in settings to fetch data anyway.");
        }
@@ -240,11 +243,20 @@ const App: React.FC = () => {
       const idx = indexQuote[0];
       if (idx) {
           setNiftyLtp(idx.lp);
+          
+          // Calculate 1-min change for Snapshot
+          // If prevNiftyLtpRef is null (first run), change is 0
+          const prevLtp = prevNiftyLtpRef.current || idx.lp; 
+          const nifty1MinChange = idx.lp - prevLtp;
+          prevNiftyLtpRef.current = idx.lp;
+
           const optSymbols = getNiftyOptionSymbols(idx.lp);
           const rawOptions = await fetchQuotes(optSymbols, credentials);
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
           setOptionQuotes(enrichedOptions);
-          calculateSnapshot(enrichedStocks, enrichedOptions, idx.lp, idx.ch);
+          
+          // Pass 1-min change (nifty1MinChange) instead of Day Change (idx.ch)
+          calculateSnapshot(enrichedStocks, enrichedOptions, idx.lp, nifty1MinChange);
       }
       setLastUpdated(Date.now());
       setError(null);
@@ -377,6 +389,7 @@ const App: React.FC = () => {
               <CumulativeView 
                 data={stocks} 
                 latestSnapshot={historyLog.length > 0 ? historyLog[historyLog.length - 1] : undefined} 
+                historyLog={historyLog}
                 onNavigate={setViewMode}
                 onSelectStock={setSelectedStock}
               />

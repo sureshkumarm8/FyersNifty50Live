@@ -165,13 +165,16 @@ export const fetchStockHistory = async (
 
    // Calculate Range (Start of Today to Now)
    const now = new Date();
-   const todayStart = new Date(now);
-   todayStart.setHours(9, 0, 0, 0); // Market start or just 00:00
-
-   // Format: YYYY-MM-DD
-   const formatDate = (date: Date) => date.toISOString().split('T')[0];
    
-   const range_from = formatDate(todayStart);
+   // Format: YYYY-MM-DD (Local Time)
+   const formatDate = (date: Date) => {
+     const year = date.getFullYear();
+     const month = String(date.getMonth() + 1).padStart(2, '0');
+     const day = String(date.getDate()).padStart(2, '0');
+     return `${year}-${month}-${day}`;
+   };
+   
+   const range_from = formatDate(now);
    const range_to = formatDate(now);
 
    const targetUrl = `${PROXY_HISTORY_URL}?symbol=${encodeURIComponent(symbol)}&range_from=${range_from}&range_to=${range_to}`;

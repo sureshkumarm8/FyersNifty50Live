@@ -45,25 +45,25 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
     return sortConfig.direction === 'asc' ? <ArrowUp size={12} className="text-blue-400" /> : <ArrowDown size={12} className="text-blue-400" />;
   };
 
-  const headers: { label: string; field: SortField | null; align: 'left' | 'right'; width?: string; highlight?: boolean }[] = [
+  const headers: { label: string; field: SortField | null; align: 'left' | 'right'; width?: string; highlight?: boolean; responsive?: string }[] = [
     { label: 'Symbol', field: 'symbol', align: 'left', width: 'w-32 sm:w-48' },
     { label: 'LTP', field: 'lp', align: 'right' },
     { label: '1m %', field: 'lp_chg_1m_p', align: 'right', highlight: true },
-    { label: 'Sess %', field: 'lp_chg_day_p', align: 'right' },
-    { label: 'Day %', field: 'chp', align: 'right' },
+    { label: 'Sess %', field: 'lp_chg_day_p', align: 'right', responsive: 'hidden md:table-cell' },
+    { label: 'Day %', field: 'chp', align: 'right', responsive: 'hidden sm:table-cell' },
     
-    { label: 'Total Bid', field: 'total_buy_qty', align: 'right' },
-    { label: 'Bid 1m%', field: 'bid_qty_chg_p', align: 'right', highlight: true },
-    { label: 'Bid Day%', field: 'bid_chg_day_p', align: 'right' }, 
+    { label: 'Total Bid', field: 'total_buy_qty', align: 'right', responsive: 'hidden lg:table-cell' },
+    { label: 'Bid 1m%', field: 'bid_qty_chg_p', align: 'right', highlight: true, responsive: 'hidden md:table-cell' },
+    { label: 'Bid Day%', field: 'bid_chg_day_p', align: 'right', responsive: 'hidden lg:table-cell' }, 
     
-    { label: 'Total Ask', field: 'total_sell_qty', align: 'right' },
-    { label: 'Ask 1m%', field: 'ask_qty_chg_p', align: 'right', highlight: true },
-    { label: 'Ask Day%', field: 'ask_chg_day_p', align: 'right' }, 
+    { label: 'Total Ask', field: 'total_sell_qty', align: 'right', responsive: 'hidden lg:table-cell' },
+    { label: 'Ask 1m%', field: 'ask_qty_chg_p', align: 'right', highlight: true, responsive: 'hidden md:table-cell' },
+    { label: 'Ask Day%', field: 'ask_chg_day_p', align: 'right', responsive: 'hidden lg:table-cell' }, 
     
     { label: '1m Net%', field: 'net_strength_1m', align: 'right', highlight: true }, 
-    { label: 'Day Net%', field: 'day_net_strength', align: 'right' }, 
+    { label: 'Day Net%', field: 'day_net_strength', align: 'right', responsive: 'hidden sm:table-cell' }, 
 
-    { label: 'Time', field: 'tt', align: 'right' },
+    { label: 'Time', field: 'tt', align: 'right', responsive: 'hidden md:table-cell' },
   ];
 
   const totals = useMemo(() => {
@@ -125,28 +125,28 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                <tr className="bg-slate-900/80 backdrop-blur text-slate-200 border-b border-white/10 shadow-lg">
                  <td className="px-4 py-4 text-left text-blue-400 font-bold border-r border-white/5 bg-blue-900/10 sticky left-0 z-10 backdrop-blur-md">MARKET AGGREGATE</td>
                  <td className="px-4 py-4 text-right"></td>
-                 <td className="px-4 py-4 text-right bg-white/5 border-l border-white/5">{formatPercent(weightedLp1m)}</td>
-                 <td className="px-4 py-4 text-right bg-white/5">{formatPercent(weightedLpDay)}</td>
-                 <td className="px-4 py-4 text-right"></td>
+                 <td className="px-4 py-4 text-right bg-white/5 border-l border-white/5 border-r border-white/5">{formatPercent(weightedLp1m)}</td>
+                 <td className="px-4 py-4 text-right bg-white/5 hidden md:table-cell">{formatPercent(weightedLpDay)}</td>
+                 <td className="px-4 py-4 text-right hidden sm:table-cell"></td>
                  
-                 <td className="px-4 py-4 text-right border-l border-white/5">{formatQty(totals.total_buy_qty)}</td>
-                 <td className="px-4 py-4 text-right bg-bull/5 border-l border-white/5">{formatPercent(totalBidChg1mP)}</td>
-                 <td className="px-4 py-4 text-right bg-bull/5">{formatPercent(totalBidChgDayP)}</td>
+                 <td className="px-4 py-4 text-right border-l border-white/5 hidden lg:table-cell">{formatQty(totals.total_buy_qty)}</td>
+                 <td className="px-4 py-4 text-right bg-bull/5 border-l border-white/5 hidden md:table-cell">{formatPercent(totalBidChg1mP)}</td>
+                 <td className="px-4 py-4 text-right bg-bull/5 hidden lg:table-cell">{formatPercent(totalBidChgDayP)}</td>
                  
-                 <td className="px-4 py-4 text-right border-l border-white/5">{formatQty(totals.total_sell_qty)}</td>
-                 <td className="px-4 py-4 text-right bg-bear/5 border-l border-white/5">{formatPercent(totalAskChg1mP)}</td>
-                 <td className="px-4 py-4 text-right bg-bear/5">{formatPercent(totalAskChgDayP)}</td>
+                 <td className="px-4 py-4 text-right border-l border-white/5 hidden lg:table-cell">{formatQty(totals.total_sell_qty)}</td>
+                 <td className="px-4 py-4 text-right bg-bear/5 border-l border-white/5 hidden md:table-cell">{formatPercent(totalAskChg1mP)}</td>
+                 <td className="px-4 py-4 text-right bg-bear/5 hidden lg:table-cell">{formatPercent(totalAskChgDayP)}</td>
                  
                  <td className="px-4 py-4 text-right border-l border-white/5 bg-slate-800/50">{formatPercent(totalNet1mP)}</td>
-                 <td className="px-4 py-4 text-right bg-slate-800/50">{formatPercent(totalNetDayP)}</td>
-                 <td className="px-4 py-4 text-right"></td>
+                 <td className="px-4 py-4 text-right bg-slate-800/50 hidden sm:table-cell">{formatPercent(totalNetDayP)}</td>
+                 <td className="px-4 py-4 text-right hidden md:table-cell"></td>
                </tr>
             )}
             <tr>
               {headers.map((header, idx) => (
                 <th
                   key={idx}
-                  className={`px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200' : ''} ${header.field === 'symbol' ? 'sticky left-0 bg-slate-900/90 z-10 backdrop-blur' : ''}`}
+                  className={`px-4 py-3 cursor-pointer hover:bg-white/5 transition-colors ${header.align === 'right' ? 'text-right' : 'text-left'} ${header.width || ''} ${header.highlight ? 'bg-white/5 text-blue-200' : ''} ${header.field === 'symbol' ? 'sticky left-0 bg-slate-900/90 z-10 backdrop-blur' : ''} ${header.responsive || ''}`}
                   onClick={() => header.field && onSort(header.field)}
                 >
                   <div className={`flex items-center gap-1 ${header.align === 'right' ? 'justify-end' : 'justify-start'}`}>
@@ -176,42 +176,42 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                 <td className="px-4 py-3 text-right font-mono bg-white/5 border-l border-white/5 border-r border-white/5">
                   {formatPercent(stock.lp_chg_1m_p)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-white/5 border-r border-white/5">
+                <td className="px-4 py-3 text-right font-mono bg-white/5 border-r border-white/5 hidden md:table-cell">
                   {formatPercent(stock.lp_chg_day_p)}
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono font-medium">
+                <td className="px-4 py-3 text-right font-mono font-medium hidden sm:table-cell">
                   {formatPercent(stock.chp)}
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono text-bull-light border-l border-white/5 opacity-80">
+                <td className="px-4 py-3 text-right font-mono text-bull-light border-l border-white/5 opacity-80 hidden lg:table-cell">
                   {formatQty(stock.total_buy_qty)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-bull/5 border-l border-white/5">
+                <td className="px-4 py-3 text-right font-mono bg-bull/5 border-l border-white/5 hidden md:table-cell">
                   {formatPercent(stock.bid_qty_chg_p)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-bull/5">
+                <td className="px-4 py-3 text-right font-mono bg-bull/5 hidden lg:table-cell">
                   {formatPercent(stock.bid_chg_day_p)}
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono text-bear-light border-l border-white/5 opacity-80">
+                <td className="px-4 py-3 text-right font-mono text-bear-light border-l border-white/5 opacity-80 hidden lg:table-cell">
                   {formatQty(stock.total_sell_qty)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-bear/5 border-l border-white/5">
+                <td className="px-4 py-3 text-right font-mono bg-bear/5 border-l border-white/5 hidden md:table-cell">
                   {formatPercent(stock.ask_qty_chg_p)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-bear/5">
+                <td className="px-4 py-3 text-right font-mono bg-bear/5 hidden lg:table-cell">
                   {formatPercent(stock.ask_chg_day_p)}
                 </td>
 
                 <td className="px-4 py-3 text-right font-mono border-l border-white/10 bg-slate-800/40 font-bold border-r border-white/10">
                   {formatPercent(stock.net_strength_1m)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-slate-800/40 text-slate-300">
+                <td className="px-4 py-3 text-right font-mono bg-slate-800/40 text-slate-300 hidden sm:table-cell">
                   {formatPercent(stock.day_net_strength)}
                 </td>
 
-                <td className="px-4 py-3 text-right font-mono text-slate-600 text-[10px]">
+                <td className="px-4 py-3 text-right font-mono text-slate-600 text-[10px] hidden md:table-cell">
                   {formatTime(stock.tt)}
                 </td>
               </tr>
