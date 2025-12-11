@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon } from 'lucide-react';
 import { StockTable } from './components/StockTable';
@@ -11,56 +10,32 @@ import { SettingsScreen } from './components/SettingsScreen';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle } from './types';
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
-
-const HISTORY_STORAGE_KEY = 'nifty50_history_log';
-const HISTORY_DATE_KEY = 'nifty50_history_date';
-const SESSION_DATA_KEY = 'nifty50_session_data';
+import { dbService } from './services/db';
 
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
-    const saved = localStorage.getItem('fyers_creds');
-    return saved ? JSON.parse(saved) : { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value };
+    try {
+      const saved = localStorage.getItem('fyers_creds');
+      return saved ? JSON.parse(saved) : { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value };
+    } catch (e) {
+      return { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value };
+    }
   });
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
   const [error, setError] = useState<string | null>(null);
   const [marketStatusMsg, setMarketStatusMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDbLoaded, setIsDbLoaded] = useState(false); // New flag for DB hydration
   const [lastUpdated, setLastUpdated] = useState<number>(0);
 
   const [stocks, setStocks] = useState<EnrichedFyersQuote[]>([]);
   const [optionQuotes, setOptionQuotes] = useState<EnrichedFyersQuote[]>([]);
   const [niftyLtp, setNiftyLtp] = useState<number | null>(null);
   
-  const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>(() => {
-      try {
-          const savedDate = localStorage.getItem(HISTORY_DATE_KEY);
-          const today = new Date().toDateString();
-          if (savedDate === today) {
-              const savedLog = localStorage.getItem(HISTORY_STORAGE_KEY);
-              return savedLog ? JSON.parse(savedLog) : [];
-          } else {
-              localStorage.setItem(HISTORY_DATE_KEY, today);
-              localStorage.removeItem(HISTORY_STORAGE_KEY);
-              localStorage.removeItem(SESSION_DATA_KEY); 
-              return [];
-          }
-      } catch (e) {
-          return [];
-      }
-  });
-
-  const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>(() => {
-      try {
-          const savedDate = localStorage.getItem(HISTORY_DATE_KEY);
-          const today = new Date().toDateString();
-          if (savedDate === today) {
-              const saved = localStorage.getItem(SESSION_DATA_KEY);
-              return saved ? JSON.parse(saved) : {};
-          }
-          return {};
-      } catch (e) { return {}; }
-  });
+  // Data States
+  const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
+  const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>({});
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
@@ -74,35 +49,78 @@ const App: React.FC = () => {
   
   const prevNiftyLtpRef = useRef<number | null>(null);
 
+  // --- 1. Database Hydration (On Mount) ---
   useEffect(() => {
-      if (historyLog.length > 0) {
-          localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyLog));
-      }
-  }, [historyLog]);
+    const initData = async () => {
+        try {
+            await dbService.init();
+            
+            const today = new Date().toDateString();
+            const savedDate = await dbService.getLastDate();
 
+            if (savedDate === today) {
+                // Same day: Restore state
+                const snaps = await dbService.getSnapshots();
+                const sessions = await dbService.getAllSessionData();
+                setHistoryLog(snaps);
+                setSessionHistory(sessions);
+            } else {
+                // New day: Clear DB
+                await dbService.clearAll();
+                await dbService.setLastDate(today);
+            }
+        } catch (e) {
+            console.error("DB Init Failed", e);
+        } finally {
+            setIsDbLoaded(true);
+        }
+    };
+    initData();
+  }, []);
+
+  // --- 2. Database Persistence (Debounced) ---
+  
+  // Save Snapshots
   useEffect(() => {
-      const handler = setTimeout(() => {
-          if (Object.keys(sessionHistory).length > 0) {
-              try {
-                  localStorage.setItem(SESSION_DATA_KEY, JSON.stringify(sessionHistory));
-              } catch(e) {
-                  console.error("Storage quota exceeded", e);
-              }
-          }
-      }, 2000);
-      return () => clearTimeout(handler);
-  }, [sessionHistory]);
+      if (!isDbLoaded || historyLog.length === 0) return;
+      
+      // Save only the latest snapshot to append (Assuming historyLog grows one by one)
+      // Or safer: save the last added one.
+      const lastSnap = historyLog[historyLog.length - 1];
+      if (lastSnap) {
+          dbService.saveSnapshot(lastSnap).catch(e => console.error("Failed to save snapshot", e));
+      }
+  }, [historyLog, isDbLoaded]);
+
+  // Save Session Data
+  useEffect(() => {
+    if (!isDbLoaded) return;
+    
+    // We use a timeout to batch updates to IDB
+    const timer = setTimeout(() => {
+        Object.entries(sessionHistory).forEach(([symbol, candles]) => {
+            if (candles.length > 0) {
+                 dbService.saveStockSession(symbol, candles).catch(console.error);
+            }
+        });
+    }, 5000); // Save every 5s max
+
+    return () => clearTimeout(timer);
+  }, [sessionHistory, isDbLoaded]);
+
 
   const saveCredentials = (newCreds: FyersCredentials) => {
-    // Only update credentials, do not reset any other state
     setCredentials(newCreds); 
-    localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
+    try {
+        localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
+    } catch (e) {
+        setError("Failed to save credentials to local storage.");
+    }
     setError(null);
     setMarketStatusMsg(null);
   };
 
   const handleSetViewMode = (mode: ViewMode) => {
-    // Before navigating TO settings, save where we came from.
     if (mode === 'settings' && viewMode !== 'settings') {
       prevViewModeRef.current = viewMode;
     }
@@ -117,6 +135,8 @@ const App: React.FC = () => {
   };
 
   const updateSessionHistory = (quotes: EnrichedFyersQuote[]) => {
+      if (!isDbLoaded) return; // Don't collect until DB is ready
+
       const nowStr = new Date().toLocaleTimeString('en-IN', { hour12: false });
       const nowTs = Date.now();
 
@@ -150,6 +170,7 @@ const App: React.FC = () => {
                       day_net_strength: q.day_net_strength || 0
                   };
                   
+                  // In-memory limit: Keep 400 candles for chart
                   if (history.length > 400) history.shift();
                   history.push(candle);
               }
@@ -169,6 +190,7 @@ const App: React.FC = () => {
         
         // Load initial data from session history if available, otherwise set it
         if (!initialRef.current[curr.symbol]) {
+           // If we have history from DB, use the first candle
            const sessionStartData = sessionHistory[curr.symbol]?.[0];
            if(sessionStartData) {
               initialRef.current[curr.symbol] = {
@@ -237,345 +259,363 @@ const App: React.FC = () => {
 
         return {
           ...curr,
-          bid_qty_chg_1m, bid_qty_chg_p,
-          ask_qty_chg_1m, ask_qty_chg_p,
+          bid_qty_chg_1m,
+          bid_qty_chg_p,
+          ask_qty_chg_1m,
+          ask_qty_chg_p,
           net_strength_1m,
-          initial_total_buy_qty: initial?.total_buy_qty,
-          initial_total_sell_qty: initial?.total_sell_qty,
-          initial_lp: initial?.lp,
-          bid_chg_day_p, ask_chg_day_p, day_net_strength,
-          lp_chg_1m_p, lp_chg_day_p,
-          weight, index_contribution
+          bid_chg_day_p,
+          ask_chg_day_p,
+          day_net_strength,
+          initial_total_buy_qty: initial.total_buy_qty,
+          initial_total_sell_qty: initial.total_sell_qty,
+          lp_chg_1m_p,
+          lp_chg_day_p,
+          weight,
+          index_contribution
         };
       });
   };
 
-  const calculateSnapshot = (stocksData: EnrichedFyersQuote[], optionsData: EnrichedFyersQuote[], ltp: number, ptsChg: number) => {
-      let bullishW = 0, bearishW = 0, totalW = 0;
-      let adv = 0, dec = 0;
-      
-      // Stock Strength Calculation (Weighted Average of Stock Net Strength)
-      let weightedStockStrengthSum = 0;
-
-      stocksData.forEach(s => {
-          const w = s.weight || 0.1;
-          const sessionChg = s.lp_chg_day_p || 0;
-          
-          if (sessionChg > 0.001) { bullishW += w; adv++; } 
-          else if (sessionChg < -0.001) { bearishW += w; dec++; }
-          totalW += w;
-
-          const strength = s.day_net_strength || 0;
-          weightedStockStrengthSum += (strength * w);
-      });
-      const overallSent = totalW > 0 ? (bullishW - bearishW) / totalW * 100 : 0;
-      const stockSent = totalW > 0 ? weightedStockStrengthSum / totalW : 0;
-
-      let callBuyTotal = 0, callSellTotal = 0, callBuyInit = 0, callSellInit = 0;
-      let putBuyTotal = 0, putSellTotal = 0, putBuyInit = 0, putSellInit = 0;
-      let callOI = 0, putOI = 0;
-
-      optionsData.forEach(o => {
-          const isCE = o.symbol.endsWith('CE');
-          if (isCE) {
-              callBuyTotal += o.total_buy_qty || 0;
-              callSellTotal += o.total_sell_qty || 0;
-              callBuyInit += o.initial_total_buy_qty || 0;
-              callSellInit += o.initial_total_sell_qty || 0;
-              callOI += o.oi || 0;
-          } else {
-              putBuyTotal += o.total_buy_qty || 0;
-              putSellTotal += o.total_sell_qty || 0;
-              putBuyInit += o.initial_total_buy_qty || 0;
-              putSellInit += o.initial_total_sell_qty || 0;
-              putOI += o.oi || 0;
-          }
-      });
-
-      // Percent Change Logic: (Total - Init) / Init
-      // Strength: BidChg% - AskChg%
-      const getStrength = (buy: number, initBuy: number, sell: number, initSell: number) => {
-          const buyChgP = initBuy > 0 ? ((buy - initBuy) / initBuy) * 100 : 0;
-          const sellChgP = initSell > 0 ? ((sell - initSell) / initSell) * 100 : 0;
-          return buyChgP - sellChgP;
-      };
-
-      const callSent = getStrength(callBuyTotal, callBuyInit, callSellTotal, callSellInit);
-      const putSent = getStrength(putBuyTotal, putBuyInit, putSellTotal, putSellInit);
-      
-      const pcr = callOI > 0 ? putOI / callOI : 0;
-      const optionsSent = callSent - putSent;
-
-      // Calculate raw flows for display (in Millions)
-      const callsBuyDelta = callBuyTotal - callBuyInit;
-      const callsSellDelta = callSellTotal - callSellInit;
-      const putsBuyDelta = putBuyTotal - putBuyInit;
-      const putsSellDelta = putSellTotal - putSellInit;
-
-      const snapshot: MarketSnapshot = {
-          time: new Date().toLocaleTimeString('en-IN', { hour12: false }),
-          timestamp: Date.now(), // Added explicit timestamp
-          niftyLtp: ltp,
-          ptsChg: ptsChg,
-          overallSent,
-          adv, dec,
-          stockSent,
-          callSent,
-          putSent,
-          pcr,
-          optionsSent,
-          callsBuyQty: callsBuyDelta,
-          callsSellQty: callsSellDelta,
-          putsBuyQty: putsBuyDelta,
-          putsSellQty: putsSellDelta
-      };
-
-      setHistoryLog(prev => {
-          const updated = [...prev, snapshot];
-          if (updated.length > 400) updated.shift(); 
-          return updated;
-      });
-  };
-
-  const isMarketOpen = () => {
-     const now = new Date();
-     const hours = now.getHours();
-     const minutes = now.getMinutes();
-     const day = now.getDay(); 
-     if (day === 0 || day === 6) return false;
-     const totalMinutes = (hours * 60) + minutes;
-     const startMinutes = (9 * 60) + 17; 
-     const endMinutes = (15 * 60) + 15;  
-     return totalMinutes >= startMinutes && totalMinutes <= endMinutes;
-  };
-
   const refreshData = useCallback(async () => {
-    if (!credentials.appId || !credentials.accessToken) {
-       if(stocks.length === 0) setError("Please configure API credentials");
-       return;
-    }
+    if (!credentials.appId || !credentials.accessToken || !isDbLoaded) return;
 
-    const open = isMarketOpen();
-    const bypass = credentials.bypassMarketHours;
-    
-    if (!open && !bypass) {
-       setMarketStatusMsg("Market Closed (09:17 - 15:15)");
-       if (stocks.length === 0 && !error) {
-           setError("Market is closed. Enable 'Test Mode' in settings to fetch data anyway.");
-       }
-       return; 
-    } else {
-       setMarketStatusMsg(null);
-    }
-
+    setIsLoading(true);
     try {
-      if (stocks.length === 0) setIsLoading(true);
-      const rawStocks = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
-      const enrichedStocks = enrichData(rawStocks, prevStocksRef, initialStocksRef, true);
-      setStocks(enrichedStocks);
+      const stockData = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
+      if (stockData.length === 0) return;
 
+      const nifty = stockData.find(s => s.symbol === NIFTY_INDEX_SYMBOL); // Note: Nifty index isn't in NIFTY50_SYMBOLS usually
+      // Actually we need to fetch Nifty Index separately or add it to list. 
+      // For now, let's assume one of the stocks or separate call logic.
+      // Re-add fetching NIFTY INDEX explicitly if needed, but let's assume we derive logic from stocks for now or add it to fetch.
+      // Actually let's fetch NIFTY 50 Index as well
       const indexQuote = await fetchQuotes([NIFTY_INDEX_SYMBOL], credentials);
-      const idx = indexQuote[0];
-      if (idx) {
-          setNiftyLtp(idx.lp);
-          
-          const prevLtp = prevNiftyLtpRef.current || idx.lp; 
-          const nifty1MinChange = idx.lp - prevLtp;
-          prevNiftyLtpRef.current = idx.lp;
+      const niftyLtpVal = indexQuote.length > 0 ? indexQuote[0].lp : 0;
+      setNiftyLtp(niftyLtpVal);
 
-          const optSymbols = getNiftyOptionSymbols(idx.lp);
-          const rawOptions = await fetchQuotes(optSymbols, credentials);
+      const enrichedStocks = enrichData(stockData, prevStocksRef, initialStocksRef, true);
+      setStocks(enrichedStocks);
+      updateSessionHistory(enrichedStocks);
+
+      // --- Option Chain Logic ---
+      if (niftyLtpVal > 0) {
+          const optionSymbols = getNiftyOptionSymbols(niftyLtpVal);
+          const rawOptions = await fetchQuotes(optionSymbols, credentials);
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
           setOptionQuotes(enrichedOptions);
           
-          calculateSnapshot(enrichedStocks, enrichedOptions, idx.lp, nifty1MinChange);
+          // --- Market Snapshot for History Log ---
+          const now = new Date();
+          const timeStr = now.toLocaleTimeString('en-IN', { hour12: false });
+          const prevLtp = prevNiftyLtpRef.current || niftyLtpVal;
+          const ptsChg = niftyLtpVal - prevLtp;
+          prevNiftyLtpRef.current = niftyLtpVal;
+
+          // Aggregations
+          const adv = enrichedStocks.filter(s => (s.lp_chg_day_p || 0) > 0).length;
+          const dec = enrichedStocks.filter(s => (s.lp_chg_day_p || 0) < 0).length;
           
-          updateSessionHistory([...enrichedStocks, ...enrichedOptions]);
+          let totalWeight = 0, bullishWeight = 0, bearishWeight = 0;
+          let stockBuyDelta = 0, stockSellDelta = 0;
+
+          enrichedStocks.forEach(s => {
+              const w = s.weight || 0;
+              const chg = s.lp_chg_day_p || 0;
+              totalWeight += w;
+              if (chg > 0) bullishWeight += w;
+              if (chg < 0) bearishWeight += w;
+              
+              stockBuyDelta += (s.total_buy_qty || 0) - (s.initial_total_buy_qty || 0);
+              stockSellDelta += (s.total_sell_qty || 0) - (s.initial_total_sell_qty || 0);
+          });
+
+          const overallSent = totalWeight > 0 ? ((bullishWeight - bearishWeight) / totalWeight) * 100 : 0;
+          const stockSent = stockSellDelta !== 0 ? ((stockBuyDelta - stockSellDelta) / Math.abs(stockSellDelta)) * 100 : 0;
+
+          // Option Aggregations
+          let callsBuyQty = 0, callsSellQty = 0, putsBuyQty = 0, putsSellQty = 0;
+          let callsOI = 0, putsOI = 0;
+          let callBuyDelta = 0, callSellDelta = 0, putBuyDelta = 0, putSellDelta = 0;
+
+          enrichedOptions.forEach(o => {
+              if (o.symbol.endsWith('CE')) {
+                  callsBuyQty += o.total_buy_qty || 0;
+                  callsSellQty += o.total_sell_qty || 0;
+                  callsOI += o.oi || 0;
+                  callBuyDelta += (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
+                  callSellDelta += (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
+              } else {
+                  putsBuyQty += o.total_buy_qty || 0;
+                  putsSellQty += o.total_sell_qty || 0;
+                  putsOI += o.oi || 0;
+                  putBuyDelta += (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
+                  putSellDelta += (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
+              }
+          });
+
+          const pcr = callsOI > 0 ? putsOI / callsOI : 0;
+          const callSent = callSellDelta !== 0 ? ((callBuyDelta - callSellDelta) / Math.abs(callSellDelta)) * 100 : 0;
+          const putSent = putSellDelta !== 0 ? ((putBuyDelta - putSellDelta) / Math.abs(putSellDelta)) * 100 : 0;
+          const optionsSent = callSent - putSent;
+
+          // Only log if minute changed to avoid spamming history
+          const lastLogTime = historyLog.length > 0 ? historyLog[historyLog.length - 1].time : '';
+          const currentMin = timeStr.substring(0, 5); // HH:MM
+          const lastLogMin = lastLogTime.substring(0, 5);
+
+          if (currentMin !== lastLogMin) {
+              const snapshot: MarketSnapshot = {
+                  time: timeStr,
+                  timestamp: Date.now(),
+                  niftyLtp: niftyLtpVal,
+                  ptsChg,
+                  overallSent,
+                  adv,
+                  dec,
+                  stockSent,
+                  callSent,
+                  putSent,
+                  pcr,
+                  optionsSent,
+                  callsBuyQty,
+                  callsSellQty,
+                  putsBuyQty,
+                  putsSellQty
+              };
+              setHistoryLog(prev => [...prev, snapshot]);
+          }
       }
+
       setLastUpdated(Date.now());
       setError(null);
+      setMarketStatusMsg(null);
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Failed to fetch data");
+      if (err.message.includes("Market Hours") || err.message.includes("Test Mode")) {
+          setMarketStatusMsg(err.message);
+      } else {
+          setError(err.message);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [credentials]);
+  }, [credentials, isDbLoaded, historyLog]); // Added historyLog dependency for deduping
 
   useEffect(() => {
-    const interval = credentials.refreshInterval || REFRESH_OPTIONS[3].value;
-    refreshData();
-    const intervalId = setInterval(refreshData, interval);
-    return () => clearInterval(intervalId);
-  }, [refreshData, credentials.refreshInterval]);
-
-  const filteredAndSortedStocks = useMemo(() => {
-    let data = [...stocks];
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      data = data.filter(s => s.symbol.toLowerCase().includes(q) || (s.short_name && s.short_name.toLowerCase().includes(q)));
+    if (isDbLoaded && credentials.appId && credentials.accessToken) {
+      // Initial Fetch
+      refreshData();
+      
+      const intervalId = setInterval(refreshData, credentials.refreshInterval || 30000);
+      return () => clearInterval(intervalId);
     }
-    data.sort((a, b) => {
+  }, [credentials, refreshData, isDbLoaded]);
+
+  // --- Filtering & Sorting for Summary View ---
+  const sortedStocks = useMemo(() => {
+    const filtered = stocks.filter(s => 
+       s.symbol.toLowerCase().includes(searchQuery.toLowerCase()) || 
+       (s.short_name && s.short_name.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+
+    filtered.sort((a, b) => {
       const aValue = a[sortConfig.field];
       const bValue = b[sortConfig.field];
+
       if (aValue === undefined || bValue === undefined) return 0;
-      if (typeof aValue === 'string' && typeof bValue === 'string') return sortConfig.direction === 'asc' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
-      if (typeof aValue === 'number' && typeof bValue === 'number') return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue;
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+         return sortConfig.direction === 'asc' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+      }
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue;
+      }
       return 0;
     });
-    return data;
+
+    return filtered;
   }, [stocks, searchQuery, sortConfig]);
 
-  if (viewMode === 'settings') {
-    return <SettingsScreen 
-              currentCreds={credentials} 
-              onSave={saveCredentials} 
-              onBack={() => handleSetViewMode(prevViewModeRef.current)} 
-           />;
+  // Loading Screen for DB Hydration
+  if (!isDbLoaded) {
+      return (
+          <div className="h-full w-full flex flex-col items-center justify-center bg-slate-950 text-blue-500 gap-4">
+              <Zap className="animate-bounce" size={48} />
+              <h1 className="text-xl font-bold text-white">Hydrating Data...</h1>
+              <p className="text-slate-500 text-sm">Loading session history from database</p>
+          </div>
+      );
+  }
+
+  // If no credentials, show settings immediately
+  if (!credentials.appId && viewMode !== 'settings') {
+     return (
+        <SettingsScreen 
+           onBack={() => {}} 
+           onSave={saveCredentials} 
+           currentCreds={credentials} 
+        />
+     );
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden relative font-sans">
+    <div className="flex flex-col h-full bg-slate-950 text-slate-200">
       
-      <header className="flex-none glass-header z-30 shadow-2xl relative">
-        <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
-        <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 h-auto sm:h-18 flex flex-col sm:flex-row items-center justify-between py-2 sm:py-3 gap-3 sm:gap-0">
-          
-          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 w-full sm:w-auto">
-             <div className="flex items-center gap-3 cursor-pointer group self-start sm:self-center" onClick={() => setSelectedStock(null)}>
-               <div className="p-2 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl shadow-lg shadow-blue-500/30 group-hover:shadow-blue-500/50 transition-all duration-300">
-                 <Zap size={20} className="text-white fill-white" />
+      {/* --- Top Navigation Bar --- */}
+      <header className="flex-none p-4 pb-2 z-20">
+        <div className="glass-header rounded-2xl p-3 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg border border-white/5">
+           
+           <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
+               <div className="flex items-center gap-2">
+                   <div className="bg-blue-600 p-2 rounded-lg shadow-lg shadow-blue-500/20">
+                      <Activity className="text-white" size={20} />
+                   </div>
+                   <div>
+                       <h1 className="text-lg font-black text-white leading-none tracking-tight">NIFTY50<span className="text-blue-500">.AI</span></h1>
+                       <p className="text-[10px] text-slate-400 font-mono">LIVE TERMINAL</p>
+                   </div>
                </div>
-               <div>
-                 <h1 className="text-xl sm:text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">
-                   NIFTY<span className="text-blue-500">50</span>.AI
-                 </h1>
-               </div>
-               <button onClick={() => handleSetViewMode('settings')} className="ml-auto sm:hidden p-2 text-slate-400 hover:text-white rounded-lg"><Settings size={20} /></button>
-             </div>
+               
+               {/* Mobile Menu Toggle could go here */}
+           </div>
 
-             {!selectedStock && (
-                <div className="flex bg-slate-900/60 p-1 rounded-xl border border-white/5 backdrop-blur-md overflow-x-auto w-full sm:w-auto custom-scrollbar">
-                   {[
-                     { id: 'summary', icon: PieChart, label: 'Cockpit' },
-                     { id: 'stocks', icon: List, label: 'Stocks' },
-                     { id: 'options', icon: BarChart3, label: 'Options' },
-                     { id: 'history', icon: Clock, label: 'History' }
-                   ].map((tab) => (
-                     <button 
-                       key={tab.id}
-                       onClick={() => handleSetViewMode(tab.id as ViewMode)} 
-                       className={`flex-shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all duration-300 whitespace-nowrap ${viewMode === tab.id ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-                     >
-                        <tab.icon size={14} className={viewMode === tab.id ? 'animate-pulse' : ''} /> {tab.label}
-                     </button>
-                   ))}
-                </div>
-             )}
-          </div>
+           {/* View Switcher (Desktop/Tablet) */}
+           <div className="flex bg-slate-900/50 p-1 rounded-xl border border-white/5 overflow-x-auto w-full md:w-auto">
+               <button onClick={() => handleSetViewMode('summary')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'summary' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <PieChart size={14} /> <span className="hidden sm:inline">Cockpit</span>
+               </button>
+               <button onClick={() => handleSetViewMode('stocks')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'stocks' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <List size={14} /> Stocks
+               </button>
+               <button onClick={() => handleSetViewMode('options')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'options' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Zap size={14} /> Options
+               </button>
+               <button onClick={() => handleSetViewMode('history')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'history' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Clock size={14} /> History
+               </button>
+           </div>
 
-          <div className="flex items-center gap-4 w-full sm:w-auto justify-end hidden sm:flex">
-             {!selectedStock && viewMode === 'stocks' && (
-               <div className="flex items-center bg-slate-900/50 rounded-full px-4 py-2 border border-white/10 focus-within:border-blue-500/50 focus-within:bg-slate-900/80 transition-all">
-                  <Search size={16} className="text-slate-500 mr-2" />
-                  <input type="text" placeholder="Search..." className="bg-transparent border-none outline-none text-sm w-32 sm:w-48 text-white placeholder-slate-600" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-               </div>
-             )}
-            <div className="text-right hidden md:block">
-                 <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Latency</p>
-                 <div className="flex items-center justify-end gap-2">
-                    {marketStatusMsg ? (
-                       <span className="flex items-center gap-1 text-xs font-mono text-yellow-400">
-                          <Moon size={10} /> Market Closed
-                       </span>
-                    ) : (
-                       <>
-                         <span className="relative flex h-2 w-2">
-                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                           <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                         </span>
-                         <p className="text-xs font-mono text-slate-300">{lastUpdated ? 'Live' : 'Connecting...'}</p>
-                       </>
-                    )}
-                 </div>
-            </div>
-            <button onClick={() => handleSetViewMode('settings')} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"><Settings size={20} /></button>
-          </div>
+           <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+               {error && (
+                   <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs">
+                       <AlertCircle size={14} />
+                       <span className="truncate max-w-[150px]">{error}</span>
+                   </div>
+               )}
+               {marketStatusMsg && (
+                   <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-yellow-400 text-xs">
+                       <Moon size={14} />
+                       <span className="truncate max-w-[150px]">{marketStatusMsg}</span>
+                   </div>
+               )}
+
+               <button 
+                  onClick={() => refreshData()}
+                  disabled={isLoading} 
+                  className={`p-2 rounded-lg border border-white/10 transition-all ${isLoading ? 'bg-slate-800 text-slate-500' : 'bg-slate-800 hover:bg-slate-700 text-blue-400 shadow-lg'}`}
+               >
+                   <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
+               </button>
+               <button 
+                  onClick={() => handleSetViewMode('settings')}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 border border-white/10 rounded-lg text-slate-300 hover:text-white transition-all shadow-lg"
+               >
+                   <Settings size={18} />
+               </button>
+           </div>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col min-h-0 overflow-hidden relative z-10">
-        {error && (
-          <div className="flex-none px-4 pt-2">
-            <div className="glass-panel border-l-4 border-l-red-500 text-red-200 px-4 py-2 rounded-r-xl flex items-center gap-4 shadow-[0_0_20px_rgba(239,68,68,0.2)]">
-                 <AlertCircle size={20} className="text-red-500 shrink-0 animate-bounce" />
-                 <span className="text-xs sm:text-sm font-medium">{error}</span>
+      {/* --- Main Content Area --- */}
+      <main className="flex-1 overflow-hidden relative flex flex-col">
+        
+        {viewMode === 'settings' && (
+            <div className="absolute inset-0 z-50 bg-slate-950">
+                <SettingsScreen 
+                    onBack={() => handleSetViewMode(prevViewModeRef.current)} 
+                    onSave={saveCredentials} 
+                    currentCreds={credentials} 
+                />
             </div>
-          </div>
         )}
 
-        {selectedStock ? (
-           <div className="flex-1 p-2 sm:p-6 overflow-hidden animate-in slide-in-from-right duration-300">
-               <StockDetail 
-                  symbol={selectedStock} 
-                  credentials={credentials} 
-                  onBack={() => setSelectedStock(null)} 
-                  sessionData={sessionHistory[selectedStock]} 
-               />
-           </div>
-        ) : viewMode === 'history' ? (
-           <div className="flex-1 p-2 sm:p-6 overflow-hidden animate-in fade-in duration-300">
-               <SentimentHistory history={historyLog} />
-           </div>
-        ) : viewMode === 'options' ? (
-           <div className="flex-1 p-2 sm:p-6 overflow-hidden flex flex-col animate-in fade-in duration-300">
-              <OptionChain quotes={optionQuotes} niftyLtp={niftyLtp} lastUpdated={lastUpdated ? new Date(lastUpdated) : null} isLoading={isLoading} onSelect={setSelectedStock} />
-           </div>
-        ) : viewMode === 'summary' ? (
-           <div className="flex-1 overflow-y-auto custom-scrollbar animate-in fade-in zoom-in duration-300">
-              <CumulativeView 
-                data={stocks} 
-                latestSnapshot={historyLog.length > 0 ? historyLog[historyLog.length - 1] : undefined} 
-                historyLog={historyLog}
-                onNavigate={handleSetViewMode}
-                onSelectStock={setSelectedStock}
-                marketStatus={marketStatusMsg} 
-              />
-           </div>
-        ) : (
-           <>
-             <div className="flex-none p-2 sm:p-6 pb-0 animate-in fade-in duration-300">
-               {stocks.length > 0 && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 mb-2 sm:mb-4">
-                     <div className="glass-panel p-3 sm:p-4 rounded-xl relative overflow-hidden group">
-                        <div className="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                            <Activity size={40} />
-                        </div>
-                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Breadth (Session)</p>
-                        <div className="flex items-end gap-2 mt-2">
-                           <span className="text-2xl sm:text-3xl font-bold text-bull text-glow-green">{stocks.filter(s => (s.lp_chg_day_p || 0) > 0.001).length}</span>
-                           <span className="text-slate-600 text-lg sm:text-xl font-thin">/</span>
-                           <span className="text-2xl sm:text-3xl font-bold text-bear text-glow-red">{stocks.filter(s => (s.lp_chg_day_p || 0) < -0.001).length}</span>
-                        </div>
-                     </div>
-                  </div>
-               )}
-             </div>
-             {/* Mobile Search Bar for Stocks View */}
-             <div className="sm:hidden px-2 pb-2">
-               <div className="flex items-center bg-slate-900/50 rounded-lg px-3 py-2 border border-white/10">
-                   <Search size={16} className="text-slate-500 mr-2" />
-                   <input type="text" placeholder="Search..." className="bg-transparent border-none outline-none text-sm w-full text-white" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-               </div>
-             </div>
-             <div className="flex-1 overflow-y-auto p-2 sm:p-6 pt-2 custom-scrollbar animate-in fade-in duration-500">
-               <StockTable data={filteredAndSortedStocks} sortConfig={sortConfig} onSort={handleSort} onSelect={setSelectedStock} isLoading={isLoading} />
-             </div>
-           </>
+        {/* Stock Detail Overlay */}
+        {selectedStock && (
+            <div className="absolute inset-0 z-40 bg-slate-950/90 backdrop-blur-md p-4 animate-in fade-in zoom-in duration-200">
+                <StockDetail 
+                    symbol={selectedStock} 
+                    credentials={credentials} 
+                    onBack={() => setSelectedStock(null)} 
+                    sessionData={sessionHistory[selectedStock]}
+                />
+            </div>
         )}
+
+        {viewMode === 'summary' && (
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+               <CumulativeView 
+                  data={stocks} 
+                  latestSnapshot={historyLog[historyLog.length-1]}
+                  historyLog={historyLog}
+                  onNavigate={handleSetViewMode}
+                  onSelectStock={setSelectedStock}
+                  marketStatus={marketStatusMsg}
+               />
+            </div>
+        )}
+
+        {viewMode === 'stocks' && (
+            <div className="flex flex-col h-full px-4 pb-4">
+                <div className="mb-4 flex items-center gap-2">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                        <input 
+                            type="text" 
+                            placeholder="Search Nifty 50 stocks..." 
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                        />
+                    </div>
+                    <div className="text-xs text-slate-500 font-mono hidden sm:block">
+                        {sortedStocks.length} Symbols
+                    </div>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                    <StockTable 
+                        data={sortedStocks} 
+                        sortConfig={sortConfig} 
+                        onSort={handleSort} 
+                        onSelect={setSelectedStock}
+                        isLoading={isLoading && stocks.length === 0}
+                    />
+                </div>
+            </div>
+        )}
+
+        {viewMode === 'options' && (
+            <div className="flex flex-col h-full px-4 pb-4">
+                <div className="flex-1 overflow-hidden">
+                    <OptionChain 
+                        quotes={optionQuotes} 
+                        niftyLtp={niftyLtp}
+                        lastUpdated={lastUpdated ? new Date(lastUpdated) : null}
+                        isLoading={isLoading}
+                        onSelect={setSelectedStock}
+                    />
+                </div>
+            </div>
+        )}
+
+        {viewMode === 'history' && (
+            <div className="flex flex-col h-full px-4 pb-4">
+                <SentimentHistory history={historyLog} />
+            </div>
+        )}
+
       </main>
     </div>
   );
 };
 
+// Added default export
 export default App;

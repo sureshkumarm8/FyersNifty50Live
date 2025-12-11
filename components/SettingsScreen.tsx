@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { FyersCredentials } from '../types';
 import { 
@@ -7,6 +8,7 @@ import {
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock 
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
+import { dbService } from '../services/db';
 
 interface SettingsScreenProps {
   onBack: () => void;
@@ -33,10 +35,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     onBack();
   };
 
-  const handleReset = () => {
-    if (confirm("⚠️ WARNING: This will permanently delete your API credentials and reset all application data. Are you sure you want to proceed?")) {
-        localStorage.clear();
-        window.location.reload();
+  const handleReset = async () => {
+    if (confirm("⚠️ WARNING: This will permanently delete your API credentials and reset all application data (including database history). Are you sure you want to proceed?")) {
+        try {
+            await dbService.clearAll();
+            localStorage.clear();
+            window.location.reload();
+        } catch (e) {
+            alert("Failed to clear database. Please clear browser data manually.");
+        }
     }
   };
 
