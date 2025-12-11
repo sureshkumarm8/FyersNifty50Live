@@ -103,7 +103,7 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
                     <div className="hidden sm:block h-8 w-[1px] bg-white/10"></div>
                     <div className="flex-1 sm:flex-none flex items-center gap-2 text-xs text-slate-400">
                         <Zap size={14} className="text-yellow-500" />
-                        <span>ATM ± 10 Strikes</span>
+                        <span>ATM ± 25 Strikes</span>
                     </div>
                 </div>
             </div>

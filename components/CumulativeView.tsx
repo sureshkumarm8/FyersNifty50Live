@@ -1,5 +1,4 @@
 
-
 import React, { useMemo, useState } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
 import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer } from 'lucide-react';
@@ -301,17 +300,17 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
        {/* Decision Engine Block */}
        <div className={`glass-panel p-4 sm:p-6 rounded-2xl relative overflow-visible transition-all duration-500 border-2 ${windowAnalysis?.signalClass || 'border-slate-800'}`}>
            
-           {/* Time Window Selector Toolbar */}
-           <div className="absolute top-4 right-4 z-20 flex bg-slate-900/80 rounded-lg p-1 border border-white/10 shadow-lg backdrop-blur-md overflow-x-auto max-w-[50%] sm:max-w-none custom-scrollbar">
-               {[1, 3, 5, 10, 15, 30].map(m => (
-                   <button
-                       key={m}
-                       onClick={() => setDecisionWindow(m)}
-                       className={`px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-bold rounded transition-all whitespace-nowrap ${decisionWindow === m ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-                   >
-                       {m}m
-                   </button>
-               ))}
+           {/* Time Window Selector Toolbar - Now a compact Dropdown */}
+           <div className="absolute top-4 right-4 z-20">
+               <select 
+                   value={decisionWindow} 
+                   onChange={(e) => setDecisionWindow(Number(e.target.value))}
+                   className="bg-slate-900/90 text-slate-200 text-xs font-bold border border-white/10 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-lg backdrop-blur-md cursor-pointer"
+               >
+                   {[1, 3, 5, 10, 15, 30].map(m => (
+                       <option key={m} value={m}>{m}m Window</option>
+                   ))}
+               </select>
            </div>
 
            <div className="flex flex-col md:flex-row gap-6">
@@ -326,7 +325,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                        
                        <div className="flex gap-2">
                             {windowAnalysis?.isFallback && (
-                                <div className="flex items-center gap-1 text-slate-400 bg-slate-800/50 px-2 py-1 rounded text-[10px] border border-white/5 mr-12 sm:mr-0">
+                                <div className="flex items-center gap-1 text-slate-400 bg-slate-800/50 px-2 py-1 rounded text-[10px] border border-white/5 mr-24 sm:mr-0">
                                    <Clock size={12} />
                                    <span>Building History...</span>
                                 </div>

@@ -125,6 +125,7 @@ const App: React.FC = () => {
       prevViewModeRef.current = viewMode;
     }
     setViewMode(mode);
+    setSelectedStock(null); // Close overlay when navigation changes
   };
 
   const handleSort = (field: SortField) => {
@@ -281,6 +282,32 @@ const App: React.FC = () => {
     if (!credentials.appId || !credentials.accessToken || !isDbLoaded) return;
 
     setIsLoading(true);
+
+    // --- Strict Market Hours Check ---
+    if (!credentials.bypassMarketHours) {
+        const now = new Date();
+        // Convert current time to IST to check market status
+        // Using "en-US" locale with IST timeZone to parse components
+        const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+        const istDate = new Date(istString);
+        
+        const day = istDate.getDay(); // 0 = Sun, 6 = Sat
+        const hour = istDate.getHours();
+        const min = istDate.getMinutes();
+        const timeVal = hour * 100 + min;
+
+        // Market Rules: Mon-Fri (1-5), 09:00 (900) to 15:45 (1545)
+        // Note: Actual market is 09:15-15:30, but we allow buffers for pre/post data
+        const isWeekday = day >= 1 && day <= 5;
+        const isOpen = timeVal >= 900 && timeVal <= 1545;
+
+        if (!isWeekday || !isOpen) {
+            setMarketStatusMsg("Market Closed (09:00 - 15:45 IST)");
+            setIsLoading(false);
+            return;
+        }
+    }
+
     try {
       const stockData = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
       if (stockData.length === 0) return;
