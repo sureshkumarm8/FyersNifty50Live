@@ -10,6 +10,9 @@ import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
 
+const HISTORY_STORAGE_KEY = 'nifty50_history_log';
+const HISTORY_DATE_KEY = 'nifty50_history_date';
+
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     const saved = localStorage.getItem('fyers_creds');
@@ -26,7 +29,26 @@ const App: React.FC = () => {
   const [stocks, setStocks] = useState<EnrichedFyersQuote[]>([]);
   const [optionQuotes, setOptionQuotes] = useState<EnrichedFyersQuote[]>([]);
   const [niftyLtp, setNiftyLtp] = useState<number | null>(null);
-  const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
+  
+  // Initialize history from LocalStorage with daily reset logic
+  const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>(() => {
+      try {
+          const savedDate = localStorage.getItem(HISTORY_DATE_KEY);
+          const today = new Date().toDateString();
+          
+          // If stored data is from today, load it. Otherwise, start fresh.
+          if (savedDate === today) {
+              const savedLog = localStorage.getItem(HISTORY_STORAGE_KEY);
+              return savedLog ? JSON.parse(savedLog) : [];
+          } else {
+              localStorage.setItem(HISTORY_DATE_KEY, today);
+              localStorage.removeItem(HISTORY_STORAGE_KEY);
+              return [];
+          }
+      } catch (e) {
+          return [];
+      }
+  });
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
@@ -39,6 +61,13 @@ const App: React.FC = () => {
   
   // Track previous Nifty LTP to calculate 1-min change for snapshot
   const prevNiftyLtpRef = useRef<number | null>(null);
+
+  // Persist History Log whenever it changes
+  useEffect(() => {
+      if (historyLog.length > 0) {
+          localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyLog));
+      }
+  }, [historyLog]);
 
   const saveCredentials = (newCreds: FyersCredentials) => {
     setCredentials(newCreds);
@@ -219,6 +248,7 @@ const App: React.FC = () => {
 
       setHistoryLog(prev => {
           const updated = [...prev, snapshot];
+          // Limit to one trading session (approx 375 mins)
           if (updated.length > 400) updated.shift(); 
           return updated;
       });

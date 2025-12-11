@@ -16,6 +16,7 @@ interface Candle {
   low: number;
   close: number;
   volume: number;
+  epoch: number;
 }
 
 export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, onBack }) => {
@@ -24,16 +25,13 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
   const [error, setError] = useState<string | null>(null);
 
   // Parse Symbol for Display
-  // NSE:SBIN-EQ -> SBIN
-  // NSE:NIFTY24OCT25000CE -> NIFTY 24OCT 25000 CE
   const isOption = symbol.includes('CE') || symbol.includes('PE');
   let displayName = symbol.replace('NSE:', '').replace('-EQ', '');
   let optionDetails = { expiry: '', strike: '', type: '' };
 
   if (isOption) {
       // Regex to extract Nifty Option parts: NIFTY + Year(2) + Month/Date(3/1) + Strike + Type(2)
-      // Standard format: NSE:NIFTY24OCT25000CE
-      // Enhanced Regex: Handles Strikes 3-6 digits
+      // Enhanced Regex: Handles Strikes 3-6 digits and various month formats
       const match = displayName.match(/([A-Z]+)(\d{2})([A-Z0-9]{1,3})(\d{3,6})(CE|PE)/);
       if (match) {
           const [_, underlying, yy, mmm, strike, type] = match;

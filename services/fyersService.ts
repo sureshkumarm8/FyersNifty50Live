@@ -196,7 +196,7 @@ export const fetchStockHistory = async (
       if (!response.ok) {
          throw new Error(`History API Error: ${response.status} ${response.statusText}`);
       }
-      throw new Error("Invalid response from History API");
+      throw new Error(`Invalid JSON response from History API: ${text.substring(0, 50)}...`);
    }
 
    if (!response.ok) {
