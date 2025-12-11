@@ -300,11 +300,11 @@ export const getNiftyOptionSymbols = (ltp: number): string[] => {
       symbolBase = `NSE:NIFTY${yy}${m}${dd}`;
   }
 
-  // 5. Generate Strikes (20 Above, 20 Below)
+  // 5. Generate Strikes (25 Above, 25 Below)
   // Round LTP to nearest 50
   const atm = Math.round(ltp / 50) * 50;
 
-  for (let i = -20; i <= 20; i++) {
+  for (let i = -25; i <= 25; i++) {
       const strike = atm + (i * 50);
       symbols.push(`${symbolBase}${strike}CE`);
       symbols.push(`${symbolBase}${strike}PE`);
