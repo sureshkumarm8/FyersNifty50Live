@@ -33,8 +33,8 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
   if (isOption) {
       // Regex to extract Nifty Option parts: NIFTY + Year(2) + Month/Date(3/1) + Strike + Type(2)
       // Standard format: NSE:NIFTY24OCT25000CE
-      // Regex: Start with letters, then digits/letters for date, then digits for strike, then CE/PE
-      const match = displayName.match(/([A-Z]+)(\d{2})([A-Z0-9]{1,3})(\d{5})(CE|PE)/);
+      // Enhanced Regex: Handles Strikes 3-6 digits
+      const match = displayName.match(/([A-Z]+)(\d{2})([A-Z0-9]{1,3})(\d{3,6})(CE|PE)/);
       if (match) {
           const [_, underlying, yy, mmm, strike, type] = match;
           displayName = underlying;
@@ -56,8 +56,11 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
           high: c[2],
           low: c[3],
           close: c[4],
-          volume: c[5]
-        })).reverse(); // Show newest first
+          volume: c[5],
+          epoch: c[0]
+        }))
+        // Ensure strictly sorted by time descending
+        .sort((a, b) => b.epoch - a.epoch);
 
         setCandles(formatted);
       } catch (err: any) {

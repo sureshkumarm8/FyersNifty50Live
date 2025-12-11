@@ -147,8 +147,16 @@ const App: React.FC = () => {
           // UPDATED: Use Session Change % (lp_chg_day_p) for sentiment baseline
           const sessionChg = s.lp_chg_day_p || 0;
           
-          if (sessionChg >= 0) { bullishW += w; adv++; } 
-          else { bearishW += w; dec++; }
+          // Strict check: 0 is Neutral (Unchanged), not Bullish
+          if (sessionChg > 0.001) { 
+              bullishW += w; 
+              adv++; 
+          } 
+          else if (sessionChg < -0.001) { 
+              bearishW += w; 
+              dec++; 
+          }
+          // Neutral stocks contribute to Total Weight but not to Bullish/Bearish Weight numerator
           
           totalW += w;
 
@@ -427,9 +435,9 @@ const App: React.FC = () => {
                         </div>
                         <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Breadth (Session)</p>
                         <div className="flex items-end gap-2 mt-2">
-                           <span className="text-2xl sm:text-3xl font-bold text-bull text-glow-green">{stocks.filter(s => (s.lp_chg_day_p || 0) >= 0).length}</span>
+                           <span className="text-2xl sm:text-3xl font-bold text-bull text-glow-green">{stocks.filter(s => (s.lp_chg_day_p || 0) > 0.001).length}</span>
                            <span className="text-slate-600 text-lg sm:text-xl font-thin">/</span>
-                           <span className="text-2xl sm:text-3xl font-bold text-bear text-glow-red">{stocks.filter(s => (s.lp_chg_day_p || 0) < 0).length}</span>
+                           <span className="text-2xl sm:text-3xl font-bold text-bear text-glow-red">{stocks.filter(s => (s.lp_chg_day_p || 0) < -0.001).length}</span>
                         </div>
                      </div>
                   </div>
