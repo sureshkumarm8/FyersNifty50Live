@@ -27,6 +27,7 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
     const loadHistory = async () => {
       try {
         setLoading(true);
+        setError(null);
         const rawCandles = await fetchStockHistory(symbol, credentials);
         
         // Fyers format: [epoch, open, high, low, close, volume]
@@ -72,8 +73,9 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
       )}
 
       {error && (
-        <div className="p-4 bg-red-900/20 text-red-300 rounded-lg border border-red-800">
-          Error: {error}
+        <div className="p-4 bg-red-900/20 text-red-300 rounded-lg border border-red-800 flex items-center gap-3">
+          <AlertCircle size={20} className="shrink-0" />
+          <span>Error: {error}</span>
         </div>
       )}
 
@@ -86,9 +88,9 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
       )}
 
       {!loading && !error && candles.length > 0 && (
-        <div className="flex-1 overflow-auto bg-gray-900 border border-gray-800 rounded-xl custom-scrollbar">
-           <table className="w-full text-sm text-right">
-              <thead className="bg-gray-950 text-gray-400 sticky top-0">
+        <div className="flex-1 overflow-auto bg-gray-900 border border-gray-800 rounded-xl custom-scrollbar shadow-xl">
+           <table className="w-full text-sm text-right whitespace-nowrap">
+              <thead className="bg-gray-950 text-gray-400 sticky top-0 z-10 uppercase text-xs font-bold tracking-wider">
                  <tr>
                     <th className="px-4 py-3 text-left">Time</th>
                     <th className="px-4 py-3">Open</th>
@@ -100,7 +102,7 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
               </thead>
               <tbody className="divide-y divide-gray-800">
                  {candles.map((c, idx) => (
-                    <tr key={idx} className="hover:bg-gray-800/50">
+                    <tr key={idx} className="hover:bg-gray-800/50 transition-colors">
                        <td className="px-4 py-3 text-left font-mono text-gray-500">{c.time}</td>
                        <td className="px-4 py-3 font-mono text-white">{c.open}</td>
                        <td className="px-4 py-3 font-mono text-green-400">{c.high}</td>

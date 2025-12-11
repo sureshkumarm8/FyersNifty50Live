@@ -186,10 +186,24 @@ export const fetchStockHistory = async (
       }
    });
 
-   if (!response.ok) throw new Error("Failed to fetch history");
+   if (!response.ok) {
+     const text = await response.text();
+     let errMsg = `Error ${response.status}`;
+     try {
+        const json = JSON.parse(text);
+        errMsg = json.details || json.error || json.message || errMsg;
+     } catch(e) { 
+        errMsg += `: ${text.substring(0, 50)}`; 
+     }
+     throw new Error(errMsg);
+   }
 
    const data: FyersHistoryResponse = await response.json();
-   if (data.s !== 'ok') throw new Error(data.message || "History API error");
+   if (data.s !== 'ok') {
+       // s='no_data' is a common success-like status when market hasn't started or no trades
+       if (data.s === 'no_data') return []; 
+       throw new Error(data.message || "History API error");
+   }
    
    return data.candles || [];
 };

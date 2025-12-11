@@ -18,11 +18,16 @@ const formatValue = (val: number) => {
     return val.toLocaleString('en-IN');
 };
 
+const formatNumber = (num: number, decimals = 2) => num.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 const formatPercent = (num: number) => {
     const isPos = num > 0;
     const isNeg = num < 0;
     const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
     return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(2)}%</span>;
+};
+const formatMillions = (num: number) => {
+    const val = num / 1000000;
+    return `${val.toFixed(2)}M`;
 };
 
 // --- Gauge Component ---
@@ -239,6 +244,67 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
            </div>
        </div>
 
+       {/* RECENT SENTIMENT LOG (Moved to Top) */}
+       {historyLog.length > 0 && (
+          <div className="glass-panel rounded-xl overflow-hidden">
+             <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
+                 <Clock size={16} className="text-blue-400" />
+                 <h3 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Recent Pulse (Last 5 Mins)</h3>
+             </div>
+             <div className="overflow-x-auto custom-scrollbar">
+               <table className="w-full text-xs sm:text-sm whitespace-nowrap text-center">
+                  <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
+                     <tr>
+                        <th className="px-3 py-2 text-left">Time</th>
+                        <th className="px-3 py-2">Nifty</th>
+                        <th className="px-3 py-2">Chg</th>
+                        <th className="px-3 py-2 border-l border-white/5">Over. Sent</th>
+                        <th className="px-3 py-2">Adv/Dec</th>
+                        <th className="px-3 py-2">Stk Sent</th>
+                        <th className="px-3 py-2 border-l border-white/5">Call Sent</th>
+                        <th className="px-3 py-2">Put Sent</th>
+                        <th className="px-3 py-2">PCR</th>
+                        <th className="px-3 py-2 bg-white/5">Opt. Sent</th>
+                        <th className="px-3 py-2 border-l border-white/5">Calls Flow</th>
+                        <th className="px-3 py-2">Puts Flow</th>
+                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                     {historyLog.slice().reverse().slice(0, 5).map((snap, idx) => (
+                        <tr key={idx} className="hover:bg-white/5 transition-colors group">
+                           <td className="px-3 py-2 text-left font-mono text-slate-300 font-bold bg-slate-900/30">{snap.time}</td>
+                           <td className="px-3 py-2 font-mono text-slate-400">{formatNumber(snap.niftyLtp)}</td>
+                           <td className={`px-3 py-2 font-mono font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>
+                              {snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg.toFixed(2)}
+                           </td>
+                           <td className={`px-3 py-2 border-l border-white/5 font-bold ${snap.overallSent >= 0 ? 'text-bull' : 'text-bear'}`}>
+                              {formatPercent(snap.overallSent)}
+                           </td>
+                           <td className="px-3 py-2 font-mono">
+                               <span className="text-bull">{snap.adv}</span>/<span className="text-bear">{snap.dec}</span>
+                           </td>
+                           <td className="px-3 py-2">{formatPercent(snap.stockSent)}</td>
+                           
+                           <td className="px-3 py-2 border-l border-white/5">{formatPercent(snap.callSent)}</td>
+                           <td className="px-3 py-2">{formatPercent(snap.putSent)}</td>
+                           <td className={`px-3 py-2 font-mono font-bold ${snap.pcr > 1 ? 'text-bull' : snap.pcr < 0.7 ? 'text-bear' : 'text-blue-200'}`}>{snap.pcr.toFixed(2)}</td>
+                           <td className={`px-3 py-2 font-bold bg-white/5 ${snap.optionsSent >= 0 ? 'text-bull' : 'text-bear'}`}>
+                              {formatPercent(snap.optionsSent)}
+                           </td>
+                           <td className="px-3 py-2 border-l border-white/5 font-mono text-[10px] opacity-80">
+                               <span className="text-bull">{formatMillions(snap.callsBuyQty)}</span>/<span className="text-bear">{formatMillions(snap.callsSellQty)}</span>
+                           </td>
+                           <td className="px-3 py-2 font-mono text-[10px] opacity-80">
+                               <span className="text-bull">{formatMillions(snap.putsBuyQty)}</span>/<span className="text-bear">{formatMillions(snap.putsSellQty)}</span>
+                           </td>
+                        </tr>
+                     ))}
+                  </tbody>
+               </table>
+             </div>
+          </div>
+       )}
+
        {/* MARKET AGGREGATE TABLE */}
        <div className="glass-panel rounded-xl overflow-hidden p-0">
            <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
@@ -435,52 +501,6 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
              </div>
           </div>
        </div>
-
-       {/* RECENT SENTIMENT LOG (New) */}
-       {historyLog.length > 0 && (
-          <div className="glass-panel rounded-xl overflow-hidden">
-             <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
-                 <Clock size={16} className="text-blue-400" />
-                 <h3 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Recent Pulse (Last 5 Mins)</h3>
-             </div>
-             <div className="overflow-x-auto custom-scrollbar">
-               <table className="w-full text-xs sm:text-sm whitespace-nowrap text-center">
-                  <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
-                     <tr>
-                        <th className="px-3 py-2 text-left">Time</th>
-                        <th className="px-3 py-2">Nifty 1m%</th>
-                        <th className="px-3 py-2">Sentiment</th>
-                        <th className="px-3 py-2">Inst. Flow</th>
-                        <th className="px-3 py-2">Opt. Sentiment</th>
-                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                     {historyLog.slice().reverse().slice(0, 5).map((snap, idx) => (
-                        <tr key={idx} className="hover:bg-white/5 transition-colors">
-                           <td className="px-3 py-2 text-left font-mono text-slate-400">{snap.time}</td>
-                           <td className={`px-3 py-2 font-mono font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>
-                              {snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg.toFixed(2)}
-                           </td>
-                           <td className={`px-3 py-2 font-bold ${snap.overallSent >= 0 ? 'text-bull' : 'text-bear'}`}>
-                              {formatPercent(snap.overallSent)}
-                           </td>
-                           <td className={`px-3 py-2 font-mono font-bold ${(snap.callsBuyQty - snap.callsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
-                              {/* Rough approximation using calls flow vs puts flow diff */}
-                              {/* Re-calculating net flow for display consistency */}
-                              {/* Or just show Stock Flow if available, but MarketSnapshot uses Option Flow mostly. */}
-                              {/* Let's show Options Net Flow here for consistency with Snapshot data available */}
-                              {formatValue((snap.callsBuyQty - snap.callsSellQty) - (snap.putsBuyQty - snap.putsSellQty))}
-                           </td>
-                           <td className={`px-3 py-2 font-bold ${snap.optionsSent >= 0 ? 'text-bull' : 'text-bear'}`}>
-                              {formatPercent(snap.optionsSent)}
-                           </td>
-                        </tr>
-                     ))}
-                  </tbody>
-               </table>
-             </div>
-          </div>
-       )}
 
     </div>
   );
