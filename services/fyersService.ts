@@ -214,19 +214,21 @@ export const fetchStockHistory = async (
 };
 
 // Known NSE Holidays (YYYY-MM-DD)
-// Used to shift expiry if the calculated Tuesday is a holiday
+// NSE Holidays for 2026 (Tentative, based on usual calendar and holidays)
 const NSE_HOLIDAYS = [
-    "2024-10-02", // Gandhi Jayanti
-    "2024-11-01", // Diwali
-    "2024-11-15", // Guru Nanak Jayanti
-    "2024-12-25", // Christmas
-    "2025-01-26", // Republic Day
-    "2025-02-26", // Mahashivratri
-    "2025-03-14", // Holi
-    "2025-03-31", // Id-Ul-Fitr (Tentative)
-    "2025-04-14", // Ambedkar Jayanti
-    "2025-04-18", // Good Friday
-    "2025-05-01", // Maharashtra Day
+    "2026-01-26", // Republic Day (Monday)
+    "2026-02-15", // Maha Shivratri (Sunday)
+    "2026-03-03", // Holi (Tuesday)
+    "2026-03-21", // Id-Ul-Fitr / Ramzan Eid (Saturday, actuals may vary)
+    "2026-04-03", // Good Friday
+    "2026-04-14", // Dr. Ambedkar Jayanti (Tuesday)
+    "2026-05-01", // Maharashtra Day (Friday)
+    "2026-08-15", // Independence Day (Saturday)
+    "2026-09-18", // Ganesh Chaturthi (Friday)
+    "2026-10-02", // Gandhi Jayanti (Friday)
+    "2026-10-19", // Diwali-Laxmi Pujan (Monday, Trading closed)
+    "2026-10-31", // Guru Nanak Jayanti (Saturday)
+    "2026-12-25", // Christmas (Friday)
 ];
 
 const formatDateStr = (date: Date) => {
@@ -298,11 +300,11 @@ export const getNiftyOptionSymbols = (ltp: number): string[] => {
       symbolBase = `NSE:NIFTY${yy}${m}${dd}`;
   }
 
-  // 5. Generate Strikes (10 Above, 10 Below)
+  // 5. Generate Strikes (20 Above, 20 Below)
   // Round LTP to nearest 50
   const atm = Math.round(ltp / 50) * 50;
 
-  for (let i = -10; i <= 10; i++) {
+  for (let i = -20; i <= 20; i++) {
       const strike = atm + (i * 50);
       symbols.push(`${symbolBase}${strike}CE`);
       symbols.push(`${symbolBase}${strike}PE`);
