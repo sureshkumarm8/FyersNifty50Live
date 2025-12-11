@@ -11,7 +11,8 @@ const formatPercent = (num: number) => {
     const isPos = num > 0;
     const isNeg = num < 0;
     const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
-    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(2)}%</span>;
+    // Fix: Using 1 decimal point for consistency
+    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(1)}%</span>;
 };
 const formatMillions = (num: number) => {
     const val = num / 1000000;
@@ -58,7 +59,8 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history }) =
                     <td className="px-4 py-3 text-left font-bold text-slate-300 font-mono border-r border-white/5 bg-slate-900/30 group-hover:text-blue-400">{snap.time}</td>
                     <td className="px-2 py-3 font-mono text-slate-400 group-hover:text-white">{formatNumber(snap.niftyLtp)}</td>
                     <td className={`px-2 py-3 font-mono font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>
-                       {snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg}
+                       {/* Fix: Format ptsChg to 1 decimal point for consistency */}
+                       {snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg.toFixed(1)}
                     </td>
                     
                     <td className="px-2 py-3 border-l border-white/5 font-bold bg-white/5">{formatPercent(snap.overallSent)}</td>

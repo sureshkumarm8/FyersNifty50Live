@@ -129,13 +129,20 @@ const App: React.FC = () => {
               if (!lastEntry || lastEntry.time !== nowStr) {
                   const candle: SessionCandle = {
                       time: nowStr,
+                      timestamp: nowTs,
                       lp: q.lp,
+                      volume: q.volume,
+                      chp: q.chp,
                       lp_chg_1m_p: q.lp_chg_1m_p || 0,
                       lp_chg_day_p: q.lp_chg_day_p || 0,
                       total_buy_qty: q.total_buy_qty || 0,
                       total_sell_qty: q.total_sell_qty || 0,
-                      net_strength: q.net_strength_1m || 0,
-                      timestamp: nowTs
+                      bid_qty_chg_p: q.bid_qty_chg_p || 0,
+                      bid_chg_day_p: q.bid_chg_day_p || 0,
+                      ask_qty_chg_p: q.ask_qty_chg_p || 0,
+                      ask_chg_day_p: q.ask_chg_day_p || 0,
+                      net_strength_1m: q.net_strength_1m || 0,
+                      day_net_strength: q.day_net_strength || 0
                   };
                   
                   if (history.length > 400) history.shift();

@@ -1,4 +1,5 @@
 
+
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Clock, AlertCircle, TrendingUp, TrendingDown, Database } from 'lucide-react';
 import { FyersCredentials, SessionCandle } from '../types';
@@ -16,16 +17,22 @@ interface DetailedCandle {
   lp: number;
   lp_chg_1m_p?: number;
   lp_chg_day_p?: number;
+  chp?: number; // Daily %
   total_buy_qty?: number;
+  bid_qty_chg_p?: number;
+  bid_chg_day_p?: number;
   total_sell_qty?: number;
-  net_strength?: number;
+  ask_qty_chg_p?: number;
+  ask_chg_day_p?: number;
+  net_strength_1m?: number;
+  day_net_strength?: number;
+  volume?: number;
   
   // API Fallback Fields
   open?: number;
   high?: number;
   low?: number;
   close?: number;
-  volume?: number;
   
   epoch: number;
   source: 'LIVE' | 'API';
@@ -35,8 +42,10 @@ const formatNumber = (num: number | undefined) => num?.toLocaleString('en-IN') |
 const formatPercent = (num: number | undefined) => {
     if (num === undefined) return '--';
     const color = num > 0 ? 'text-bull' : num < 0 ? 'text-bear' : 'text-slate-400';
-    return <span className={color}>{num > 0 ? '+' : ''}{num.toFixed(2)}%</span>;
+    // Fix: Using 1 decimal point for consistency
+    return <span className={color}>{num > 0 ? '+' : ''}{num.toFixed(1)}%</span>;
 };
+const formatQty = (num: number | undefined) => num ? (num > 1000000 ? `${(num/1000000).toFixed(2)}M` : num > 1000 ? `${(num/1000).toFixed(1)}k` : num.toString()) : '--';
 
 export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, onBack, sessionData }) => {
   const [candles, setCandles] = useState<DetailedCandle[]>([]);
@@ -71,9 +80,16 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
                 lp: s.lp,
                 lp_chg_1m_p: s.lp_chg_1m_p,
                 lp_chg_day_p: s.lp_chg_day_p,
+                chp: s.chp,
                 total_buy_qty: s.total_buy_qty,
+                bid_qty_chg_p: s.bid_qty_chg_p,
+                bid_chg_day_p: s.bid_chg_day_p,
                 total_sell_qty: s.total_sell_qty,
-                net_strength: s.net_strength,
+                ask_qty_chg_p: s.ask_qty_chg_p,
+                ask_chg_day_p: s.ask_chg_day_p,
+                net_strength_1m: s.net_strength_1m,
+                day_net_strength: s.day_net_strength,
+                volume: s.volume,
                 epoch: Math.floor(s.timestamp / 1000),
                 source: 'LIVE'
             }));
@@ -81,7 +97,6 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
         }
 
         // 2. Fetch API History if local data is sparse (< 5 mins)
-        // This acts as a backfill, though columns will be missing
         if (allCandles.length < 5) {
              try {
                 const rawCandles = await fetchStockHistory(symbol, credentials);
@@ -98,7 +113,6 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
                 }));
                 
                 if (apiCandles.length > 0) {
-                    // Prepend API candles that are older than our oldest local candle
                     const oldestLocal = allCandles.length > 0 ? allCandles[0].epoch : Infinity;
                     const usefulApiCandles = apiCandles.filter(ac => ac.epoch < oldestLocal);
                     allCandles = [...usefulApiCandles, ...allCandles];
@@ -183,41 +197,54 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
               <thead className="bg-slate-900/90 text-slate-400 sticky top-0 z-10 uppercase text-[10px] font-bold tracking-widest backdrop-blur-md">
                  <tr>
                     <th className="px-4 py-4 text-left">Time</th>
-                    <th className="px-4 py-4">LTP</th>
+                    <th className="px-4 py-4 text-white">LTP</th>
                     <th className="px-4 py-4">1m %</th>
                     <th className="px-4 py-4">Sess %</th>
-                    <th className="px-4 py-4 text-bull-light">Tot Bid</th>
-                    <th className="px-4 py-4 text-bear-light">Tot Ask</th>
-                    <th className="px-4 py-4">Net Str%</th>
-                    <th className="px-4 py-4">Source</th>
+                    <th className="px-4 py-4">Day %</th>
+                    <th className="px-4 py-4">Volume</th>
+                    <th className="px-4 py-4 text-bull-light">T.Bid</th>
+                    <th className="px-4 py-4 text-bull-light">B.1m%</th>
+                    <th className="px-4 py-4 text-bull-light">B.Day%</th>
+                    <th className="px-4 py-4 text-bear-light">T.Ask</th>
+                    <th className="px-4 py-4 text-bear-light">A.1m%</th>
+                    <th className="px-4 py-4 text-bear-light">A.Day%</th>
+                    <th className="px-4 py-4 text-blue-300">1m Net%</th>
+                    <th className="px-4 py-4 text-blue-300">Day Net%</th>
                  </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                  {candles.map((c, idx) => {
-                    // Logic to color rows slightly if source is API (less data)
                     const isApi = c.source === 'API';
                     return (
                         <tr key={idx} className={`hover:bg-white/5 transition-colors group ${isApi ? 'opacity-70' : ''}`}>
-                           <td className="px-4 py-3 text-left font-mono text-slate-500 group-hover:text-slate-300">{c.time}</td>
-                           <td className="px-4 py-3 font-mono font-bold text-white">{formatNumber(c.lp)}</td>
+                           <td className="px-4 py-3 text-left font-mono text-slate-500 group-hover:text-slate-300 border-r border-white/5">{c.time}</td>
+                           <td className="px-4 py-3 font-mono font-bold text-white border-r border-white/5">{formatNumber(c.lp)}</td>
                            
                            {isApi ? (
                                <>
-                                 <td colSpan={5} className="px-4 py-3 text-center text-slate-600 text-[10px] italic">
-                                    Basic API Data (OHLCV Only)
+                                 <td colSpan={12} className="px-4 py-3 text-center text-slate-600 text-[10px] italic">
+                                    Volume: {formatQty(c.volume)} (Basic OHLCV API Data)
                                  </td>
                                </>
                            ) : (
                                <>
                                  <td className="px-4 py-3 font-mono">{formatPercent(c.lp_chg_1m_p)}</td>
                                  <td className="px-4 py-3 font-mono">{formatPercent(c.lp_chg_day_p)}</td>
-                                 <td className="px-4 py-3 font-mono text-bull-light opacity-80">{formatNumber(c.total_buy_qty)}</td>
-                                 <td className="px-4 py-3 font-mono text-bear-light opacity-80">{formatNumber(c.total_sell_qty)}</td>
-                                 <td className="px-4 py-3 font-mono font-bold">{formatPercent(c.net_strength)}</td>
+                                 <td className="px-4 py-3 font-mono border-r border-white/5">{formatPercent(c.chp)}</td>
+                                 <td className="px-4 py-3 font-mono text-slate-300 border-r border-white/5">{formatQty(c.volume)}</td>
+                                 
+                                 <td className="px-4 py-3 font-mono text-bull-light opacity-80">{formatQty(c.total_buy_qty)}</td>
+                                 <td className="px-4 py-3 font-mono text-bull-light">{formatPercent(c.bid_qty_chg_p)}</td>
+                                 <td className="px-4 py-3 font-mono text-bull-light border-r border-white/5">{formatPercent(c.bid_chg_day_p)}</td>
+                                 
+                                 <td className="px-4 py-3 font-mono text-bear-light opacity-80">{formatQty(c.total_sell_qty)}</td>
+                                 <td className="px-4 py-3 font-mono text-bear-light">{formatPercent(c.ask_qty_chg_p)}</td>
+                                 <td className="px-4 py-3 font-mono text-bear-light border-r border-white/5">{formatPercent(c.ask_chg_day_p)}</td>
+                                 
+                                 <td className="px-4 py-3 font-mono font-bold bg-slate-800/30">{formatPercent(c.net_strength_1m)}</td>
+                                 <td className="px-4 py-3 font-mono font-bold bg-slate-800/30">{formatPercent(c.day_net_strength)}</td>
                                </>
                            )}
-                           
-                           <td className="px-4 py-3 font-mono text-[9px] text-slate-600">{c.source}</td>
                         </tr>
                     );
                  })}

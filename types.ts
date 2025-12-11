@@ -178,13 +178,27 @@ export interface MarketSnapshot {
 // Local Session History for individual stocks
 export interface SessionCandle {
   time: string;
+  timestamp: number;
   lp: number;
+  volume: number;
+  
+  // Price Changes
   lp_chg_1m_p: number;
   lp_chg_day_p: number;
+  chp: number; // Daily %
+  
+  // Quantities
   total_buy_qty: number;
   total_sell_qty: number;
-  net_strength: number;
-  timestamp: number;
+  
+  // Metrics
+  bid_qty_chg_p: number;
+  bid_chg_day_p: number;
+  ask_qty_chg_p: number;
+  ask_chg_day_p: number;
+  
+  net_strength_1m: number;
+  day_net_strength: number;
 }
 
 export interface SessionHistoryMap {

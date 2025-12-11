@@ -1,7 +1,6 @@
-
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
@@ -20,45 +19,59 @@ const formatValue = (val: number) => {
 };
 
 const formatNumber = (num: number, decimals = 2) => num.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+
+// UPDATED: 1 Decimal Point formatting
 const formatPercent = (num: number) => {
     const isPos = num > 0;
     const isNeg = num < 0;
     const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
-    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(2)}%</span>;
+    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(1)}%</span>;
 };
 const formatMillions = (num: number) => {
     const val = num / 1000000;
     return `${val.toFixed(2)}M`;
 };
 
-// --- Gauge Component ---
-const Gauge: React.FC<{ value: number; label: string }> = ({ value, label }) => {
-    // Value between 0 and 100
-    const normalized = Math.min(Math.max(value, 0), 100);
-    const rotation = (normalized / 100) * 180 - 90; // -90 to +90 degrees
-    const color = normalized > 55 ? '#10b981' : normalized < 45 ? '#ef4444' : '#fbbf24';
+
+// --- Sparkline Component ---
+const Sparkline: React.FC<{ data: number[]; color: string; height?: number }> = ({ data, color, height = 40 }) => {
+    if (data.length < 2) return <div className={`h-[${height}px] w-full bg-slate-800/20 rounded`}></div>;
     
+    const max = Math.max(...data, 0.1);
+    const min = Math.min(...data, -0.1);
+    const range = max - min;
+    const width = 100;
+    
+    const points = data.map((val, i) => {
+        const x = (i / (data.length - 1)) * width;
+        // Invert Y because SVG 0 is top
+        const y = height - ((val - min) / range) * height; 
+        return `${x},${y}`;
+    }).join(' ');
+
     return (
-        <div className="relative flex flex-col items-center justify-center pt-4 pb-0">
-             <div className="relative w-36 h-18 sm:w-48 sm:h-24 overflow-hidden">
-                 <div className="absolute top-0 left-0 w-36 h-36 sm:w-48 sm:h-48 rounded-full border-[10px] sm:border-[12px] border-slate-800 box-border"></div>
-                 <div 
-                   className="absolute top-0 left-0 w-36 h-36 sm:w-48 sm:h-48 rounded-full border-[10px] sm:border-[12px] border-transparent box-border transition-all duration-1000 ease-out"
-                   style={{ 
-                       borderTopColor: color, 
-                       borderRightColor: normalized > 50 ? color : 'transparent',
-                       transform: `rotate(${rotation - 45}deg)` // Adjust for CSS border rotation quirks
-                   }}
-                 ></div>
-                 <div className="absolute bottom-0 left-1/2 w-1 h-18 sm:h-24 bg-slate-700 origin-bottom transform -translate-x-1/2" style={{ transform: `translateX(-50%) rotate(${rotation}deg)`, transition: 'transform 1s cubic-bezier(0.4, 0, 0.2, 1)' }}>
-                    <div className="w-3 h-3 sm:w-4 sm:h-4 bg-white rounded-full absolute top-0 left-1/2 -translate-x-1/2 shadow-lg shadow-white/50"></div>
-                 </div>
-             </div>
-             <div className="text-center mt-[-5px] sm:mt-[-10px] z-10">
-                 <p className="text-2xl sm:text-3xl font-bold font-mono tracking-tighter" style={{ color }}>{normalized.toFixed(0)}%</p>
-                 <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-widest mt-1 font-semibold">{label}</p>
-             </div>
-        </div>
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible preserve-3d">
+            <polyline
+                fill="none"
+                stroke={color}
+                strokeWidth="2"
+                points={points}
+                vectorEffect="non-scaling-stroke"
+                className="drop-shadow-md"
+            />
+            {/* Zero Line */}
+            {min < 0 && max > 0 && (
+                <line 
+                    x1="0" 
+                    y1={height - ((0 - min) / range) * height} 
+                    x2="100" 
+                    y2={height - ((0 - min) / range) * height} 
+                    stroke="rgba(255,255,255,0.1)" 
+                    strokeWidth="1" 
+                    strokeDasharray="2" 
+                />
+            )}
+        </svg>
     );
 };
 
@@ -73,12 +86,8 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       weightedSellValue: 0,
       weightedBuyMomemtum: 0,
       weightedSellMomentum: 0,
-      
-      // Totals for Table
       total_buy_qty: 0,
       total_sell_qty: 0,
-      bid_qty_chg_1m_abs: 0,
-      ask_qty_chg_1m_abs: 0,
       weighted_lp_1m: 0,
       weighted_lp_day: 0,
     };
@@ -88,37 +97,27 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
     return data.reduce((acc, curr) => {
        const w = curr.weight || 0.1;
        const ltp = curr.lp || 0;
-       
-       // UPDATED: Use Session Change % (lp_chg_day_p)
        const sessionChg = curr.lp_chg_day_p || 0;
        
        if (sessionChg > 0.001) acc.bullishWeight += w;
        else if (sessionChg < -0.001) acc.bearishWeight += w;
        acc.totalWeight += w;
 
-       // UPDATED: Use DELTA Qty (Session Qty) for Pressure calculations
        const deltaBuy = (curr.total_buy_qty || 0) - (curr.initial_total_buy_qty || 0);
        const deltaSell = (curr.total_sell_qty || 0) - (curr.initial_total_sell_qty || 0);
-
        const buyVal = deltaBuy * ltp;
        const sellVal = deltaSell * ltp;
        
        acc.weightedBuyValue += (buyVal * w);
        acc.weightedSellValue += (sellVal * w);
 
-       // Momentum: Money Flow (Qty Change 1m * Price * Weight)
-       // This stays the same as it's 1-min change
        const buyChgVal = (curr.bid_qty_chg_1m || 0) * ltp;
        const sellChgVal = (curr.ask_qty_chg_1m || 0) * ltp;
-       
        acc.weightedBuyMomemtum += (buyChgVal * w);
        acc.weightedSellMomentum += (sellChgVal * w);
 
-       // Table Aggregates - Use Totals for Table display, but Analysis uses Deltas
        acc.total_buy_qty += (curr.total_buy_qty || 0);
        acc.total_sell_qty += (curr.total_sell_qty || 0);
-       acc.bid_qty_chg_1m_abs += (curr.bid_qty_chg_1m || 0);
-       acc.ask_qty_chg_1m_abs += (curr.ask_qty_chg_1m || 0);
        acc.weighted_lp_1m += ((curr.lp_chg_1m_p || 0) * w);
        acc.weighted_lp_day += ((curr.lp_chg_day_p || 0) * w);
 
@@ -126,56 +125,32 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
     }, initialStats);
   }, [data]);
 
-  // If no data
   if (data.length === 0) {
       if (marketStatus) {
-          // Market Closed State
           return (
               <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6 animate-in fade-in zoom-in duration-500 p-4">
-                  <div className="relative">
-                      <div className="absolute inset-0 bg-slate-800 blur-xl opacity-20 rounded-full"></div>
-                      <Moon size={64} className="text-slate-500 relative z-10" />
-                  </div>
+                  <Moon size={64} className="text-slate-500" />
                   <div>
-                      <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Market is Closed</h2>
-                      <p className="text-sm text-slate-400 max-w-xs mx-auto">{marketStatus}</p>
-                      <p className="text-xs text-slate-500 mt-4 max-w-sm mx-auto">
-                        Real-time data is unavailable. You can enable "Test Mode" in Settings to attempt fetching data outside market hours.
-                      </p>
+                      <h2 className="text-2xl font-bold text-white mb-2">Market is Closed</h2>
+                      <p className="text-sm text-slate-400">{marketStatus}</p>
                   </div>
               </div>
           );
       }
-      
-      // Initial Loading State
       return (
-          <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6 animate-in fade-in zoom-in duration-500 p-4">
-              <div className="relative">
-                  <div className="absolute inset-0 bg-blue-500 blur-xl opacity-20 rounded-full animate-pulse"></div>
-                  <Loader2 size={48} className="text-blue-400 animate-spin relative z-10" />
-              </div>
-              <div>
-                  <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Initializing Cockpit...</h2>
-                  <p className="text-sm text-slate-400 max-w-xs mx-auto">Waiting for live market data feed.</p>
-              </div>
+          <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6 p-4">
+              <Loader2 size={48} className="text-blue-400 animate-spin" />
+              <h2 className="text-2xl font-bold text-white mb-2">Initializing Cockpit...</h2>
           </div>
       );
   }
 
   // --- DERIVED METRICS ---
   const bullishPct = stats.totalWeight > 0 ? (stats.bullishWeight / stats.totalWeight) * 100 : 0;
-  
-  // Use Pressure Ratio based on Session Delta
-  const totalValuePressure = stats.weightedBuyValue + stats.weightedSellValue;
-  const buyPressureRatio = totalValuePressure > 0 ? (stats.weightedBuyValue / totalValuePressure) * 100 : 0;
-  
-  // Net Money Flow Momentum (Weighted)
   const momentumNet = stats.weightedBuyMomemtum - stats.weightedSellMomentum;
-  
-  // Table Metrics
   const weightedLpDay = stats.totalWeight > 0 ? stats.weighted_lp_day / stats.totalWeight : 0;
 
-  // --- NIFTYOPS PREDICTION FORMULA ---
+  // --- NIFTYOPS PREDICTION ENGINE ---
   const trendScore = (bullishPct - 50) * 2; 
   const flowScoreRaw = momentumNet / 100000; 
   const flowScore = Math.max(Math.min(flowScoreRaw, 100), -100);
@@ -183,32 +158,40 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
 
   const compositeScore = (trendScore * 0.3) + (flowScore * 0.4) + (optionScore * 0.3);
 
+  // Divergence Check
+  const isDivergent = (trendScore > 20 && optionScore < -20) || (trendScore < -20 && optionScore > 20);
+
   let prediction = "NEUTRAL";
   let predictionColor = "text-yellow-400";
-  let predictionDesc = "Market is consolidating.";
+  let predictionDesc = "Market is choppy. No clear direction.";
   let signalClass = "bg-yellow-500/10 border-yellow-500/50";
 
   if (compositeScore > 35) {
       prediction = "STRONG BUY";
       predictionColor = "text-bull text-glow-green";
-      predictionDesc = "High institutional buying + Bullish Options Flow.";
+      predictionDesc = "Aggressive Buying detected across Equity & Options.";
       signalClass = "bg-bull/20 border-bull/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]";
   } else if (compositeScore > 10) {
       prediction = "BUY DIPS";
       predictionColor = "text-green-400";
-      predictionDesc = "Positive momentum detected.";
+      predictionDesc = "Trend is positive. Look for value entries.";
       signalClass = "bg-green-500/10 border-green-500/50";
   } else if (compositeScore < -35) {
       prediction = "STRONG SELL";
       predictionColor = "text-bear text-glow-red";
-      predictionDesc = "Heavy selling pressure across weights & options.";
+      predictionDesc = "Heavy selling pressure. Do not catch falling knives.";
       signalClass = "bg-bear/20 border-bear/50 shadow-[0_0_30px_rgba(239,68,68,0.3)]";
   } else if (compositeScore < -10) {
       prediction = "SELL RALLIES";
       predictionColor = "text-red-400";
-      predictionDesc = "Negative drift. Rallies are sold into.";
+      predictionDesc = "Trend is weak. Rallies likely to be sold.";
       signalClass = "bg-red-500/10 border-red-500/50";
   }
+
+  // Sparkline Data Prep (Last 20 points)
+  const sparkData = historyLog.slice(-30);
+  const flowData = sparkData.map(s => (s.callsBuyQty - s.callsSellQty) - (s.putsBuyQty - s.putsSellQty));
+  const trendData = sparkData.map(s => s.overallSent);
 
   // Top Movers
   const indexMovers = [...data].sort((a, b) => (b.index_contribution || 0) - (a.index_contribution || 0));
@@ -218,168 +201,189 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
   return (
     <div className="flex flex-col gap-4 sm:gap-6 p-2 sm:p-4 max-w-7xl mx-auto w-full pb-20 sm:pb-4">
        
-       {/* AI Prediction Header */}
+       {/* 1. DECISION ENGINE HEADER */}
        <div className={`glass-panel p-4 sm:p-6 rounded-2xl relative overflow-hidden transition-all duration-500 border-2 ${signalClass}`}>
-           <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/5 blur-3xl rounded-full pointer-events-none"></div>
-           <div className="flex flex-col md:flex-row md:items-center justify-between relative z-10 gap-4 sm:gap-6">
-               <div className="flex-1">
-                   <div className="flex items-center gap-2 mb-2">
-                       <BrainCircuit size={16} className="text-blue-300" />
-                       <h2 className="text-[10px] sm:text-xs font-bold text-blue-200 uppercase tracking-widest">NiftyOps Prediction</h2>
+           <div className="flex flex-col md:flex-row gap-6">
+               {/* Main Signal */}
+               <div className="flex-1 z-10">
+                   <div className="flex items-center justify-between">
+                       <div className="flex items-center gap-2 mb-2">
+                           <BrainCircuit size={18} className="text-blue-300" />
+                           <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Decision Engine</h2>
+                       </div>
+                       {isDivergent && (
+                           <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse">
+                               <AlertTriangle size={12} /> DIVERGENCE DETECTED
+                           </div>
+                       )}
                    </div>
-                   <h1 className={`text-3xl sm:text-5xl font-black font-mono tracking-tight ${predictionColor}`}>{prediction}</h1>
-                   <div className="mt-3 flex items-center gap-3">
-                      <div className="h-1.5 sm:h-2 w-24 sm:w-32 bg-slate-800 rounded-full overflow-hidden">
-                          <div className={`h-full transition-all duration-1000 ${compositeScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.abs(compositeScore)}%` }}></div>
-                      </div>
-                      <span className="font-mono text-[10px] sm:text-xs text-slate-400">Strength: {Math.abs(compositeScore).toFixed(0)}%</span>
+                   
+                   <h1 className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${predictionColor}`}>{prediction}</h1>
+                   <p className="text-slate-300 mt-2 text-xs sm:text-sm font-medium">{predictionDesc}</p>
+                   
+                   {/* Composite Score Bar */}
+                   <div className="mt-4">
+                       <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
+                           <span>Bearish</span>
+                           <span>Neutral</span>
+                           <span>Bullish</span>
+                       </div>
+                       <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden relative">
+                           <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-white/20 z-10"></div>
+                           <div 
+                                className={`h-full transition-all duration-1000 ease-out ${compositeScore > 0 ? 'bg-gradient-to-r from-green-500 to-emerald-300' : 'bg-gradient-to-r from-rose-500 to-red-600'}`} 
+                                style={{ 
+                                    width: `${Math.abs(compositeScore)/2}%`,
+                                    left: compositeScore > 0 ? '50%' : `calc(50% - ${Math.abs(compositeScore)/2}%)`
+                                }}
+                           ></div>
+                       </div>
                    </div>
-                   <p className="text-slate-300 mt-2 text-xs sm:text-sm">{predictionDesc}</p>
                </div>
 
-               {/* Stats Grid */}
-               <div className="grid grid-cols-2 gap-4 text-right pt-2 border-t border-white/5 md:border-0 md:pt-0">
-                   <div>
-                       <p className="text-[10px] text-slate-500 uppercase">Inst. Flow (1m)</p>
-                       <p className={`text-lg sm:text-xl font-mono font-bold ${momentumNet > 0 ? 'text-bull' : 'text-bear'}`}>
-                           {momentumNet > 0 ? '+' : ''}{formatValue(momentumNet)}
-                       </p>
+               {/* Factor Breakdown */}
+               <div className="w-full md:w-64 flex flex-col gap-2 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6">
+                   <div className="flex justify-between items-center text-xs">
+                       <span className="text-slate-400">Trend (Equity)</span>
+                       <span className={`font-mono font-bold ${trendScore > 0 ? 'text-bull' : 'text-bear'}`}>{trendScore > 0 ? '+' : ''}{trendScore.toFixed(0)}</span>
                    </div>
-                   <div>
-                       <p className="text-[10px] text-slate-500 uppercase">Opt. Sentiment</p>
-                       <p className={`text-lg sm:text-xl font-mono font-bold ${latestSnapshot?.optionsSent && latestSnapshot.optionsSent > 0 ? 'text-bull' : 'text-bear'}`}>
-                           {latestSnapshot?.optionsSent ? formatPercent(latestSnapshot.optionsSent) : '--'}
-                       </p>
+                   <div className="w-full h-1 bg-slate-800 rounded mb-2">
+                       <div className={`h-full rounded ${trendScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(trendScore), 100)}%` }}></div>
+                   </div>
+
+                   <div className="flex justify-between items-center text-xs">
+                       <span className="text-slate-400">Flow (Vol)</span>
+                       <span className={`font-mono font-bold ${flowScore > 0 ? 'text-bull' : 'text-bear'}`}>{flowScore > 0 ? '+' : ''}{flowScore.toFixed(0)}</span>
+                   </div>
+                   <div className="w-full h-1 bg-slate-800 rounded mb-2">
+                       <div className={`h-full rounded ${flowScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(flowScore), 100)}%` }}></div>
+                   </div>
+
+                   <div className="flex justify-between items-center text-xs">
+                       <span className="text-slate-400">Options (Sentiment)</span>
+                       <span className={`font-mono font-bold ${optionScore > 0 ? 'text-bull' : 'text-bear'}`}>{optionScore > 0 ? '+' : ''}{optionScore.toFixed(0)}</span>
+                   </div>
+                   <div className="w-full h-1 bg-slate-800 rounded">
+                       <div className={`h-full rounded ${optionScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(optionScore), 100)}%` }}></div>
                    </div>
                </div>
            </div>
        </div>
 
-       {/* RECENT SENTIMENT LOG (Moved to Top) */}
-       {historyLog.length > 0 && (
-          <div className="glass-panel rounded-xl overflow-hidden">
-             <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
-                 <Clock size={16} className="text-blue-400" />
-                 <h3 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Recent Pulse (Last 5 Mins)</h3>
-             </div>
-             <div className="overflow-x-auto custom-scrollbar">
-               <table className="w-full text-xs sm:text-sm whitespace-nowrap text-center">
-                  <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
-                     <tr>
-                        <th className="px-3 py-2 text-left">Time</th>
-                        <th className="px-3 py-2">Nifty</th>
-                        <th className="px-3 py-2">Chg</th>
-                        <th className="px-3 py-2 border-l border-white/5">Over. Sent</th>
-                        <th className="px-3 py-2">Adv/Dec</th>
-                        <th className="px-3 py-2">Stk Sent</th>
-                        <th className="px-3 py-2 border-l border-white/5">Call Sent</th>
-                        <th className="px-3 py-2">Put Sent</th>
-                        <th className="px-3 py-2">PCR</th>
-                        <th className="px-3 py-2 bg-white/5">Opt. Sent</th>
-                        <th className="px-3 py-2 border-l border-white/5">Calls Flow</th>
-                        <th className="px-3 py-2">Puts Flow</th>
-                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                     {historyLog.slice().reverse().slice(0, 5).map((snap, idx) => (
-                        <tr key={idx} className="hover:bg-white/5 transition-colors group">
-                           <td className="px-3 py-2 text-left font-mono text-slate-300 font-bold bg-slate-900/30">{snap.time}</td>
-                           <td className="px-3 py-2 font-mono text-slate-400">{formatNumber(snap.niftyLtp)}</td>
-                           <td className={`px-3 py-2 font-mono font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>
-                              {snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg.toFixed(2)}
-                           </td>
-                           <td className={`px-3 py-2 border-l border-white/5 font-bold ${snap.overallSent >= 0 ? 'text-bull' : 'text-bear'}`}>
-                              {formatPercent(snap.overallSent)}
-                           </td>
-                           <td className="px-3 py-2 font-mono">
-                               <span className="text-bull">{snap.adv}</span>/<span className="text-bear">{snap.dec}</span>
-                           </td>
-                           <td className="px-3 py-2">{formatPercent(snap.stockSent)}</td>
-                           
-                           <td className="px-3 py-2 border-l border-white/5">{formatPercent(snap.callSent)}</td>
-                           <td className="px-3 py-2">{formatPercent(snap.putSent)}</td>
-                           <td className={`px-3 py-2 font-mono font-bold ${snap.pcr > 1 ? 'text-bull' : snap.pcr < 0.7 ? 'text-bear' : 'text-blue-200'}`}>{snap.pcr.toFixed(2)}</td>
-                           <td className={`px-3 py-2 font-bold bg-white/5 ${snap.optionsSent >= 0 ? 'text-bull' : 'text-bear'}`}>
-                              {formatPercent(snap.optionsSent)}
-                           </td>
-                           <td className="px-3 py-2 border-l border-white/5 font-mono text-[10px] opacity-80">
-                               <span className="text-bull">{formatMillions(snap.callsBuyQty)}</span>/<span className="text-bear">{formatMillions(snap.callsSellQty)}</span>
-                           </td>
-                           <td className="px-3 py-2 font-mono text-[10px] opacity-80">
-                               <span className="text-bull">{formatMillions(snap.putsBuyQty)}</span>/<span className="text-bear">{formatMillions(snap.putsSellQty)}</span>
-                           </td>
-                        </tr>
-                     ))}
-                  </tbody>
-               </table>
-             </div>
-          </div>
-       )}
+       {/* 2. TREND SCANNERS (Sparklines) */}
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+           {/* Nifty Trend */}
+           <div onClick={() => onNavigate('stocks')} className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 transition-all group">
+               <div className="flex justify-between items-start mb-2">
+                   <div>
+                       <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Activity size={12}/> Weighted Breadth</p>
+                       <p className={`text-2xl font-mono font-bold ${bullishPct > 50 ? 'text-bull' : 'text-bear'}`}>{bullishPct.toFixed(1)}%</p>
+                   </div>
+                   <div className={`px-2 py-1 rounded text-[10px] font-bold ${weightedLpDay >= 0 ? 'bg-bull/10 text-bull' : 'bg-bear/10 text-bear'}`}>
+                       {weightedLpDay >= 0 ? '+' : ''}{weightedLpDay.toFixed(1)}%
+                   </div>
+               </div>
+               <div className="h-10 w-full">
+                   <Sparkline data={trendData} color={bullishPct > 50 ? '#10b981' : '#ef4444'} />
+               </div>
+           </div>
 
-       {/* MARKET AGGREGATE TABLE */}
+           {/* Option Flow Trend */}
+           <div onClick={() => onNavigate('options')} className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 transition-all group">
+               <div className="flex justify-between items-start mb-2">
+                   <div>
+                       <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Target size={12}/> Net Option Flow</p>
+                       <div className="text-xl font-mono font-bold">
+                           {latestSnapshot?.optionsSent ? formatPercent(latestSnapshot.optionsSent) : '--'}
+                       </div>
+                   </div>
+                   <div className="text-right">
+                        <p className="text-[10px] text-slate-500">PCR</p>
+                        <p className={`text-sm font-mono font-bold ${latestSnapshot && latestSnapshot.pcr > 1 ? 'text-bull' : 'text-blue-200'}`}>{latestSnapshot?.pcr.toFixed(2) || '--'}</p>
+                   </div>
+               </div>
+               <div className="h-10 w-full">
+                   <Sparkline data={flowData} color={latestSnapshot && latestSnapshot.optionsSent > 0 ? '#10b981' : '#ef4444'} />
+               </div>
+           </div>
+
+           {/* Momentum Pipe (Redesigned) */}
+           <div className="glass-panel p-4 rounded-xl flex flex-col justify-center">
+               <div className="flex justify-between items-center mb-3">
+                   <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Zap size={12} className="text-yellow-400"/> Momentum (1m)</p>
+                   <span className={`text-xs font-mono font-bold ${momentumNet > 0 ? 'text-bull' : 'text-bear'}`}>{formatValue(momentumNet)}</span>
+               </div>
+               <div className="relative h-2 bg-slate-800 rounded-full overflow-hidden flex">
+                   <div className="w-1/2 flex justify-end">
+                       <div className="h-full bg-bear rounded-l-full" style={{ width: `${Math.min(Math.abs(stats.weightedSellMomentum)/500000 * 100, 100)}%`, opacity: 0.8 }}></div>
+                   </div>
+                   <div className="w-1/2 flex justify-start">
+                       <div className="h-full bg-bull rounded-r-full" style={{ width: `${Math.min(Math.abs(stats.weightedBuyMomemtum)/500000 * 100, 100)}%`, opacity: 0.8 }}></div>
+                   </div>
+                   {/* Center Marker */}
+                   <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10"></div>
+               </div>
+               <div className="flex justify-between mt-2 text-[9px] text-slate-500 font-mono uppercase">
+                   <span>Sell Pressure</span>
+                   <span>Buy Pressure</span>
+               </div>
+           </div>
+       </div>
+
+       {/* 3. MARKET AGGREGATE TABLE */}
        <div className="glass-panel rounded-xl overflow-hidden p-0">
            <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
-               <Scale size={16} className="text-purple-400" />
-               <h3 className="text-xs font-bold text-purple-200 uppercase tracking-widest">Aggregate Data</h3>
+               <Scale size={14} className="text-purple-400" />
+               <h3 className="text-[10px] font-bold text-purple-200 uppercase tracking-widest">Market Stats</h3>
            </div>
            <div className="overflow-x-auto custom-scrollbar">
                <table className="w-full text-xs sm:text-sm whitespace-nowrap">
-                   <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
+                   <thead className="bg-slate-900/30 text-slate-500 uppercase text-[9px] font-bold">
                        <tr>
                            <th className="px-3 py-2 text-left sticky left-0 bg-slate-900 z-10">Segment</th>
                            <th className="px-3 py-2 text-right text-bull-light">Buy Qty</th>
                            <th className="px-3 py-2 text-right text-bear-light">Sell Qty</th>
                            <th className="px-3 py-2 text-right">Net Qty</th>
                            <th className="px-3 py-2 text-right">Sentiment</th>
-                           <th className="px-3 py-2 text-right">Metric</th>
                        </tr>
                    </thead>
-                   <tbody className="divide-y divide-white/5">
+                   <tbody className="divide-y divide-white/5 font-mono text-xs">
                        {/* Stocks Row */}
                        <tr className="hover:bg-white/5 transition-colors">
-                           <td className="px-3 py-3 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10">Equity</td>
-                           <td className="px-3 py-3 text-right font-mono text-slate-300">{formatValue(stats.total_buy_qty)}</td>
-                           <td className="px-3 py-3 text-right font-mono text-slate-300">{formatValue(stats.total_sell_qty)}</td>
-                           <td className={`px-3 py-3 text-right font-mono font-bold ${stats.total_buy_qty - stats.total_sell_qty > 0 ? 'text-bull' : 'text-bear'}`}>
+                           <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Equity</td>
+                           <td className="px-3 py-2 text-right text-slate-300">{formatValue(stats.total_buy_qty)}</td>
+                           <td className="px-3 py-2 text-right text-slate-300">{formatValue(stats.total_sell_qty)}</td>
+                           <td className={`px-3 py-2 text-right font-bold ${stats.total_buy_qty - stats.total_sell_qty > 0 ? 'text-bull' : 'text-bear'}`}>
                                {formatValue(stats.total_buy_qty - stats.total_sell_qty)}
                            </td>
-                           <td className={`px-3 py-3 text-right font-mono font-bold ${momentumNet > 0 ? 'text-bull' : 'text-bear'}`}>
-                               {formatValue(momentumNet)}
-                           </td>
-                           <td className="px-3 py-3 text-right font-mono text-[10px]">
-                              Day%: {formatPercent(weightedLpDay)}
+                           <td className="px-3 py-2 text-right">
+                              {formatPercent(weightedLpDay)}
                            </td>
                        </tr>
                        
                        {/* Calls Row */}
                        <tr className="hover:bg-white/5 transition-colors">
-                           <td className="px-3 py-3 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10">Opt CE</td>
-                           <td className="px-3 py-3 text-right font-mono text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsBuyQty) : '--'}</td>
-                           <td className="px-3 py-3 text-right font-mono text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsSellQty) : '--'}</td>
-                           <td className={`px-3 py-3 text-right font-mono font-bold ${latestSnapshot && (latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
+                           <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Opt CE</td>
+                           <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsBuyQty) : '--'}</td>
+                           <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsSellQty) : '--'}</td>
+                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && (latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
                                {latestSnapshot ? formatValue(latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) : '--'}
                            </td>
-                           <td className={`px-3 py-3 text-right font-mono font-bold ${latestSnapshot && latestSnapshot.callSent > 0 ? 'text-bull' : 'text-bear'}`}>
+                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && latestSnapshot.callSent > 0 ? 'text-bull' : 'text-bear'}`}>
                                {latestSnapshot ? formatPercent(latestSnapshot.callSent) : '--'}
-                           </td>
-                            <td className="px-3 py-3 text-right font-mono text-[10px] text-slate-500">
-                              OI Data
                            </td>
                        </tr>
 
                        {/* Puts Row */}
                         <tr className="hover:bg-white/5 transition-colors">
-                           <td className="px-3 py-3 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10">Opt PE</td>
-                           <td className="px-3 py-3 text-right font-mono text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsBuyQty) : '--'}</td>
-                           <td className="px-3 py-3 text-right font-mono text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsSellQty) : '--'}</td>
-                           <td className={`px-3 py-3 text-right font-mono font-bold ${latestSnapshot && (latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
+                           <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Opt PE</td>
+                           <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsBuyQty) : '--'}</td>
+                           <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsSellQty) : '--'}</td>
+                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && (latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
                                {latestSnapshot ? formatValue(latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) : '--'}
                            </td>
-                           <td className={`px-3 py-3 text-right font-mono font-bold ${latestSnapshot && latestSnapshot.putSent > 0 ? 'text-bull' : 'text-bear'}`}>
+                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && latestSnapshot.putSent > 0 ? 'text-bull' : 'text-bear'}`}>
                                 {latestSnapshot ? formatPercent(latestSnapshot.putSent) : '--'}
-                           </td>
-                            <td className="px-3 py-3 text-right font-mono text-[10px]">
-                              PCR: <span className="text-white font-bold">{latestSnapshot ? latestSnapshot.pcr.toFixed(2) : '--'}</span>
                            </td>
                        </tr>
                    </tbody>
@@ -387,90 +391,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
            </div>
        </div>
 
-       {/* Gauges Row */}
-       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
-          {/* Sentiment Gauge */}
-          <div onClick={() => onNavigate('stocks')} className="glass-panel p-4 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-all">
-              <h3 className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
-                 <Compass size={14} /> Weighted Trend
-              </h3>
-              <Gauge value={bullishPct} label="Bullish Impact" />
-          </div>
-
-          {/* Pressure Gauge */}
-          <div onClick={() => onNavigate('stocks')} className="glass-panel p-4 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-all">
-              <h3 className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
-                 <Activity size={14} /> Volume Pressure
-              </h3>
-              <Gauge value={buyPressureRatio} label="Buy Vol %" />
-          </div>
-
-          {/* Options Gauge */}
-          <div onClick={() => onNavigate('options')} className="glass-panel p-4 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-white/5 transition-all">
-              <h3 className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
-                 <Target size={14} /> Option Sentiment
-              </h3>
-               <div className="w-full px-4 mt-6">
-                   <div className="flex justify-between text-[10px] font-mono font-bold mb-2">
-                       <span className="text-bull">CALLS</span>
-                       <span className="text-bear">PUTS</span>
-                   </div>
-                   {latestSnapshot ? (
-                     <>
-                        <div className="h-3 sm:h-4 bg-slate-800 rounded-full overflow-hidden relative shadow-inner">
-                            <div className="absolute inset-0 flex">
-                                    <div className="h-full bg-bull shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-700" style={{ width: `${latestSnapshot.callSent > 0 ? 50 + (latestSnapshot.callSent/2) : 50}%` }}></div>
-                                    <div className="h-full bg-bear shadow-[0_0_10px_rgba(239,68,68,0.5)] transition-all duration-700 flex-1"></div>
-                            </div>
-                            <div className="absolute top-0 bottom-0 w-1 bg-white left-1/2 -ml-0.5 z-10"></div>
-                        </div>
-                        <div className="text-center mt-3">
-                            <p className={`text-lg sm:text-xl font-bold font-mono ${latestSnapshot.optionsSent > 0 ? 'text-bull' : 'text-bear'}`}>
-                                {latestSnapshot.optionsSent > 0 ? 'BULLISH' : 'BEARISH'}
-                            </p>
-                        </div>
-                     </>
-                   ) : (
-                       <div className="h-12 flex items-center justify-center text-xs text-slate-500">
-                           Waiting...
-                       </div>
-                   )}
-               </div>
-          </div>
-       </div>
-
-       {/* Flow Visualizer (Momentum Pipe) */}
-       <div className="glass-panel p-4 sm:p-6 rounded-2xl">
-           <div className="flex items-center justify-between mb-4">
-               <h3 className="text-slate-300 font-bold flex items-center gap-2 text-sm">
-                  <Zap size={16} className="text-yellow-400" /> 
-                  Momentum Flow Scanner
-               </h3>
-               <span className="text-[10px] text-slate-500 bg-slate-900 px-2 py-1 rounded border border-slate-800">1 min</span>
-           </div>
-           
-           <div className="relative h-10 sm:h-12 bg-slate-900/50 rounded-lg overflow-hidden border border-slate-800 flex items-center px-2">
-                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-slate-700 z-0"></div>
-                <div className="flex-1 flex justify-end pr-2 z-10">
-                    <div 
-                      className="h-2 bg-gradient-to-l from-bear to-transparent rounded-l-full shadow-[0_0_15px_rgba(239,68,68,0.6)] animate-pulse"
-                      style={{ width: `${Math.min(Math.abs(stats.weightedSellMomentum) / 500000, 100)}%` }}
-                    ></div>
-                </div>
-                <div className="flex-1 flex justify-start pl-2 z-10">
-                    <div 
-                      className="h-2 bg-gradient-to-r from-bull to-transparent rounded-r-full shadow-[0_0_15px_rgba(16,185,129,0.6)] animate-pulse"
-                      style={{ width: `${Math.min(Math.abs(stats.weightedBuyMomemtum) / 500000, 100)}%` }}
-                    ></div>
-                </div>
-           </div>
-           <div className="flex justify-between mt-2 text-[10px] font-mono text-slate-400">
-               <span>Selling Pressure</span>
-               <span>Buying Pressure</span>
-           </div>
-       </div>
-
-       {/* Lists */}
+       {/* 4. Lists */}
        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 flex-1 min-h-0">
           {/* Lifters */}
           <div className="glass-card rounded-xl overflow-hidden flex flex-col">
@@ -484,7 +405,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                       {topLifters.map(stock => (
                          <tr key={stock.symbol} onClick={() => onSelectStock(stock.symbol)} className="hover:bg-white/5 cursor-pointer transition-colors">
                             <td className="px-4 py-2 sm:py-3 text-slate-300 font-medium truncate max-w-[120px]">{stock.short_name}</td>
-                            <td className="px-4 py-2 sm:py-3 text-right font-mono text-bull font-bold text-glow-green">+{stock.chp.toFixed(2)}%</td>
+                            <td className="px-4 py-2 sm:py-3 text-right font-mono text-bull font-bold text-glow-green">+{stock.chp.toFixed(1)}%</td>
                          </tr>
                       ))}
                    </tbody>
@@ -504,7 +425,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                       {topDraggers.map(stock => (
                          <tr key={stock.symbol} onClick={() => onSelectStock(stock.symbol)} className="hover:bg-white/5 cursor-pointer transition-colors">
                             <td className="px-4 py-2 sm:py-3 text-slate-300 font-medium truncate max-w-[120px]">{stock.short_name}</td>
-                            <td className="px-4 py-2 sm:py-3 text-right font-mono text-bear font-bold text-glow-red">{stock.chp.toFixed(2)}%</td>
+                            <td className="px-4 py-2 sm:py-3 text-right font-mono text-bear font-bold text-glow-red">{stock.chp.toFixed(1)}%</td>
                          </tr>
                       ))}
                    </tbody>

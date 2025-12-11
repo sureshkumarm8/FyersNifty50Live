@@ -1,3 +1,5 @@
+
+
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, SortConfig, SortField } from '../types';
 import { ArrowUp, ArrowDown } from 'lucide-react';
@@ -23,7 +25,8 @@ const formatPercent = (num: number | undefined) => {
     const isPos = num > 0;
     const isNeg = num < 0;
     const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
-    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(2)}%</span>;
+    // Fix: Using 1 decimal point for consistency
+    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(1)}%</span>;
 };
 
 const formatQty = (qty: number | undefined) => {
@@ -51,6 +54,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
     { label: '1m %', field: 'lp_chg_1m_p', align: 'right', highlight: true },
     { label: 'Sess %', field: 'lp_chg_day_p', align: 'right', responsive: 'hidden md:table-cell' },
     { label: 'Day %', field: 'chp', align: 'right', responsive: 'hidden sm:table-cell' },
+    { label: 'Vol', field: 'volume', align: 'right', responsive: 'hidden md:table-cell' },
     
     { label: 'Total Bid', field: 'total_buy_qty', align: 'right', responsive: 'hidden lg:table-cell' },
     { label: 'Bid 1m%', field: 'bid_qty_chg_p', align: 'right', highlight: true, responsive: 'hidden md:table-cell' },
@@ -79,9 +83,10 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
            initial_sell_qty: acc.initial_sell_qty + (curr.initial_total_sell_qty || 0),
            weighted_lp_1m: acc.weighted_lp_1m + ((curr.lp_chg_1m_p || 0) * w),
            weighted_lp_day: acc.weighted_lp_day + ((curr.lp_chg_day_p || 0) * w),
+           total_volume: acc.total_volume + (curr.volume || 0),
            total_weight: acc.total_weight + w,
         };
-     }, { total_buy_qty: 0, total_sell_qty: 0, bid_qty_chg_1m_abs: 0, ask_qty_chg_1m_abs: 0, initial_buy_qty: 0, initial_sell_qty: 0, weighted_lp_1m: 0, weighted_lp_day: 0, total_weight: 0 });
+     }, { total_buy_qty: 0, total_sell_qty: 0, bid_qty_chg_1m_abs: 0, ask_qty_chg_1m_abs: 0, initial_buy_qty: 0, initial_sell_qty: 0, weighted_lp_1m: 0, weighted_lp_day: 0, total_volume: 0, total_weight: 0 });
   }, [data]);
 
   const prevTotalBid1m = totals ? totals.total_buy_qty - totals.bid_qty_chg_1m_abs : 0;
@@ -128,6 +133,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                  <td className="px-4 py-4 text-right bg-white/5 border-l border-white/5 border-r border-white/5">{formatPercent(weightedLp1m)}</td>
                  <td className="px-4 py-4 text-right bg-white/5 hidden md:table-cell">{formatPercent(weightedLpDay)}</td>
                  <td className="px-4 py-4 text-right hidden sm:table-cell"></td>
+                 <td className="px-4 py-4 text-right hidden md:table-cell">{formatQty(totals.total_volume)}</td>
                  
                  <td className="px-4 py-4 text-right border-l border-white/5 hidden lg:table-cell">{formatQty(totals.total_buy_qty)}</td>
                  <td className="px-4 py-4 text-right bg-bull/5 border-l border-white/5 hidden md:table-cell">{formatPercent(totalBidChg1mP)}</td>
@@ -182,6 +188,10 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
 
                 <td className="px-4 py-3 text-right font-mono font-medium hidden sm:table-cell">
                   {formatPercent(stock.chp)}
+                </td>
+
+                <td className="px-4 py-3 text-right font-mono text-slate-400 hidden md:table-cell">
+                  {formatQty(stock.volume)}
                 </td>
 
                 <td className="px-4 py-3 text-right font-mono text-bull-light border-l border-white/5 opacity-80 hidden lg:table-cell">
