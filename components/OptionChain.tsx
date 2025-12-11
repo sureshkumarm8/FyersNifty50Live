@@ -7,9 +7,10 @@ interface OptionChainProps {
   niftyLtp: number | null;
   lastUpdated: Date | null;
   isLoading: boolean;
+  onSelect: (symbol: string) => void;
 }
 
-export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, lastUpdated, isLoading }) => {
+export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, lastUpdated, isLoading, onSelect }) => {
   
   // Sort State
   const [sortConfig, setSortConfig] = React.useState<SortConfig>({
@@ -70,7 +71,9 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
          </div>
          
          <div className="flex items-center gap-4">
-            {/* Action buttons if needed */}
+            <div className="px-3 py-1 bg-blue-900/30 border border-blue-800 rounded text-xs text-blue-300">
+               Click any row to view Chart
+            </div>
          </div>
       </div>
 
@@ -80,7 +83,7 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
           data={sortedQuotes}
           sortConfig={sortConfig}
           onSort={handleSort}
-          onSelect={() => {}} 
+          onSelect={onSelect} 
           isLoading={isLoading && quotes.length === 0}
         />
       </div>

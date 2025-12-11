@@ -116,6 +116,7 @@ const App: React.FC = () => {
             const symbolKey = curr.short_name || curr.symbol.replace('NSE:', '').replace('-EQ', '');
             weight = NIFTY_WEIGHTAGE[symbolKey] || 0.1; 
             // UPDATED: Index contribution based on Session Change % (lp_chg_day_p), not Daily Change %
+            // This ensures "Movers" are based on session impact, not pre-session gap ups/downs.
             index_contribution = (lp_chg_day_p || 0) * weight;
         }
 
@@ -152,6 +153,7 @@ const App: React.FC = () => {
           totalW += w;
 
           // UPDATED: Calculate Delta Volume (Session Volume)
+          // This removes any volume that existed before the app was opened.
           const buyDelta = (s.total_buy_qty || 0) - (s.initial_total_buy_qty || 0);
           const sellDelta = (s.total_sell_qty || 0) - (s.initial_total_sell_qty || 0);
           
@@ -167,7 +169,7 @@ const App: React.FC = () => {
       let callOI = 0, putOI = 0;
 
       optionsData.forEach(o => {
-          // Calculate Delta Volume
+          // Calculate Delta Volume for Options
           const buyDelta = (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
           const sellDelta = (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
 
@@ -200,7 +202,7 @@ const App: React.FC = () => {
           putSent,
           pcr,
           optionsSent,
-          // Store Delta Quantities in History Log
+          // Store Delta Quantities in History Log for graph/table
           callsBuyQty: callBuyDelta,
           callsSellQty: callSellDelta,
           putsBuyQty: putBuyDelta,
@@ -401,7 +403,7 @@ const App: React.FC = () => {
            </div>
         ) : viewMode === 'options' ? (
            <div className="flex-1 p-2 sm:p-6 overflow-hidden flex flex-col animate-in fade-in duration-300">
-              <OptionChain quotes={optionQuotes} niftyLtp={niftyLtp} lastUpdated={lastUpdated ? new Date(lastUpdated) : null} isLoading={isLoading} />
+              <OptionChain quotes={optionQuotes} niftyLtp={niftyLtp} lastUpdated={lastUpdated ? new Date(lastUpdated) : null} isLoading={isLoading} onSelect={setSelectedStock} />
            </div>
         ) : viewMode === 'summary' ? (
            <div className="flex-1 overflow-y-auto custom-scrollbar animate-in fade-in zoom-in duration-300">
