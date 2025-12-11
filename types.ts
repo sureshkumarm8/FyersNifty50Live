@@ -179,6 +179,8 @@ export interface MarketSnapshot {
 export interface SessionCandle {
   time: string;
   lp: number;
+  lp_chg_1m_p: number;
+  lp_chg_day_p: number;
   total_buy_qty: number;
   total_sell_qty: number;
   net_strength: number;

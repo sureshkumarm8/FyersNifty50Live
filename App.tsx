@@ -84,7 +84,6 @@ const App: React.FC = () => {
 
   // Persist Session Data
   useEffect(() => {
-      // Debounce saving session data slightly as it can be large
       const handler = setTimeout(() => {
           if (Object.keys(sessionHistory).length > 0) {
               try {
@@ -123,22 +122,22 @@ const App: React.FC = () => {
                   nextState[q.symbol] = [];
               }
               
-              // Only add if time changed or it's a new entry
               const history = nextState[q.symbol];
               const lastEntry = history.length > 0 ? history[history.length - 1] : null;
               
-              // Avoid duplicates in same minute if processing happens multiple times
+              // Avoid duplicates in same minute
               if (!lastEntry || lastEntry.time !== nowStr) {
                   const candle: SessionCandle = {
                       time: nowStr,
                       lp: q.lp,
+                      lp_chg_1m_p: q.lp_chg_1m_p || 0,
+                      lp_chg_day_p: q.lp_chg_day_p || 0,
                       total_buy_qty: q.total_buy_qty || 0,
                       total_sell_qty: q.total_sell_qty || 0,
                       net_strength: q.net_strength_1m || 0,
                       timestamp: nowTs
                   };
                   
-                  // Keep last 400 mins (full session)
                   if (history.length > 400) history.shift();
                   history.push(candle);
               }
@@ -243,10 +242,12 @@ const App: React.FC = () => {
 
           const buyDelta = (s.total_buy_qty || 0) - (s.initial_total_buy_qty || 0);
           const sellDelta = (s.total_sell_qty || 0) - (s.initial_total_sell_qty || 0);
+          
           totalStockBuyDelta += buyDelta;
           totalStockSellDelta += sellDelta;
       });
       const overallSent = totalW > 0 ? (bullishW - bearishW) / totalW * 100 : 0;
+      
       const stockSent = totalStockSellDelta > 0 ? ((totalStockBuyDelta - totalStockSellDelta) / totalStockSellDelta) * 100 : 0;
 
       let callBuyDelta = 0, callSellDelta = 0, putBuyDelta = 0, putSellDelta = 0;
@@ -255,6 +256,7 @@ const App: React.FC = () => {
       optionsData.forEach(o => {
           const buyDelta = (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
           const sellDelta = (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
+
           const isCE = o.symbol.endsWith('CE');
           if (isCE) {
               callBuyDelta += buyDelta;
@@ -472,7 +474,7 @@ const App: React.FC = () => {
                   symbol={selectedStock} 
                   credentials={credentials} 
                   onBack={() => setSelectedStock(null)} 
-                  sessionData={sessionHistory[selectedStock]} // Pass collected session history
+                  sessionData={sessionHistory[selectedStock]} 
                />
            </div>
         ) : viewMode === 'history' ? (

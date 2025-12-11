@@ -11,19 +11,35 @@ interface StockDetailProps {
   sessionData?: SessionCandle[]; // Data collected locally during the session
 }
 
-interface Candle {
+interface DetailedCandle {
   time: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
+  lp: number;
+  lp_chg_1m_p?: number;
+  lp_chg_day_p?: number;
+  total_buy_qty?: number;
+  total_sell_qty?: number;
+  net_strength?: number;
+  
+  // API Fallback Fields
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+  
   epoch: number;
-  source: 'API' | 'LIVE';
+  source: 'LIVE' | 'API';
 }
 
+const formatNumber = (num: number | undefined) => num?.toLocaleString('en-IN') || '--';
+const formatPercent = (num: number | undefined) => {
+    if (num === undefined) return '--';
+    const color = num > 0 ? 'text-bull' : num < 0 ? 'text-bear' : 'text-slate-400';
+    return <span className={color}>{num > 0 ? '+' : ''}{num.toFixed(2)}%</span>;
+};
+
 export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, onBack, sessionData }) => {
-  const [candles, setCandles] = useState<Candle[]>([]);
+  const [candles, setCandles] = useState<DetailedCandle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,32 +62,32 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
       try {
         setLoading(true);
         setError(null);
-        let allCandles: Candle[] = [];
+        let allCandles: DetailedCandle[] = [];
 
-        // 1. Convert Local Session Data
+        // 1. Prefer Local Session Data (Rich Data)
         if (sessionData && sessionData.length > 0) {
-            const localCandles: Candle[] = sessionData.map(s => ({
+            const localCandles: DetailedCandle[] = sessionData.map(s => ({
                 time: s.time,
-                open: s.lp, // Approximation for 1-min snapshot
-                high: s.lp,
-                low: s.lp,
-                close: s.lp,
-                volume: s.total_buy_qty + s.total_sell_qty, // Snapshot Total Volume
+                lp: s.lp,
+                lp_chg_1m_p: s.lp_chg_1m_p,
+                lp_chg_day_p: s.lp_chg_day_p,
+                total_buy_qty: s.total_buy_qty,
+                total_sell_qty: s.total_sell_qty,
+                net_strength: s.net_strength,
                 epoch: Math.floor(s.timestamp / 1000),
                 source: 'LIVE'
             }));
             allCandles = [...localCandles];
         }
 
-        // 2. Try Fetching API History (Only if local data is sparse or user wants full day)
-        // Note: Ideally, we merge. For now, let's prioritize showing data immediately.
-        // If we have local data, show it. If purely empty, try API.
-        
+        // 2. Fetch API History if local data is sparse (< 5 mins)
+        // This acts as a backfill, though columns will be missing
         if (allCandles.length < 5) {
              try {
                 const rawCandles = await fetchStockHistory(symbol, credentials);
-                const apiCandles: Candle[] = rawCandles.map(c => ({
+                const apiCandles: DetailedCandle[] = rawCandles.map(c => ({
                   time: new Date(c[0] * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                  lp: c[4], // Close price as LTP
                   open: c[1],
                   high: c[2],
                   low: c[3],
@@ -80,13 +96,15 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
                   epoch: c[0],
                   source: 'API'
                 }));
-                // Merge strategies could be complex (deduplication). 
-                // Simple strategy: Use API if available, else Local.
+                
                 if (apiCandles.length > 0) {
-                    allCandles = apiCandles;
+                    // Prepend API candles that are older than our oldest local candle
+                    const oldestLocal = allCandles.length > 0 ? allCandles[0].epoch : Infinity;
+                    const usefulApiCandles = apiCandles.filter(ac => ac.epoch < oldestLocal);
+                    allCandles = [...usefulApiCandles, ...allCandles];
                 }
              } catch(e) {
-                 console.warn("API History fetch failed, using local only", e);
+                 console.warn("API History fetch failed or skipped", e);
              }
         }
 
@@ -125,7 +143,7 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
            <p className="text-xs text-gray-400 font-mono flex items-center gap-2">
                {isOption ? `EXP: ${optionDetails.expiry}` : 'EQUITY'} 
                <span className="w-1 h-1 bg-gray-600 rounded-full"></span>
-               {candles.length > 0 && candles[0].source === 'LIVE' ? 'Local Session Feed' : '1-Min Intraday'}
+               {candles.length > 0 && candles[0].source === 'LIVE' ? 'Live Session Feed' : '1-Min Intraday'}
            </p>
         </div>
       </div>
@@ -161,29 +179,45 @@ export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, o
 
       {!loading && !error && candles.length > 0 && (
         <div className="flex-1 overflow-auto bg-slate-900/40 border border-white/5 rounded-2xl custom-scrollbar shadow-2xl backdrop-blur-sm">
-           <table className="w-full text-sm text-right whitespace-nowrap">
+           <table className="w-full text-xs sm:text-sm text-right whitespace-nowrap">
               <thead className="bg-slate-900/90 text-slate-400 sticky top-0 z-10 uppercase text-[10px] font-bold tracking-widest backdrop-blur-md">
                  <tr>
-                    <th className="px-6 py-4 text-left">Time</th>
-                    <th className="px-6 py-4">LTP / Close</th>
-                    <th className="px-6 py-4">High</th>
-                    <th className="px-6 py-4">Low</th>
-                    <th className="px-6 py-4">Volume</th>
-                    <th className="px-6 py-4">Source</th>
+                    <th className="px-4 py-4 text-left">Time</th>
+                    <th className="px-4 py-4">LTP</th>
+                    <th className="px-4 py-4">1m %</th>
+                    <th className="px-4 py-4">Sess %</th>
+                    <th className="px-4 py-4 text-bull-light">Tot Bid</th>
+                    <th className="px-4 py-4 text-bear-light">Tot Ask</th>
+                    <th className="px-4 py-4">Net Str%</th>
+                    <th className="px-4 py-4">Source</th>
                  </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                  {candles.map((c, idx) => {
-                    const prev = candles[idx + 1];
-                    const isGreen = prev ? c.close >= prev.close : true;
+                    // Logic to color rows slightly if source is API (less data)
+                    const isApi = c.source === 'API';
                     return (
-                        <tr key={idx} className="hover:bg-white/5 transition-colors group">
-                           <td className="px-6 py-3 text-left font-mono text-slate-500 group-hover:text-slate-300">{c.time}</td>
-                           <td className={`px-6 py-3 font-mono font-bold ${isGreen ? 'text-bull' : 'text-bear'}`}>{c.close}</td>
-                           <td className="px-6 py-3 font-mono text-green-400/50">{c.high}</td>
-                           <td className="px-6 py-3 font-mono text-red-400/50">{c.low}</td>
-                           <td className="px-6 py-3 font-mono text-slate-300 opacity-80">{c.volume.toLocaleString()}</td>
-                           <td className="px-6 py-3 font-mono text-[9px] text-slate-600">{c.source}</td>
+                        <tr key={idx} className={`hover:bg-white/5 transition-colors group ${isApi ? 'opacity-70' : ''}`}>
+                           <td className="px-4 py-3 text-left font-mono text-slate-500 group-hover:text-slate-300">{c.time}</td>
+                           <td className="px-4 py-3 font-mono font-bold text-white">{formatNumber(c.lp)}</td>
+                           
+                           {isApi ? (
+                               <>
+                                 <td colSpan={5} className="px-4 py-3 text-center text-slate-600 text-[10px] italic">
+                                    Basic API Data (OHLCV Only)
+                                 </td>
+                               </>
+                           ) : (
+                               <>
+                                 <td className="px-4 py-3 font-mono">{formatPercent(c.lp_chg_1m_p)}</td>
+                                 <td className="px-4 py-3 font-mono">{formatPercent(c.lp_chg_day_p)}</td>
+                                 <td className="px-4 py-3 font-mono text-bull-light opacity-80">{formatNumber(c.total_buy_qty)}</td>
+                                 <td className="px-4 py-3 font-mono text-bear-light opacity-80">{formatNumber(c.total_sell_qty)}</td>
+                                 <td className="px-4 py-3 font-mono font-bold">{formatPercent(c.net_strength)}</td>
+                               </>
+                           )}
+                           
+                           <td className="px-4 py-3 font-mono text-[9px] text-slate-600">{c.source}</td>
                         </tr>
                     );
                  })}

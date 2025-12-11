@@ -1,3 +1,4 @@
+
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
 import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon } from 'lucide-react';
@@ -91,8 +92,8 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
        // UPDATED: Use Session Change % (lp_chg_day_p)
        const sessionChg = curr.lp_chg_day_p || 0;
        
-       if (sessionChg >= 0) acc.bullishWeight += w;
-       else acc.bearishWeight += w;
+       if (sessionChg > 0.001) acc.bullishWeight += w;
+       else if (sessionChg < -0.001) acc.bearishWeight += w;
        acc.totalWeight += w;
 
        // UPDATED: Use DELTA Qty (Session Qty) for Pressure calculations
