@@ -392,6 +392,7 @@ const App: React.FC = () => {
                 historyLog={historyLog}
                 onNavigate={setViewMode}
                 onSelectStock={setSelectedStock}
+                marketStatus={marketStatusMsg} // Pass market status here
               />
            </div>
         ) : (

@@ -1,4 +1,3 @@
-
 export const APP_TITLE = "Nifty50 Live";
 export const REFRESH_INTERVAL_MS = 60000; // 1 minute
 export const NIFTY_INDEX_SYMBOL = "NSE:NIFTY50-INDEX";

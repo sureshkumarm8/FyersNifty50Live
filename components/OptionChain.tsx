@@ -1,4 +1,3 @@
-
 import React, { useMemo } from 'react';
 import { SortConfig, SortField, EnrichedFyersQuote } from '../types';
 import { StockTable } from './StockTable';

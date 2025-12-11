@@ -1,4 +1,3 @@
-
 export interface FyersCredentials {
   appId: string;
   accessToken: string;

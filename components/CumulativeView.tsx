@@ -1,13 +1,14 @@
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
   latestSnapshot?: MarketSnapshot;
-  historyLog?: MarketSnapshot[]; // Add historyLog prop
+  historyLog?: MarketSnapshot[];
   onNavigate: (mode: ViewMode) => void;
   onSelectStock: (symbol: string) => void;
+  marketStatus?: string | null;
 }
 
 const formatValue = (val: number) => {
@@ -55,7 +56,7 @@ const Gauge: React.FC<{ value: number; label: string }> = ({ value, label }) => 
     );
 };
 
-export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot, historyLog = [], onNavigate, onSelectStock }) => {
+export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot, historyLog = [], onNavigate, onSelectStock, marketStatus }) => {
   
   const stats = useMemo(() => {
     const initialStats = {
@@ -111,8 +112,28 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
     }, initialStats);
   }, [data]);
 
-  // If no data, show loading state immediately
+  // If no data
   if (data.length === 0) {
+      if (marketStatus) {
+          // Market Closed State
+          return (
+              <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6 animate-in fade-in zoom-in duration-500 p-4">
+                  <div className="relative">
+                      <div className="absolute inset-0 bg-slate-800 blur-xl opacity-20 rounded-full"></div>
+                      <Moon size={64} className="text-slate-500 relative z-10" />
+                  </div>
+                  <div>
+                      <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Market is Closed</h2>
+                      <p className="text-sm text-slate-400 max-w-xs mx-auto">{marketStatus}</p>
+                      <p className="text-xs text-slate-500 mt-4 max-w-sm mx-auto">
+                        Real-time data is unavailable. You can enable "Test Mode" in Settings to attempt fetching data outside market hours.
+                      </p>
+                  </div>
+              </div>
+          );
+      }
+      
+      // Initial Loading State
       return (
           <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6 animate-in fade-in zoom-in duration-500 p-4">
               <div className="relative">
