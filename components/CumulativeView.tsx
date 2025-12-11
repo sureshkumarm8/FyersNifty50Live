@@ -1,7 +1,7 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
@@ -73,8 +73,18 @@ const Sparkline: React.FC<{ data: number[]; color: string; height?: number }> = 
     );
 };
 
+// Helper to parse HH:MM:SS to today's date object
+const parseTime = (timeStr: string) => {
+    const [h, m, s] = timeStr.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, s, 0);
+    return d;
+};
+
 export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot, historyLog = [], onNavigate, onSelectStock, marketStatus }) => {
-  
+  const [decisionWindow, setDecisionWindow] = useState<number>(5); // Default 5 mins
+
+  // --- Session Stats Calculation ---
   const stats = useMemo(() => {
     const initialStats = {
       bullishWeight: 0,
@@ -123,6 +133,112 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
     }, initialStats);
   }, [data]);
 
+
+  // --- Intelligent Decision Engine Logic ---
+  const windowAnalysis = useMemo(() => {
+      if (historyLog.length < 2) return null;
+      
+      const currentSnap = historyLog[historyLog.length - 1];
+      const currentTime = parseTime(currentSnap.time);
+      
+      // Find snapshot closest to 'decisionWindow' minutes ago
+      let pastSnap = historyLog[0];
+      let foundIndex = 0;
+
+      for (let i = historyLog.length - 2; i >= 0; i--) {
+          const snapTime = parseTime(historyLog[i].time);
+          const diffMins = (currentTime.getTime() - snapTime.getTime()) / 60000;
+          
+          if (diffMins >= decisionWindow) {
+              pastSnap = historyLog[i];
+              foundIndex = i;
+              break;
+          }
+          // If we run out of history (e.g. app open for 2 mins, selected 10 mins),
+          // loop naturally ends and we use historyLog[0] (Session Start)
+      }
+
+      // Calculate Deltas over the window
+      const priceDelta = currentSnap.niftyLtp - pastSnap.niftyLtp;
+      const priceDeltaP = (priceDelta / pastSnap.niftyLtp) * 100;
+      
+      // Net Option Flow calculation: (Current Net - Past Net) gives the flow *during* the window
+      const currentNetOpt = (currentSnap.callsBuyQty - currentSnap.callsSellQty) - (currentSnap.putsBuyQty - currentSnap.putsSellQty);
+      const pastNetOpt = (pastSnap.callsBuyQty - pastSnap.callsSellQty) - (pastSnap.putsBuyQty - pastSnap.putsSellQty);
+      const flowDelta = currentNetOpt - pastNetOpt;
+
+      // Breadth Trend (Average Sentiment over the window vs End Sentiment)
+      const windowSnaps = historyLog.slice(foundIndex);
+      const avgSentiment = windowSnaps.reduce((sum, s) => sum + s.overallSent, 0) / windowSnaps.length;
+      const sentimentTrend = currentSnap.overallSent - avgSentiment; // Rising or Falling breadth?
+
+      // Scoring
+      // 1. Price Score (-50 to 50): Is price moving significantly?
+      const priceScore = Math.max(Math.min(priceDelta * 2, 50), -50);
+      
+      // 2. Flow Score (-50 to 50): Are options confirming?
+      const flowScore = Math.max(Math.min((flowDelta / 100000) * 2, 50), -50); 
+      
+      // 3. Breadth Scalar (0.5 to 1.5): Multiplier based on breadth direction
+      const breadthScalar = sentimentTrend > 0 ? 1.2 : sentimentTrend < 0 ? 0.8 : 1.0;
+
+      const totalScore = (priceScore + flowScore) * breadthScalar;
+
+      let prediction = "NEUTRAL";
+      let color = "text-yellow-400";
+      let desc = "Consolidation within this timeframe.";
+      let signalClass = "bg-yellow-500/10 border-yellow-500/50";
+      let divergence = false;
+
+      // Divergence Logic: Price UP but Flow DOWN (or vice versa)
+      if ((priceDelta > 5 && flowDelta < -50000) || (priceDelta < -5 && flowDelta > 50000)) {
+          divergence = true;
+      }
+
+      if (totalScore > 40) {
+          prediction = "STRONG BUY";
+          color = "text-bull text-glow-green";
+          desc = `Aggressive momentum in last ${decisionWindow}m.`;
+          signalClass = "bg-bull/20 border-bull/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]";
+      } else if (totalScore > 15) {
+          prediction = "BULLISH";
+          color = "text-green-400";
+          desc = "Positive flow and price action.";
+          signalClass = "bg-green-500/10 border-green-500/50";
+      } else if (totalScore < -40) {
+          prediction = "STRONG SELL";
+          color = "text-bear text-glow-red";
+          desc = `Heavy selling pressure in last ${decisionWindow}m.`;
+          signalClass = "bg-bear/20 border-bear/50 shadow-[0_0_30px_rgba(239,68,68,0.3)]";
+      } else if (totalScore < -15) {
+          prediction = "BEARISH";
+          color = "text-red-400";
+          desc = "Negative flow and price action.";
+          signalClass = "bg-red-500/10 border-red-500/50";
+      }
+
+      if (divergence) {
+          if (priceDelta > 0) {
+             prediction = "TRAP / DIVERGENCE";
+             desc = "Price rising but Option Flow is Bearish.";
+             color = "text-orange-400";
+             signalClass = "bg-orange-500/10 border-orange-500/50 animate-pulse";
+          } else {
+             prediction = "TRAP / DIVERGENCE";
+             desc = "Price falling but Option Flow is Bullish.";
+             color = "text-orange-400";
+             signalClass = "bg-orange-500/10 border-orange-500/50 animate-pulse";
+          }
+      }
+
+      return {
+          prediction, color, desc, signalClass, divergence,
+          priceDelta, flowDelta, sentimentTrend, totalScore
+      };
+
+  }, [historyLog, decisionWindow]);
+
+
   if (data.length === 0) {
       if (marketStatus) {
           return (
@@ -143,44 +259,10 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       );
   }
 
+  // Session Stats (Legacy vars for non-decision UI)
   const bullishPct = stats.totalWeight > 0 ? (stats.bullishWeight / stats.totalWeight) * 100 : 0;
   const momentumNet = stats.weightedBuyMomemtum - stats.weightedSellMomentum;
   const weightedLpDay = stats.totalWeight > 0 ? stats.weighted_lp_day / stats.totalWeight : 0;
-
-  const trendScore = (bullishPct - 50) * 2; 
-  const flowScoreRaw = momentumNet / 100000; 
-  const flowScore = Math.max(Math.min(flowScoreRaw, 100), -100);
-  const optionScore = latestSnapshot ? Math.max(Math.min(latestSnapshot.optionsSent * 2, 100), -100) : 0;
-
-  const compositeScore = (trendScore * 0.3) + (flowScore * 0.4) + (optionScore * 0.3);
-  const isDivergent = (trendScore > 20 && optionScore < -20) || (trendScore < -20 && optionScore > 20);
-
-  let prediction = "NEUTRAL";
-  let predictionColor = "text-yellow-400";
-  let predictionDesc = "Market is choppy. No clear direction.";
-  let signalClass = "bg-yellow-500/10 border-yellow-500/50";
-
-  if (compositeScore > 35) {
-      prediction = "STRONG BUY";
-      predictionColor = "text-bull text-glow-green";
-      predictionDesc = "Aggressive Buying detected across Equity & Options.";
-      signalClass = "bg-bull/20 border-bull/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]";
-  } else if (compositeScore > 10) {
-      prediction = "BUY DIPS";
-      predictionColor = "text-green-400";
-      predictionDesc = "Trend is positive. Look for value entries.";
-      signalClass = "bg-green-500/10 border-green-500/50";
-  } else if (compositeScore < -35) {
-      prediction = "STRONG SELL";
-      predictionColor = "text-bear text-glow-red";
-      predictionDesc = "Heavy selling pressure. Do not catch falling knives.";
-      signalClass = "bg-bear/20 border-bear/50 shadow-[0_0_30px_rgba(239,68,68,0.3)]";
-  } else if (compositeScore < -10) {
-      prediction = "SELL RALLIES";
-      predictionColor = "text-red-400";
-      predictionDesc = "Trend is weak. Rallies likely to be sold.";
-      signalClass = "bg-red-500/10 border-red-500/50";
-  }
 
   const sparkData = historyLog.slice(-30);
   const flowData = sparkData.map(s => (s.callsBuyQty - s.callsSellQty) - (s.putsBuyQty - s.putsSellQty));
@@ -193,57 +275,91 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
   return (
     <div className="flex flex-col gap-4 sm:gap-6 p-2 sm:p-4 max-w-7xl mx-auto w-full pb-20 sm:pb-4">
        
-       <div className={`glass-panel p-4 sm:p-6 rounded-2xl relative overflow-hidden transition-all duration-500 border-2 ${signalClass}`}>
+       {/* Decision Engine Block */}
+       <div className={`glass-panel p-4 sm:p-6 rounded-2xl relative overflow-visible transition-all duration-500 border-2 ${windowAnalysis?.signalClass || 'border-slate-800'}`}>
+           
+           {/* Time Window Selector Toolbar */}
+           <div className="absolute top-4 right-4 z-20 flex bg-slate-900/80 rounded-lg p-1 border border-white/10 shadow-lg backdrop-blur-md overflow-x-auto max-w-[50%] sm:max-w-none custom-scrollbar">
+               {[1, 3, 5, 10, 15, 30].map(m => (
+                   <button
+                       key={m}
+                       onClick={() => setDecisionWindow(m)}
+                       className={`px-2 sm:px-3 py-1 text-[10px] sm:text-xs font-bold rounded transition-all whitespace-nowrap ${decisionWindow === m ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                   >
+                       {m}m
+                   </button>
+               ))}
+           </div>
+
            <div className="flex flex-col md:flex-row gap-6">
                <div className="flex-1 z-10">
-                   <div className="flex items-center justify-between">
-                       <div className="flex items-center gap-2 mb-2">
+                   <div className="flex items-center justify-between mb-2">
+                       <div className="flex items-center gap-2">
                            <BrainCircuit size={18} className="text-blue-300" />
-                           <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Decision Engine</h2>
+                           <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Decision Engine ({decisionWindow}m)</h2>
                        </div>
-                       {isDivergent && (
-                           <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse">
-                               <AlertTriangle size={12} /> DIVERGENCE
+                       {windowAnalysis?.divergence && (
+                           <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse mr-32 sm:mr-0">
+                               <AlertTriangle size={12} /> DIV
                            </div>
                        )}
                    </div>
                    
-                   <h1 className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${predictionColor}`}>{prediction}</h1>
-                   <p className="text-slate-300 mt-2 text-xs sm:text-sm font-medium">{predictionDesc}</p>
+                   <h1 className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${windowAnalysis?.color || 'text-slate-500'}`}>
+                       {windowAnalysis?.prediction || 'INITIALIZING...'}
+                   </h1>
+                   <p className="text-slate-300 mt-2 text-xs sm:text-sm font-medium">
+                       {windowAnalysis?.desc || 'Gathering sufficient market data...'}
+                   </p>
                    
                    <div className="mt-4">
                        <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
-                           <span>Bearish</span><span>Neutral</span><span>Bullish</span>
+                           <span>Strong Sell</span><span>Neutral</span><span>Strong Buy</span>
                        </div>
                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden relative">
                            <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-white/20 z-10"></div>
                            <div 
-                                className={`h-full transition-all duration-1000 ease-out ${compositeScore > 0 ? 'bg-gradient-to-r from-green-500 to-emerald-300' : 'bg-gradient-to-r from-rose-500 to-red-600'}`} 
+                                className={`h-full transition-all duration-1000 ease-out ${windowAnalysis && windowAnalysis.totalScore > 0 ? 'bg-gradient-to-r from-green-500 to-emerald-300' : 'bg-gradient-to-r from-rose-500 to-red-600'}`} 
                                 style={{ 
-                                    width: `${Math.abs(compositeScore)/2}%`,
-                                    left: compositeScore > 0 ? '50%' : `calc(50% - ${Math.abs(compositeScore)/2}%)`
+                                    width: windowAnalysis ? `${Math.min(Math.abs(windowAnalysis.totalScore), 50)}%` : '0%',
+                                    left: windowAnalysis && windowAnalysis.totalScore > 0 ? '50%' : `calc(50% - ${Math.min(Math.abs(windowAnalysis?.totalScore || 0), 50)}%)`
                                 }}
                            ></div>
                        </div>
                    </div>
                </div>
 
-               <div className="w-full md:w-64 flex flex-col gap-2 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6">
+               {/* Window Specific Stats */}
+               <div className="w-full md:w-64 flex flex-col gap-3 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6 bg-slate-900/20 md:bg-transparent rounded-lg p-3 md:p-0">
                    <div className="flex justify-between items-center text-xs">
-                       <span className="text-slate-400">Trend (Equity)</span>
-                       <span className={`font-mono font-bold ${trendScore > 0 ? 'text-bull' : 'text-bear'}`}>{trendScore > 0 ? '+' : ''}{trendScore.toFixed(0)}</span>
+                       <span className="text-slate-400 flex items-center gap-1"><Timer size={10}/> Nifty Move ({decisionWindow}m)</span>
+                       <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.priceDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
+                           {windowAnalysis ? `${windowAnalysis.priceDelta > 0 ? '+' : ''}${windowAnalysis.priceDelta.toFixed(1)}` : '--'}
+                       </span>
                    </div>
-                   <div className="w-full h-1 bg-slate-800 rounded mb-2"><div className={`h-full rounded ${trendScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(trendScore), 100)}%` }}></div></div>
+                   
                    <div className="flex justify-between items-center text-xs">
-                       <span className="text-slate-400">Flow (Vol)</span>
-                       <span className={`font-mono font-bold ${flowScore > 0 ? 'text-bull' : 'text-bear'}`}>{flowScore > 0 ? '+' : ''}{flowScore.toFixed(0)}</span>
+                       <span className="text-slate-400 flex items-center gap-1"><Target size={10}/> Net Flow ({decisionWindow}m)</span>
+                       <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.flowDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
+                            {windowAnalysis ? formatMillions(windowAnalysis.flowDelta) : '--'}
+                       </span>
                    </div>
-                   <div className="w-full h-1 bg-slate-800 rounded mb-2"><div className={`h-full rounded ${flowScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(flowScore), 100)}%` }}></div></div>
-                   <div className="flex justify-between items-center text-xs">
-                       <span className="text-slate-400">Options (Sent.)</span>
-                       <span className={`font-mono font-bold ${optionScore > 0 ? 'text-bull' : 'text-bear'}`}>{optionScore > 0 ? '+' : ''}{optionScore.toFixed(0)}</span>
+                   
+                   <div className="h-[1px] bg-white/5 my-1"></div>
+
+                   {/* Session Context (Background Info) */}
+                   <div className="flex justify-between items-center text-xs opacity-70">
+                       <span className="text-slate-500">Session Trend</span>
+                       <span className={`font-mono font-bold ${bullishPct > 50 ? 'text-green-400' : 'text-red-400'}`}>
+                           {bullishPct.toFixed(0)}% Bullish
+                       </span>
                    </div>
-                   <div className="w-full h-1 bg-slate-800 rounded"><div className={`h-full rounded ${optionScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(optionScore), 100)}%` }}></div></div>
+                   <div className="flex justify-between items-center text-xs opacity-70">
+                       <span className="text-slate-500">Option Sent.</span>
+                       <span className={`font-mono font-bold ${latestSnapshot && latestSnapshot.optionsSent > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                           {latestSnapshot ? formatPercent(latestSnapshot.optionsSent) : '--'}
+                       </span>
+                   </div>
                </div>
            </div>
        </div>
