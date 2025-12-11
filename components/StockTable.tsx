@@ -1,5 +1,4 @@
 
-
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, SortConfig, SortField } from '../types';
 import { ArrowUp, ArrowDown } from 'lucide-react';
@@ -25,7 +24,6 @@ const formatPercent = (num: number | undefined) => {
     const isPos = num > 0;
     const isNeg = num < 0;
     const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
-    // Fix: Using 1 decimal point for consistency
     return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(1)}%</span>;
 };
 
@@ -52,8 +50,9 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
     { label: 'Symbol', field: 'symbol', align: 'left', width: 'w-32 sm:w-48' },
     { label: 'LTP', field: 'lp', align: 'right' },
     { label: '1m %', field: 'lp_chg_1m_p', align: 'right', highlight: true },
-    { label: 'Sess %', field: 'lp_chg_day_p', align: 'right', responsive: 'hidden md:table-cell' },
-    { label: 'Day %', field: 'chp', align: 'right', responsive: 'hidden sm:table-cell' },
+    // Renamed Sess % to Day % (lp_chg_day_p is the session change)
+    { label: 'Day %', field: 'lp_chg_day_p', align: 'right' },
+    // Removed old Day % (chp)
     { label: 'Vol', field: 'volume', align: 'right', responsive: 'hidden md:table-cell' },
     
     { label: 'Total Bid', field: 'total_buy_qty', align: 'right', responsive: 'hidden lg:table-cell' },
@@ -65,7 +64,8 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
     { label: 'Ask Day%', field: 'ask_chg_day_p', align: 'right', responsive: 'hidden lg:table-cell' }, 
     
     { label: '1m Net%', field: 'net_strength_1m', align: 'right', highlight: true }, 
-    { label: 'Day Net%', field: 'day_net_strength', align: 'right', responsive: 'hidden sm:table-cell' }, 
+    // Renamed Day Net % to Day Str (Strength)
+    { label: 'Day Str', field: 'day_net_strength', align: 'right' }, 
 
     { label: 'Time', field: 'tt', align: 'right', responsive: 'hidden md:table-cell' },
   ];
@@ -83,10 +83,11 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
            initial_sell_qty: acc.initial_sell_qty + (curr.initial_total_sell_qty || 0),
            weighted_lp_1m: acc.weighted_lp_1m + ((curr.lp_chg_1m_p || 0) * w),
            weighted_lp_day: acc.weighted_lp_day + ((curr.lp_chg_day_p || 0) * w),
+           weighted_net_strength: acc.weighted_net_strength + ((curr.day_net_strength || 0) * w),
            total_volume: acc.total_volume + (curr.volume || 0),
            total_weight: acc.total_weight + w,
         };
-     }, { total_buy_qty: 0, total_sell_qty: 0, bid_qty_chg_1m_abs: 0, ask_qty_chg_1m_abs: 0, initial_buy_qty: 0, initial_sell_qty: 0, weighted_lp_1m: 0, weighted_lp_day: 0, total_volume: 0, total_weight: 0 });
+     }, { total_buy_qty: 0, total_sell_qty: 0, bid_qty_chg_1m_abs: 0, ask_qty_chg_1m_abs: 0, initial_buy_qty: 0, initial_sell_qty: 0, weighted_lp_1m: 0, weighted_lp_day: 0, weighted_net_strength: 0, total_volume: 0, total_weight: 0 });
   }, [data]);
 
   const prevTotalBid1m = totals ? totals.total_buy_qty - totals.bid_qty_chg_1m_abs : 0;
@@ -96,7 +97,10 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
   const totalNet1mP = totalBidChg1mP - totalAskChg1mP;
   const totalBidChgDayP = totals && totals.initial_buy_qty > 0 ? ((totals.total_buy_qty - totals.initial_buy_qty) / totals.initial_buy_qty) * 100 : 0;
   const totalAskChgDayP = totals && totals.initial_sell_qty > 0 ? ((totals.total_sell_qty - totals.initial_sell_qty) / totals.initial_sell_qty) * 100 : 0;
-  const totalNetDayP = totalBidChgDayP - totalAskChgDayP;
+  
+  // Weighted Average Strength for Total Row
+  const weightedDayStr = totals && totals.total_weight > 0 ? totals.weighted_net_strength / totals.total_weight : 0;
+  
   const weightedLp1m = totals && totals.total_weight > 0 ? totals.weighted_lp_1m / totals.total_weight : 0;
   const weightedLpDay = totals && totals.total_weight > 0 ? totals.weighted_lp_day / totals.total_weight : 0;
 
@@ -131,8 +135,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                  <td className="px-4 py-4 text-left text-blue-400 font-bold border-r border-white/5 bg-blue-900/10 sticky left-0 z-10 backdrop-blur-md">MARKET AGGREGATE</td>
                  <td className="px-4 py-4 text-right"></td>
                  <td className="px-4 py-4 text-right bg-white/5 border-l border-white/5 border-r border-white/5">{formatPercent(weightedLp1m)}</td>
-                 <td className="px-4 py-4 text-right bg-white/5 hidden md:table-cell">{formatPercent(weightedLpDay)}</td>
-                 <td className="px-4 py-4 text-right hidden sm:table-cell"></td>
+                 <td className="px-4 py-4 text-right bg-white/5">{formatPercent(weightedLpDay)}</td>
                  <td className="px-4 py-4 text-right hidden md:table-cell">{formatQty(totals.total_volume)}</td>
                  
                  <td className="px-4 py-4 text-right border-l border-white/5 hidden lg:table-cell">{formatQty(totals.total_buy_qty)}</td>
@@ -144,7 +147,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                  <td className="px-4 py-4 text-right bg-bear/5 hidden lg:table-cell">{formatPercent(totalAskChgDayP)}</td>
                  
                  <td className="px-4 py-4 text-right border-l border-white/5 bg-slate-800/50">{formatPercent(totalNet1mP)}</td>
-                 <td className="px-4 py-4 text-right bg-slate-800/50 hidden sm:table-cell">{formatPercent(totalNetDayP)}</td>
+                 <td className="px-4 py-4 text-right bg-slate-800/50">{formatPercent(weightedDayStr)}</td>
                  <td className="px-4 py-4 text-right hidden md:table-cell"></td>
                </tr>
             )}
@@ -182,12 +185,8 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                 <td className="px-4 py-3 text-right font-mono bg-white/5 border-l border-white/5 border-r border-white/5">
                   {formatPercent(stock.lp_chg_1m_p)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-white/5 border-r border-white/5 hidden md:table-cell">
+                <td className="px-4 py-3 text-right font-mono bg-white/5 border-r border-white/5">
                   {formatPercent(stock.lp_chg_day_p)}
-                </td>
-
-                <td className="px-4 py-3 text-right font-mono font-medium hidden sm:table-cell">
-                  {formatPercent(stock.chp)}
                 </td>
 
                 <td className="px-4 py-3 text-right font-mono text-slate-400 hidden md:table-cell">
@@ -217,7 +216,7 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                 <td className="px-4 py-3 text-right font-mono border-l border-white/10 bg-slate-800/40 font-bold border-r border-white/10">
                   {formatPercent(stock.net_strength_1m)}
                 </td>
-                <td className="px-4 py-3 text-right font-mono bg-slate-800/40 text-slate-300 hidden sm:table-cell">
+                <td className="px-4 py-3 text-right font-mono bg-slate-800/40 text-slate-300">
                   {formatPercent(stock.day_net_strength)}
                 </td>
 

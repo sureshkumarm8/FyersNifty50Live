@@ -263,11 +263,11 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                         <th className="px-3 py-2">Chg</th>
                         <th className="px-3 py-2 border-l border-white/5">Over. Sent</th>
                         <th className="px-3 py-2">Adv/Dec</th>
-                        <th className="px-3 py-2">Stk Sent</th>
-                        <th className="px-3 py-2 border-l border-white/5">Call Sent</th>
-                        <th className="px-3 py-2">Put Sent</th>
+                        <th className="px-3 py-2">Stk Str</th>
+                        <th className="px-3 py-2 border-l border-white/5">Call Str</th>
+                        <th className="px-3 py-2">Put Str</th>
                         <th className="px-3 py-2">PCR</th>
-                        <th className="px-3 py-2 bg-white/5">Opt. Sent</th>
+                        <th className="px-3 py-2 bg-white/5">Opt Str</th>
                         <th className="px-3 py-2 border-l border-white/5">Calls Flow (M)</th>
                         <th className="px-3 py-2">Puts Flow (M)</th>
                      </tr>

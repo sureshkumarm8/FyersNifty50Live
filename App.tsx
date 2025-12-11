@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon } from 'lucide-react';
 import { StockTable } from './components/StockTable';
@@ -251,7 +252,9 @@ const App: React.FC = () => {
   const calculateSnapshot = (stocksData: EnrichedFyersQuote[], optionsData: EnrichedFyersQuote[], ltp: number, ptsChg: number) => {
       let bullishW = 0, bearishW = 0, totalW = 0;
       let adv = 0, dec = 0;
-      let totalStockBuyDelta = 0, totalStockSellDelta = 0;
+      
+      // Stock Strength Calculation (Weighted Average of Stock Net Strength)
+      let weightedStockStrengthSum = 0;
 
       stocksData.forEach(s => {
           const w = s.weight || 0.1;
@@ -261,39 +264,52 @@ const App: React.FC = () => {
           else if (sessionChg < -0.001) { bearishW += w; dec++; }
           totalW += w;
 
-          const buyDelta = (s.total_buy_qty || 0) - (s.initial_total_buy_qty || 0);
-          const sellDelta = (s.total_sell_qty || 0) - (s.initial_total_sell_qty || 0);
-          
-          totalStockBuyDelta += buyDelta;
-          totalStockSellDelta += sellDelta;
+          const strength = s.day_net_strength || 0;
+          weightedStockStrengthSum += (strength * w);
       });
       const overallSent = totalW > 0 ? (bullishW - bearishW) / totalW * 100 : 0;
-      
-      const stockSent = totalStockSellDelta > 0 ? ((totalStockBuyDelta - totalStockSellDelta) / totalStockSellDelta) * 100 : 0;
+      const stockSent = totalW > 0 ? weightedStockStrengthSum / totalW : 0;
 
-      let callBuyDelta = 0, callSellDelta = 0, putBuyDelta = 0, putSellDelta = 0;
+      let callBuyTotal = 0, callSellTotal = 0, callBuyInit = 0, callSellInit = 0;
+      let putBuyTotal = 0, putSellTotal = 0, putBuyInit = 0, putSellInit = 0;
       let callOI = 0, putOI = 0;
 
       optionsData.forEach(o => {
-          const buyDelta = (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
-          const sellDelta = (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
-
           const isCE = o.symbol.endsWith('CE');
           if (isCE) {
-              callBuyDelta += buyDelta;
-              callSellDelta += sellDelta;
+              callBuyTotal += o.total_buy_qty || 0;
+              callSellTotal += o.total_sell_qty || 0;
+              callBuyInit += o.initial_total_buy_qty || 0;
+              callSellInit += o.initial_total_sell_qty || 0;
               callOI += o.oi || 0;
           } else {
-              putBuyDelta += buyDelta;
-              putSellDelta += sellDelta;
+              putBuyTotal += o.total_buy_qty || 0;
+              putSellTotal += o.total_sell_qty || 0;
+              putBuyInit += o.initial_total_buy_qty || 0;
+              putSellInit += o.initial_total_sell_qty || 0;
               putOI += o.oi || 0;
           }
       });
 
-      const callSent = callSellDelta > 0 ? ((callBuyDelta - callSellDelta) / callSellDelta) * 100 : 0;
-      const putSent = putSellDelta > 0 ? ((putBuyDelta - putSellDelta) / putSellDelta) * 100 : 0;
+      // Percent Change Logic: (Total - Init) / Init
+      // Strength: BidChg% - AskChg%
+      const getStrength = (buy: number, initBuy: number, sell: number, initSell: number) => {
+          const buyChgP = initBuy > 0 ? ((buy - initBuy) / initBuy) * 100 : 0;
+          const sellChgP = initSell > 0 ? ((sell - initSell) / initSell) * 100 : 0;
+          return buyChgP - sellChgP;
+      };
+
+      const callSent = getStrength(callBuyTotal, callBuyInit, callSellTotal, callSellInit);
+      const putSent = getStrength(putBuyTotal, putBuyInit, putSellTotal, putSellInit);
+      
       const pcr = callOI > 0 ? putOI / callOI : 0;
       const optionsSent = callSent - putSent;
+
+      // Calculate raw flows for display (in Millions)
+      const callsBuyDelta = callBuyTotal - callBuyInit;
+      const callsSellDelta = callSellTotal - callSellInit;
+      const putsBuyDelta = putBuyTotal - putBuyInit;
+      const putsSellDelta = putSellTotal - putSellInit;
 
       const snapshot: MarketSnapshot = {
           time: new Date().toLocaleTimeString('en-IN', { hour12: false }),
@@ -306,10 +322,10 @@ const App: React.FC = () => {
           putSent,
           pcr,
           optionsSent,
-          callsBuyQty: callBuyDelta,
-          callsSellQty: callSellDelta,
-          putsBuyQty: putBuyDelta,
-          putsSellQty: putSellDelta
+          callsBuyQty: callsBuyDelta,
+          callsSellQty: callsSellDelta,
+          putsBuyQty: putsBuyDelta,
+          putsSellQty: putsSellDelta
       };
 
       setHistoryLog(prev => {
