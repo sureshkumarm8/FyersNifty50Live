@@ -1,3 +1,4 @@
+
 import React, { useMemo } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
 import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle } from 'lucide-react';
@@ -18,9 +19,8 @@ const formatValue = (val: number) => {
     return val.toLocaleString('en-IN');
 };
 
-const formatNumber = (num: number, decimals = 2) => num.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+const formatNumber = (num: number, decimals = 1) => num.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 
-// UPDATED: 1 Decimal Point formatting
 const formatPercent = (num: number) => {
     const isPos = num > 0;
     const isNeg = num < 0;
@@ -44,7 +44,6 @@ const Sparkline: React.FC<{ data: number[]; color: string; height?: number }> = 
     
     const points = data.map((val, i) => {
         const x = (i / (data.length - 1)) * width;
-        // Invert Y because SVG 0 is top
         const y = height - ((val - min) / range) * height; 
         return `${x},${y}`;
     }).join(' ');
@@ -59,7 +58,6 @@ const Sparkline: React.FC<{ data: number[]; color: string; height?: number }> = 
                 vectorEffect="non-scaling-stroke"
                 className="drop-shadow-md"
             />
-            {/* Zero Line */}
             {min < 0 && max > 0 && (
                 <line 
                     x1="0" 
@@ -145,20 +143,16 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       );
   }
 
-  // --- DERIVED METRICS ---
   const bullishPct = stats.totalWeight > 0 ? (stats.bullishWeight / stats.totalWeight) * 100 : 0;
   const momentumNet = stats.weightedBuyMomemtum - stats.weightedSellMomentum;
   const weightedLpDay = stats.totalWeight > 0 ? stats.weighted_lp_day / stats.totalWeight : 0;
 
-  // --- NIFTYOPS PREDICTION ENGINE ---
   const trendScore = (bullishPct - 50) * 2; 
   const flowScoreRaw = momentumNet / 100000; 
   const flowScore = Math.max(Math.min(flowScoreRaw, 100), -100);
   const optionScore = latestSnapshot ? Math.max(Math.min(latestSnapshot.optionsSent * 2, 100), -100) : 0;
 
   const compositeScore = (trendScore * 0.3) + (flowScore * 0.4) + (optionScore * 0.3);
-
-  // Divergence Check
   const isDivergent = (trendScore > 20 && optionScore < -20) || (trendScore < -20 && optionScore > 20);
 
   let prediction = "NEUTRAL";
@@ -188,12 +182,10 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       signalClass = "bg-red-500/10 border-red-500/50";
   }
 
-  // Sparkline Data Prep (Last 20 points)
   const sparkData = historyLog.slice(-30);
   const flowData = sparkData.map(s => (s.callsBuyQty - s.callsSellQty) - (s.putsBuyQty - s.putsSellQty));
   const trendData = sparkData.map(s => s.overallSent);
 
-  // Top Movers
   const indexMovers = [...data].sort((a, b) => (b.index_contribution || 0) - (a.index_contribution || 0));
   const topLifters = indexMovers.slice(0, 5);
   const topDraggers = indexMovers.reverse().slice(0, 5);
@@ -201,10 +193,8 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
   return (
     <div className="flex flex-col gap-4 sm:gap-6 p-2 sm:p-4 max-w-7xl mx-auto w-full pb-20 sm:pb-4">
        
-       {/* 1. DECISION ENGINE HEADER */}
        <div className={`glass-panel p-4 sm:p-6 rounded-2xl relative overflow-hidden transition-all duration-500 border-2 ${signalClass}`}>
            <div className="flex flex-col md:flex-row gap-6">
-               {/* Main Signal */}
                <div className="flex-1 z-10">
                    <div className="flex items-center justify-between">
                        <div className="flex items-center gap-2 mb-2">
@@ -213,7 +203,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                        </div>
                        {isDivergent && (
                            <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse">
-                               <AlertTriangle size={12} /> DIVERGENCE DETECTED
+                               <AlertTriangle size={12} /> DIVERGENCE
                            </div>
                        )}
                    </div>
@@ -221,12 +211,9 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                    <h1 className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${predictionColor}`}>{prediction}</h1>
                    <p className="text-slate-300 mt-2 text-xs sm:text-sm font-medium">{predictionDesc}</p>
                    
-                   {/* Composite Score Bar */}
                    <div className="mt-4">
                        <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
-                           <span>Bearish</span>
-                           <span>Neutral</span>
-                           <span>Bullish</span>
+                           <span>Bearish</span><span>Neutral</span><span>Bullish</span>
                        </div>
                        <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden relative">
                            <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-white/20 z-10"></div>
@@ -241,96 +228,111 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                    </div>
                </div>
 
-               {/* Factor Breakdown */}
                <div className="w-full md:w-64 flex flex-col gap-2 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6">
                    <div className="flex justify-between items-center text-xs">
                        <span className="text-slate-400">Trend (Equity)</span>
                        <span className={`font-mono font-bold ${trendScore > 0 ? 'text-bull' : 'text-bear'}`}>{trendScore > 0 ? '+' : ''}{trendScore.toFixed(0)}</span>
                    </div>
-                   <div className="w-full h-1 bg-slate-800 rounded mb-2">
-                       <div className={`h-full rounded ${trendScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(trendScore), 100)}%` }}></div>
-                   </div>
-
+                   <div className="w-full h-1 bg-slate-800 rounded mb-2"><div className={`h-full rounded ${trendScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(trendScore), 100)}%` }}></div></div>
                    <div className="flex justify-between items-center text-xs">
                        <span className="text-slate-400">Flow (Vol)</span>
                        <span className={`font-mono font-bold ${flowScore > 0 ? 'text-bull' : 'text-bear'}`}>{flowScore > 0 ? '+' : ''}{flowScore.toFixed(0)}</span>
                    </div>
-                   <div className="w-full h-1 bg-slate-800 rounded mb-2">
-                       <div className={`h-full rounded ${flowScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(flowScore), 100)}%` }}></div>
-                   </div>
-
+                   <div className="w-full h-1 bg-slate-800 rounded mb-2"><div className={`h-full rounded ${flowScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(flowScore), 100)}%` }}></div></div>
                    <div className="flex justify-between items-center text-xs">
-                       <span className="text-slate-400">Options (Sentiment)</span>
+                       <span className="text-slate-400">Options (Sent.)</span>
                        <span className={`font-mono font-bold ${optionScore > 0 ? 'text-bull' : 'text-bear'}`}>{optionScore > 0 ? '+' : ''}{optionScore.toFixed(0)}</span>
                    </div>
-                   <div className="w-full h-1 bg-slate-800 rounded">
-                       <div className={`h-full rounded ${optionScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(optionScore), 100)}%` }}></div>
-                   </div>
+                   <div className="w-full h-1 bg-slate-800 rounded"><div className={`h-full rounded ${optionScore > 0 ? 'bg-bull' : 'bg-bear'}`} style={{ width: `${Math.min(Math.abs(optionScore), 100)}%` }}></div></div>
                </div>
            </div>
        </div>
 
-       {/* 2. TREND SCANNERS (Sparklines) */}
+       {historyLog.length > 0 && (
+          <div className="glass-panel rounded-xl overflow-hidden">
+             <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
+                 <Clock size={16} className="text-blue-400" />
+                 <h3 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Recent Pulse (Last 5 Mins)</h3>
+             </div>
+             <div className="overflow-x-auto custom-scrollbar">
+               <table className="w-full text-xs sm:text-sm whitespace-nowrap text-center">
+                  <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
+                     <tr>
+                        <th className="px-3 py-2 text-left">Time</th>
+                        <th className="px-3 py-2">Nifty</th>
+                        <th className="px-3 py-2">Chg</th>
+                        <th className="px-3 py-2 border-l border-white/5">Over. Sent</th>
+                        <th className="px-3 py-2">Adv/Dec</th>
+                        <th className="px-3 py-2">Stk Sent</th>
+                        <th className="px-3 py-2 border-l border-white/5">Call Sent</th>
+                        <th className="px-3 py-2">Put Sent</th>
+                        <th className="px-3 py-2">PCR</th>
+                        <th className="px-3 py-2 bg-white/5">Opt. Sent</th>
+                        <th className="px-3 py-2 border-l border-white/5">Calls Flow (M)</th>
+                        <th className="px-3 py-2">Puts Flow (M)</th>
+                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                     {historyLog.slice().reverse().slice(0, 5).map((snap, idx) => (
+                        <tr key={idx} className="hover:bg-white/5 transition-colors group">
+                           <td className="px-3 py-2 text-left font-mono text-slate-300 font-bold bg-slate-900/30">{snap.time}</td>
+                           <td className="px-3 py-2 font-mono text-slate-400">{formatNumber(snap.niftyLtp, 2)}</td>
+                           <td className={`px-3 py-2 font-mono font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>{snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg.toFixed(1)}</td>
+                           <td className={`px-3 py-2 border-l border-white/5 font-bold ${snap.overallSent >= 0 ? 'text-bull' : 'text-bear'}`}>{formatPercent(snap.overallSent)}</td>
+                           <td className="px-3 py-2 font-mono"><span className="text-bull">{snap.adv}</span>/<span className="text-bear">{snap.dec}</span></td>
+                           <td className="px-3 py-2">{formatPercent(snap.stockSent)}</td>
+                           <td className="px-3 py-2 border-l border-white/5">{formatPercent(snap.callSent)}</td>
+                           <td className="px-3 py-2">{formatPercent(snap.putSent)}</td>
+                           <td className={`px-3 py-2 font-mono font-bold ${snap.pcr > 1 ? 'text-bull' : snap.pcr < 0.7 ? 'text-bear' : 'text-blue-200'}`}>{snap.pcr.toFixed(2)}</td>
+                           <td className={`px-3 py-2 font-bold bg-white/5 ${snap.optionsSent >= 0 ? 'text-bull' : 'text-bear'}`}>{formatPercent(snap.optionsSent)}</td>
+                           <td className="px-3 py-2 border-l border-white/5 font-mono text-[10px] opacity-80"><span className="text-bull">{formatMillions(snap.callsBuyQty)}</span>/<span className="text-bear">{formatMillions(snap.callsSellQty)}</span></td>
+                           <td className="px-3 py-2 font-mono text-[10px] opacity-80"><span className="text-bull">{formatMillions(snap.putsBuyQty)}</span>/<span className="text-bear">{formatMillions(snap.putsSellQty)}</span></td>
+                        </tr>
+                     ))}
+                  </tbody>
+               </table>
+             </div>
+          </div>
+       )}
+
        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-           {/* Nifty Trend */}
            <div onClick={() => onNavigate('stocks')} className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 transition-all group">
                <div className="flex justify-between items-start mb-2">
                    <div>
                        <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Activity size={12}/> Weighted Breadth</p>
                        <p className={`text-2xl font-mono font-bold ${bullishPct > 50 ? 'text-bull' : 'text-bear'}`}>{bullishPct.toFixed(1)}%</p>
                    </div>
-                   <div className={`px-2 py-1 rounded text-[10px] font-bold ${weightedLpDay >= 0 ? 'bg-bull/10 text-bull' : 'bg-bear/10 text-bear'}`}>
-                       {weightedLpDay >= 0 ? '+' : ''}{weightedLpDay.toFixed(1)}%
-                   </div>
+                   <div className={`px-2 py-1 rounded text-[10px] font-bold ${weightedLpDay >= 0 ? 'bg-bull/10 text-bull' : 'bg-bear/10 text-bear'}`}>{formatPercent(weightedLpDay)}</div>
                </div>
-               <div className="h-10 w-full">
-                   <Sparkline data={trendData} color={bullishPct > 50 ? '#10b981' : '#ef4444'} />
-               </div>
+               <div className="h-10 w-full"><Sparkline data={trendData} color={bullishPct > 50 ? '#10b981' : '#ef4444'} /></div>
            </div>
-
-           {/* Option Flow Trend */}
            <div onClick={() => onNavigate('options')} className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 transition-all group">
                <div className="flex justify-between items-start mb-2">
                    <div>
                        <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Target size={12}/> Net Option Flow</p>
-                       <div className="text-xl font-mono font-bold">
-                           {latestSnapshot?.optionsSent ? formatPercent(latestSnapshot.optionsSent) : '--'}
-                       </div>
+                       <div className="text-xl font-mono font-bold">{latestSnapshot?.optionsSent ? formatPercent(latestSnapshot.optionsSent) : '--'}</div>
                    </div>
                    <div className="text-right">
                         <p className="text-[10px] text-slate-500">PCR</p>
                         <p className={`text-sm font-mono font-bold ${latestSnapshot && latestSnapshot.pcr > 1 ? 'text-bull' : 'text-blue-200'}`}>{latestSnapshot?.pcr.toFixed(2) || '--'}</p>
                    </div>
                </div>
-               <div className="h-10 w-full">
-                   <Sparkline data={flowData} color={latestSnapshot && latestSnapshot.optionsSent > 0 ? '#10b981' : '#ef4444'} />
-               </div>
+               <div className="h-10 w-full"><Sparkline data={flowData} color={latestSnapshot && latestSnapshot.optionsSent > 0 ? '#10b981' : '#ef4444'} /></div>
            </div>
-
-           {/* Momentum Pipe (Redesigned) */}
            <div className="glass-panel p-4 rounded-xl flex flex-col justify-center">
                <div className="flex justify-between items-center mb-3">
                    <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Zap size={12} className="text-yellow-400"/> Momentum (1m)</p>
                    <span className={`text-xs font-mono font-bold ${momentumNet > 0 ? 'text-bull' : 'text-bear'}`}>{formatValue(momentumNet)}</span>
                </div>
                <div className="relative h-2 bg-slate-800 rounded-full overflow-hidden flex">
-                   <div className="w-1/2 flex justify-end">
-                       <div className="h-full bg-bear rounded-l-full" style={{ width: `${Math.min(Math.abs(stats.weightedSellMomentum)/500000 * 100, 100)}%`, opacity: 0.8 }}></div>
-                   </div>
-                   <div className="w-1/2 flex justify-start">
-                       <div className="h-full bg-bull rounded-r-full" style={{ width: `${Math.min(Math.abs(stats.weightedBuyMomemtum)/500000 * 100, 100)}%`, opacity: 0.8 }}></div>
-                   </div>
-                   {/* Center Marker */}
+                   <div className="w-1/2 flex justify-end"><div className="h-full bg-bear rounded-l-full" style={{ width: `${Math.min(Math.abs(stats.weightedSellMomentum)/500000 * 100, 100)}%`, opacity: 0.8 }}></div></div>
+                   <div className="w-1/2 flex justify-start"><div className="h-full bg-bull rounded-r-full" style={{ width: `${Math.min(Math.abs(stats.weightedBuyMomemtum)/500000 * 100, 100)}%`, opacity: 0.8 }}></div></div>
                    <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10"></div>
                </div>
-               <div className="flex justify-between mt-2 text-[9px] text-slate-500 font-mono uppercase">
-                   <span>Sell Pressure</span>
-                   <span>Buy Pressure</span>
-               </div>
+               <div className="flex justify-between mt-2 text-[9px] text-slate-500 font-mono uppercase"><span>Sell Pressure</span><span>Buy Pressure</span></div>
            </div>
        </div>
 
-       {/* 3. MARKET AGGREGATE TABLE */}
        <div className="glass-panel rounded-xl overflow-hidden p-0">
            <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
                <Scale size={14} className="text-purple-400" />
@@ -348,52 +350,33 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                        </tr>
                    </thead>
                    <tbody className="divide-y divide-white/5 font-mono text-xs">
-                       {/* Stocks Row */}
                        <tr className="hover:bg-white/5 transition-colors">
                            <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Equity</td>
                            <td className="px-3 py-2 text-right text-slate-300">{formatValue(stats.total_buy_qty)}</td>
                            <td className="px-3 py-2 text-right text-slate-300">{formatValue(stats.total_sell_qty)}</td>
-                           <td className={`px-3 py-2 text-right font-bold ${stats.total_buy_qty - stats.total_sell_qty > 0 ? 'text-bull' : 'text-bear'}`}>
-                               {formatValue(stats.total_buy_qty - stats.total_sell_qty)}
-                           </td>
-                           <td className="px-3 py-2 text-right">
-                              {formatPercent(weightedLpDay)}
-                           </td>
+                           <td className={`px-3 py-2 text-right font-bold ${stats.total_buy_qty - stats.total_sell_qty > 0 ? 'text-bull' : 'text-bear'}`}>{formatValue(stats.total_buy_qty - stats.total_sell_qty)}</td>
+                           <td className="px-3 py-2 text-right">{formatPercent(weightedLpDay)}</td>
                        </tr>
-                       
-                       {/* Calls Row */}
                        <tr className="hover:bg-white/5 transition-colors">
                            <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Opt CE</td>
                            <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsBuyQty) : '--'}</td>
                            <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsSellQty) : '--'}</td>
-                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && (latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
-                               {latestSnapshot ? formatValue(latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) : '--'}
-                           </td>
-                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && latestSnapshot.callSent > 0 ? 'text-bull' : 'text-bear'}`}>
-                               {latestSnapshot ? formatPercent(latestSnapshot.callSent) : '--'}
-                           </td>
+                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && (latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>{latestSnapshot ? formatValue(latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) : '--'}</td>
+                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && latestSnapshot.callSent > 0 ? 'text-bull' : 'text-bear'}`}>{latestSnapshot ? formatPercent(latestSnapshot.callSent) : '--'}</td>
                        </tr>
-
-                       {/* Puts Row */}
                         <tr className="hover:bg-white/5 transition-colors">
                            <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Opt PE</td>
                            <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsBuyQty) : '--'}</td>
                            <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsSellQty) : '--'}</td>
-                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && (latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>
-                               {latestSnapshot ? formatValue(latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) : '--'}
-                           </td>
-                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && latestSnapshot.putSent > 0 ? 'text-bull' : 'text-bear'}`}>
-                                {latestSnapshot ? formatPercent(latestSnapshot.putSent) : '--'}
-                           </td>
+                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && (latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>{latestSnapshot ? formatValue(latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) : '--'}</td>
+                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && latestSnapshot.putSent > 0 ? 'text-bull' : 'text-bear'}`}>{latestSnapshot ? formatPercent(latestSnapshot.putSent) : '--'}</td>
                        </tr>
                    </tbody>
                </table>
            </div>
        </div>
 
-       {/* 4. Lists */}
        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 flex-1 min-h-0">
-          {/* Lifters */}
           <div className="glass-card rounded-xl overflow-hidden flex flex-col">
              <div className="p-3 border-b border-white/5 bg-bull/10 flex items-center gap-2">
                 <TrendingUp size={16} className="text-bull" />
@@ -413,7 +396,6 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
              </div>
           </div>
 
-          {/* Draggers */}
           <div className="glass-card rounded-xl overflow-hidden flex flex-col">
              <div className="p-3 border-b border-white/5 bg-bear/10 flex items-center gap-2">
                 <TrendingDown size={16} className="text-bear" />

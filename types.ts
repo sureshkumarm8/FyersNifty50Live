@@ -1,8 +1,11 @@
 
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings';
+
 export interface FyersCredentials {
   appId: string;
   accessToken: string;
-  bypassMarketHours?: boolean; // New flag for testing
+  bypassMarketHours?: boolean; 
+  refreshInterval?: number;
 }
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
@@ -114,8 +117,8 @@ export type SortField =
   | 'bid_chg_day_p'
   | 'ask_chg_day_p'
   | 'day_net_strength'
-  | 'lp_chg_1m_p'   // NEW
-  | 'lp_chg_day_p'; // NEW
+  | 'lp_chg_1m_p'   
+  | 'lp_chg_day_p'; 
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -204,5 +207,3 @@ export interface SessionCandle {
 export interface SessionHistoryMap {
   [symbol: string]: SessionCandle[];
 }
-
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history';

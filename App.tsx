@@ -6,10 +6,10 @@ import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
 import { CumulativeView } from './components/CumulativeView';
 import { SentimentHistory } from './components/SentimentHistory';
-import { SettingsModal } from './components/SettingsModal';
+import { SettingsScreen } from './components/SettingsScreen';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle } from './types';
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
-import { NIFTY50_SYMBOLS, REFRESH_INTERVAL_MS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
+import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
 
 const HISTORY_STORAGE_KEY = 'nifty50_history_log';
 const HISTORY_DATE_KEY = 'nifty50_history_date';
@@ -18,11 +18,10 @@ const SESSION_DATA_KEY = 'nifty50_session_data';
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     const saved = localStorage.getItem('fyers_creds');
-    return saved ? JSON.parse(saved) : { appId: '', accessToken: '' };
+    return saved ? JSON.parse(saved) : { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value };
   });
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [marketStatusMsg, setMarketStatusMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -32,7 +31,6 @@ const App: React.FC = () => {
   const [optionQuotes, setOptionQuotes] = useState<EnrichedFyersQuote[]>([]);
   const [niftyLtp, setNiftyLtp] = useState<number | null>(null);
   
-  // Initialize Global History (Cockpit)
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>(() => {
       try {
           const savedDate = localStorage.getItem(HISTORY_DATE_KEY);
@@ -43,7 +41,7 @@ const App: React.FC = () => {
           } else {
               localStorage.setItem(HISTORY_DATE_KEY, today);
               localStorage.removeItem(HISTORY_STORAGE_KEY);
-              localStorage.removeItem(SESSION_DATA_KEY); // Also clear stock session data
+              localStorage.removeItem(SESSION_DATA_KEY); 
               return [];
           }
       } catch (e) {
@@ -51,7 +49,6 @@ const App: React.FC = () => {
       }
   });
 
-  // Initialize Per-Stock Session History
   const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>(() => {
       try {
           const savedDate = localStorage.getItem(HISTORY_DATE_KEY);
@@ -67,6 +64,7 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'symbol', direction: 'asc' });
+  const prevViewModeRef = useRef<ViewMode>('summary');
 
   const prevStocksRef = useRef<Record<string, FyersQuote>>({});
   const initialStocksRef = useRef<Record<string, FyersQuote>>({});
@@ -75,14 +73,12 @@ const App: React.FC = () => {
   
   const prevNiftyLtpRef = useRef<number | null>(null);
 
-  // Persist Global History
   useEffect(() => {
       if (historyLog.length > 0) {
           localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(historyLog));
       }
   }, [historyLog]);
 
-  // Persist Session Data
   useEffect(() => {
       const handler = setTimeout(() => {
           if (Object.keys(sessionHistory).length > 0) {
@@ -101,6 +97,13 @@ const App: React.FC = () => {
     localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
     setError(null);
     setMarketStatusMsg(null);
+  };
+
+  const handleSetViewMode = (mode: ViewMode) => {
+    if (mode !== 'settings') {
+      prevViewModeRef.current = viewMode;
+    }
+    setViewMode(mode);
   };
 
   const handleSort = (field: SortField) => {
@@ -125,7 +128,6 @@ const App: React.FC = () => {
               const history = nextState[q.symbol];
               const lastEntry = history.length > 0 ? history[history.length - 1] : null;
               
-              // Avoid duplicates in same minute
               if (!lastEntry || lastEntry.time !== nowStr) {
                   const candle: SessionCandle = {
                       time: nowStr,
@@ -358,7 +360,6 @@ const App: React.FC = () => {
           
           calculateSnapshot(enrichedStocks, enrichedOptions, idx.lp, nifty1MinChange);
           
-          // Accumulate Session History
           updateSessionHistory([...enrichedStocks, ...enrichedOptions]);
       }
       setLastUpdated(Date.now());
@@ -372,10 +373,11 @@ const App: React.FC = () => {
   }, [credentials]);
 
   useEffect(() => {
+    const interval = credentials.refreshInterval || REFRESH_OPTIONS[3].value;
     refreshData();
-    const intervalId = setInterval(refreshData, REFRESH_INTERVAL_MS);
+    const intervalId = setInterval(refreshData, interval);
     return () => clearInterval(intervalId);
-  }, [refreshData]);
+  }, [refreshData, credentials.refreshInterval]);
 
   const filteredAndSortedStocks = useMemo(() => {
     let data = [...stocks];
@@ -394,10 +396,17 @@ const App: React.FC = () => {
     return data;
   }, [stocks, searchQuery, sortConfig]);
 
+  if (viewMode === 'settings') {
+    return <SettingsScreen 
+              currentCreds={credentials} 
+              onSave={saveCredentials} 
+              onBack={() => handleSetViewMode(prevViewModeRef.current)} 
+           />;
+  }
+
   return (
     <div className="h-screen flex flex-col overflow-hidden relative font-sans">
       
-      {/* Glass Header */}
       <header className="flex-none glass-header z-30 shadow-2xl relative">
         <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
         <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 h-auto sm:h-18 flex flex-col sm:flex-row items-center justify-between py-2 sm:py-3 gap-3 sm:gap-0">
@@ -412,7 +421,7 @@ const App: React.FC = () => {
                    NIFTY<span className="text-blue-500">50</span>.AI
                  </h1>
                </div>
-               <button onClick={() => setIsSettingsOpen(true)} className="ml-auto sm:hidden p-2 text-slate-400 hover:text-white rounded-lg"><Settings size={20} /></button>
+               <button onClick={() => handleSetViewMode('settings')} className="ml-auto sm:hidden p-2 text-slate-400 hover:text-white rounded-lg"><Settings size={20} /></button>
              </div>
 
              {!selectedStock && (
@@ -425,7 +434,7 @@ const App: React.FC = () => {
                    ].map((tab) => (
                      <button 
                        key={tab.id}
-                       onClick={() => setViewMode(tab.id as ViewMode)} 
+                       onClick={() => handleSetViewMode(tab.id as ViewMode)} 
                        className={`flex-shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all duration-300 whitespace-nowrap ${viewMode === tab.id ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
                      >
                         <tab.icon size={14} className={viewMode === tab.id ? 'animate-pulse' : ''} /> {tab.label}
@@ -460,7 +469,7 @@ const App: React.FC = () => {
                     )}
                  </div>
             </div>
-            <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"><Settings size={20} /></button>
+            <button onClick={() => handleSetViewMode('settings')} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"><Settings size={20} /></button>
           </div>
         </div>
       </header>
@@ -498,7 +507,7 @@ const App: React.FC = () => {
                 data={stocks} 
                 latestSnapshot={historyLog.length > 0 ? historyLog[historyLog.length - 1] : undefined} 
                 historyLog={historyLog}
-                onNavigate={setViewMode}
+                onNavigate={handleSetViewMode}
                 onSelectStock={setSelectedStock}
                 marketStatus={marketStatusMsg} 
               />
@@ -535,8 +544,6 @@ const App: React.FC = () => {
            </>
         )}
       </main>
-
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} onSave={saveCredentials} currentCreds={credentials} />
     </div>
   );
 };
