@@ -300,19 +300,6 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
        {/* Decision Engine Block */}
        <div className={`glass-panel p-4 sm:p-6 rounded-2xl relative overflow-visible transition-all duration-500 border-2 ${windowAnalysis?.signalClass || 'border-slate-800'}`}>
            
-           {/* Time Window Selector Toolbar - Now a compact Dropdown */}
-           <div className="absolute top-4 right-4 z-20">
-               <select 
-                   value={decisionWindow} 
-                   onChange={(e) => setDecisionWindow(Number(e.target.value))}
-                   className="bg-slate-900/90 text-slate-200 text-xs font-bold border border-white/10 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-lg backdrop-blur-md cursor-pointer"
-               >
-                   {[1, 3, 5, 10, 15, 30].map(m => (
-                       <option key={m} value={m}>{m}m Window</option>
-                   ))}
-               </select>
-           </div>
-
            <div className="flex flex-col md:flex-row gap-6">
                <div className="flex-1 z-10">
                    <div className="flex items-center justify-between mb-2">
@@ -363,7 +350,21 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
                </div>
 
                {/* Window Specific Stats */}
-               <div className="w-full md:w-64 flex flex-col gap-3 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6 bg-slate-900/20 md:bg-transparent rounded-lg p-3 md:p-0">
+               <div className="w-full md:w-64 flex flex-col gap-3 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6 bg-slate-900/20 md:bg-transparent rounded-lg p-3 md:p-0 relative">
+                   
+                   {/* Dropdown in stats column header */}
+                   <div className="flex justify-end mb-2">
+                       <select 
+                           value={decisionWindow} 
+                           onChange={(e) => setDecisionWindow(Number(e.target.value))}
+                           className="bg-slate-900/90 text-slate-300 text-[10px] font-bold border border-white/10 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                       >
+                           {[1, 3, 5, 10, 15, 30].map(m => (
+                               <option key={m} value={m}>{m}m Window</option>
+                           ))}
+                       </select>
+                   </div>
+
                    <div className="flex justify-between items-center text-xs">
                        <span className="text-slate-400 flex items-center gap-1"><Timer size={10}/> Nifty Move ({windowAnalysis?.effectiveDurationMins.toFixed(0)}m)</span>
                        <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.priceDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
@@ -568,3 +569,5 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
     </div>
   );
 };
+
+export default CumulativeView;

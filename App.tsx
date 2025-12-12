@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
@@ -11,6 +11,7 @@ import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
 import { dbService } from './services/db';
+import { downloadCSV } from './services/csv';
 
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
@@ -27,6 +28,7 @@ const App: React.FC = () => {
   const [marketStatusMsg, setMarketStatusMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isDbLoaded, setIsDbLoaded] = useState(false); // New flag for DB hydration
+  const [isPaused, setIsPaused] = useState(false); // Manual fetch pause
   const [lastUpdated, setLastUpdated] = useState<number>(0);
 
   const [stocks, setStocks] = useState<EnrichedFyersQuote[]>([]);
@@ -98,8 +100,10 @@ const App: React.FC = () => {
     
     // We use a timeout to batch updates to IDB
     const timer = setTimeout(() => {
-        Object.entries(sessionHistory).forEach(([symbol, candles]) => {
-            if (candles.length > 0) {
+        Object.entries(sessionHistory).forEach(([symbol, candlesVal]) => {
+            // Explicitly cast because TS might infer candlesVal as unknown depending on config
+            const candles = candlesVal as SessionCandle[];
+            if (candles && candles.length > 0) {
                  dbService.saveStockSession(symbol, candles).catch(console.error);
             }
         });
@@ -315,8 +319,7 @@ const App: React.FC = () => {
       const nifty = stockData.find(s => s.symbol === NIFTY_INDEX_SYMBOL); // Note: Nifty index isn't in NIFTY50_SYMBOLS usually
       // Actually we need to fetch Nifty Index separately or add it to list. 
       // For now, let's assume one of the stocks or separate call logic.
-      // Re-add fetching NIFTY INDEX explicitly if needed, but let's assume we derive logic from stocks for now or add it to fetch.
-      // Actually let's fetch NIFTY 50 Index as well
+      // Re-add fetching NIFTY 50 Index as well
       const indexQuote = await fetchQuotes([NIFTY_INDEX_SYMBOL], credentials);
       const niftyLtpVal = indexQuote.length > 0 ? indexQuote[0].lp : 0;
       setNiftyLtp(niftyLtpVal);
@@ -429,14 +432,14 @@ const App: React.FC = () => {
   }, [credentials, isDbLoaded, historyLog]); // Added historyLog dependency for deduping
 
   useEffect(() => {
-    if (isDbLoaded && credentials.appId && credentials.accessToken) {
+    if (isDbLoaded && credentials.appId && credentials.accessToken && !isPaused) {
       // Initial Fetch
       refreshData();
       
       const intervalId = setInterval(refreshData, credentials.refreshInterval || 30000);
       return () => clearInterval(intervalId);
     }
-  }, [credentials, refreshData, isDbLoaded]);
+  }, [credentials, refreshData, isDbLoaded, isPaused]);
 
   // --- Filtering & Sorting for Summary View ---
   const sortedStocks = useMemo(() => {
@@ -535,9 +538,18 @@ const App: React.FC = () => {
                    </div>
                )}
 
+                {/* Pause/Play Button */}
+               <button
+                  onClick={() => setIsPaused(!isPaused)}
+                  className={`p-2 rounded-lg border border-white/10 transition-all ${isPaused ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                  title={isPaused ? "Resume Live Fetch" : "Pause Live Fetch"}
+               >
+                   {isPaused ? <Play size={18} fill="currentColor" /> : <Pause size={18} fill="currentColor" />}
+               </button>
+
                <button 
                   onClick={() => refreshData()}
-                  disabled={isLoading} 
+                  disabled={isLoading || isPaused} 
                   className={`p-2 rounded-lg border border-white/10 transition-all ${isLoading ? 'bg-slate-800 text-slate-500' : 'bg-slate-800 hover:bg-slate-700 text-blue-400 shadow-lg'}`}
                >
                    <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
@@ -603,6 +615,14 @@ const App: React.FC = () => {
                             className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
                         />
                     </div>
+                    <button 
+                        onClick={() => downloadCSV(sortedStocks, 'nifty50_stocks')}
+                        className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-300 transition-colors"
+                        title="Export Stocks to CSV"
+                    >
+                        <Download size={16} />
+                        <span className="hidden sm:inline">Export</span>
+                    </button>
                     <div className="text-xs text-slate-500 font-mono hidden sm:block">
                         {sortedStocks.length} Symbols
                     </div>
@@ -620,7 +640,18 @@ const App: React.FC = () => {
         )}
 
         {viewMode === 'options' && (
-            <div className="flex flex-col h-full px-4 pb-4">
+            <div className="flex flex-col h-full px-4 pb-4 relative">
+                {/* Export Button for Options Overlay */}
+                <div className="absolute top-0 right-8 z-30">
+                     <button 
+                        onClick={() => downloadCSV(optionQuotes, 'nifty50_options')}
+                        className="flex items-center gap-2 px-3 py-1 bg-slate-800/80 hover:bg-slate-700 border border-slate-600 rounded-b-lg text-xs text-slate-300 transition-colors shadow-lg backdrop-blur-sm"
+                        title="Export Options Chain"
+                    >
+                        <Download size={12} />
+                        <span>CSV</span>
+                    </button>
+                </div>
                 <div className="flex-1 overflow-hidden">
                     <OptionChain 
                         quotes={optionQuotes} 
@@ -634,7 +665,18 @@ const App: React.FC = () => {
         )}
 
         {viewMode === 'history' && (
-            <div className="flex flex-col h-full px-4 pb-4">
+            <div className="flex flex-col h-full px-4 pb-4 relative">
+                 {/* Export Button for History */}
+                 <div className="absolute top-0 right-8 z-30">
+                     <button 
+                        onClick={() => downloadCSV(historyLog, 'market_history_log')}
+                        className="flex items-center gap-2 px-3 py-1 bg-slate-800/80 hover:bg-slate-700 border border-slate-600 rounded-b-lg text-xs text-slate-300 transition-colors shadow-lg backdrop-blur-sm"
+                        title="Export History Log"
+                    >
+                        <Download size={12} />
+                        <span>CSV</span>
+                    </button>
+                </div>
                 <SentimentHistory history={historyLog} />
             </div>
         )}
