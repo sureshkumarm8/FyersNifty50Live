@@ -5,7 +5,8 @@ import {
   Save, ShieldCheck, Upload, Download, Trash2, 
   ArrowLeft, ToggleLeft, ToggleRight, 
   Settings as SettingsIcon, BookOpen, Star, 
-  CheckCircle, AlertTriangle, Zap, BarChart4, Clock 
+  CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
+  Layout, MousePointerClick, TrendingUp, Target, Activity
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
@@ -16,7 +17,7 @@ interface SettingsScreenProps {
   currentCreds: FyersCredentials;
 }
 
-type Tab = 'configs' | 'glossary' | 'review';
+type Tab = 'configs' | 'guide' | 'glossary' | 'review';
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({ 
   onBack, 
@@ -106,12 +107,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </button>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto">
+        <div className="flex gap-1 overflow-x-auto custom-scrollbar">
             <button 
                 onClick={() => setActiveTab('configs')}
                 className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'configs' ? 'border-blue-500 text-blue-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
             >
                 <SettingsIcon size={16} /> Configuration
+            </button>
+            <button 
+                onClick={() => setActiveTab('guide')}
+                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'guide' ? 'border-emerald-500 text-emerald-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            >
+                <Layout size={16} /> Dashboard Guide
             </button>
             <button 
                 onClick={() => setActiveTab('glossary')}
@@ -123,7 +130,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 onClick={() => setActiveTab('review')}
                 className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'review' ? 'border-yellow-500 text-yellow-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
             >
-                <Star size={16} /> Trader's Review
+                <Star size={16} /> Review
             </button>
         </div>
       </header>
@@ -197,6 +204,154 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
         )}
 
+        {activeTab === 'guide' && (
+             <div className="max-w-4xl mx-auto space-y-6 animate-in slide-in-from-bottom-4 duration-300 pb-20">
+                 {/* Introduction */}
+                 <div className="glass-panel p-6 rounded-xl border-l-4 border-blue-500">
+                     <h2 className="text-xl font-bold text-white mb-2">How to Read this Dashboard</h2>
+                     <p className="text-slate-300 text-sm leading-relaxed">
+                         This terminal is designed for <strong className="text-blue-300">trend confirmation</strong>. 
+                         Unlike standard broker terminals that show raw prices, this dashboard aggregates the "weighted impact" of stocks on the Nifty 50 Index 
+                         and compares buying/selling pressure in real-time.
+                     </p>
+                 </div>
+
+                 {/* Block 1: The Decision Engine */}
+                 <div className="space-y-3">
+                     <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                         <Zap size={16} /> The Decision Engine (Top Block)
+                     </h3>
+                     <div className="glass-panel p-5 rounded-xl">
+                         <div className="flex flex-col md:flex-row gap-6">
+                             <div className="flex-1">
+                                 <div className="mb-2 bg-slate-800/50 p-2 rounded border border-white/5 inline-block">
+                                     <span className="text-xs font-mono font-bold text-white">STRONG BUY / NEUTRAL / STRONG SELL</span>
+                                 </div>
+                                 <p className="text-sm text-slate-300 mb-3">
+                                     This bar represents the <strong className="text-white">Trend Strength Score</strong>. It combines three factors over a selected time window (e.g., 5 mins):
+                                 </p>
+                                 <ul className="text-xs space-y-2 text-slate-400 list-disc pl-4">
+                                     <li><strong className="text-blue-300">Price Score:</strong> Is Nifty moving significantly in one direction?</li>
+                                     <li><strong className="text-emerald-300">Option Flow:</strong> Are big players buying Calls or Puts?</li>
+                                     <li><strong className="text-purple-300">Breadth Scalar:</strong> Is the majority of the market participating?</li>
+                                 </ul>
+                             </div>
+                             <div className="flex-1 bg-slate-900/30 p-4 rounded-lg border border-white/5 text-sm">
+                                 <h4 className="font-bold text-white mb-2">Interpreting Signals:</h4>
+                                 <ul className="space-y-2">
+                                     <li className="flex gap-2"><span className="text-emerald-400 font-bold">STRONG BUY:</span> Momentum + Option Flow are both bullish. High probability trend.</li>
+                                     <li className="flex gap-2"><span className="text-red-400 font-bold">STRONG SELL:</span> Momentum + Option Flow are both bearish.</li>
+                                     <li className="flex gap-2"><span className="text-yellow-400 font-bold">TRAP / DIVERGENCE:</span> Price is moving up, but Option Flow is bearish (or vice versa). Proceed with caution.</li>
+                                 </ul>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+
+                 {/* Block 2: Cockpit Cards */}
+                 <div className="space-y-3">
+                     <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                         <Layout size={16} /> Cockpit Metrics
+                     </h3>
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                         <div className="glass-panel p-4 rounded-xl">
+                             <div className="text-emerald-400 font-bold text-sm mb-1 flex items-center gap-2"><Activity size={14}/> Weighted Breadth</div>
+                             <p className="text-xs text-slate-400 mb-2">
+                                 Shows the % of Nifty 50 <strong>Weightage</strong> that is bullish.
+                             </p>
+                             <div className="text-[10px] text-slate-500 bg-slate-900/50 p-2 rounded">
+                                 <strong>Why it matters:</strong> If 30 stocks are green but HDFC Bank & Reliance (Heavyweights) are red, this % will be low, indicating a weak index.
+                             </div>
+                         </div>
+                         <div className="glass-panel p-4 rounded-xl">
+                             <div className="text-blue-400 font-bold text-sm mb-1 flex items-center gap-2"><Target size={14}/> Net Option Flow</div>
+                             <p className="text-xs text-slate-400 mb-2">
+                                 (Call Buying - Put Buying) - (Call Selling - Put Selling).
+                             </p>
+                             <div className="text-[10px] text-slate-500 bg-slate-900/50 p-2 rounded">
+                                 <strong>Positive Green:</strong> Traders are aggressively buying Calls. <br/>
+                                 <strong>Negative Red:</strong> Traders are aggressively buying Puts.
+                             </div>
+                         </div>
+                         <div className="glass-panel p-4 rounded-xl">
+                             <div className="text-yellow-400 font-bold text-sm mb-1 flex items-center gap-2"><Zap size={14}/> Momentum (1m)</div>
+                             <p className="text-xs text-slate-400 mb-2">
+                                 Immediate buying vs selling pressure in the last 60 seconds.
+                             </p>
+                             <div className="text-[10px] text-slate-500 bg-slate-900/50 p-2 rounded">
+                                 Used for scalping. Shows who is "hitting the market" right now.
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+
+                 {/* Block 3: Stock Table */}
+                 <div className="space-y-3">
+                     <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                         <MousePointerClick size={16} /> Stock Table Logic
+                     </h3>
+                     <div className="glass-panel p-5 rounded-xl">
+                         <table className="w-full text-xs text-left mb-4 opacity-70">
+                             <thead className="border-b border-white/10 text-slate-500">
+                                 <tr>
+                                     <th className="py-2">Symbol</th>
+                                     <th className="py-2">LTP</th>
+                                     <th className="py-2 text-emerald-400">1m %</th>
+                                     <th className="py-2 text-blue-400">Net Strength</th>
+                                 </tr>
+                             </thead>
+                             <tbody>
+                                 <tr>
+                                     <td className="py-2">RELIANCE</td>
+                                     <td className="py-2">2450.00</td>
+                                     <td className="py-2 text-emerald-400">+0.15%</td>
+                                     <td className="py-2 font-bold text-blue-400">+12%</td>
+                                 </tr>
+                             </tbody>
+                         </table>
+                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+                             <div>
+                                 <h4 className="font-bold text-white mb-1">Active Bar (Blue Line)</h4>
+                                 <p className="text-slate-400 text-xs">The blue vertical bar on the left of a stock name indicates it is currently selected or being hovered. Click to open the detailed 1-minute chart view.</p>
+                             </div>
+                             <div>
+                                 <h4 className="font-bold text-blue-300 mb-1">Net Strength (Key Metric)</h4>
+                                 <p className="text-slate-400 text-xs">
+                                     Formula: <code className="bg-slate-800 px-1 rounded">Bid Qty % Change - Ask Qty % Change</code>. 
+                                     <br/>
+                                     If <strong>Net Strength is Green</strong>, buyers are adding limit orders faster than sellers. If Price is falling but Strength is Green, it might be a reversal/absorption.
+                                 </p>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+
+                 {/* Block 4: Options Chain */}
+                 <div className="space-y-3">
+                     <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                         <Target size={16} /> Options Chain Logic
+                     </h3>
+                     <div className="glass-panel p-5 rounded-xl flex flex-col sm:flex-row gap-4">
+                         <div className="flex-1">
+                             <h4 className="text-white font-bold text-sm mb-2">Smart Strike Selection</h4>
+                             <p className="text-xs text-slate-400 leading-relaxed">
+                                 The app automatically calculates the <strong>Nearest Tuesday Expiry</strong>. It checks for holidays and moves the date if needed. It dynamically loads 25 strikes above and below the current Spot Price.
+                             </p>
+                         </div>
+                         <div className="flex-1 border-l border-white/10 pl-4">
+                             <h4 className="text-white font-bold text-sm mb-2">Interpreting Option Data</h4>
+                             <p className="text-xs text-slate-400 leading-relaxed">
+                                 Look at the <strong>Net Strength</strong> column in the Options view. 
+                                 <br/><br/>
+                                 If <span className="text-emerald-400">CE Strength is Green</span> and <span className="text-red-400">PE Strength is Red</span>, market participants are positioning for a move UP.
+                             </p>
+                         </div>
+                     </div>
+                 </div>
+
+             </div>
+        )}
+
         {activeTab === 'glossary' && (
              <div className="max-w-4xl mx-auto animate-in slide-in-from-bottom-4 duration-300">
                 <div className="glass-panel p-6 rounded-xl">
@@ -222,7 +377,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         )}
 
         {activeTab === 'review' && (
-             <div className="max-w-4xl mx-auto animate-in slide-in-from-bottom-4 duration-300">
+             <div className="max-w-4xl mx-auto animate-in slide-in-from-bottom-4 duration-300 pb-20">
                 <div className="glass-panel p-6 sm:p-8 rounded-xl relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
                         <Star size={120} className="text-yellow-500" />
