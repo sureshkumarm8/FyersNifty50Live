@@ -671,7 +671,10 @@ const App: React.FC = () => {
                         <span>CSV</span>
                     </button>
                 </div>
-                <SentimentHistory history={historyLog} />
+                <SentimentHistory 
+                    history={historyLog} 
+                    apiKey={credentials.googleApiKey}
+                />
             </div>
         )}
         
