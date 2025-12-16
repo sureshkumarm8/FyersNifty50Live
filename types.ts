@@ -6,6 +6,7 @@ export interface FyersCredentials {
   accessToken: string;
   bypassMarketHours?: boolean; 
   refreshInterval?: number;
+  googleApiKey?: string;
 }
 
 // Fyers V3 Quote Response Interface (Internal UI Model)

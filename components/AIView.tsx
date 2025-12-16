@@ -9,6 +9,7 @@ interface AIViewProps {
   niftyLtp: number | null;
   historyLog: MarketSnapshot[];
   optionQuotes: EnrichedFyersQuote[];
+  apiKey?: string;
 }
 
 interface ChatMessage {
@@ -69,7 +70,7 @@ async function decodeAudioData(
   return buffer;
 }
 
-export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, optionQuotes }) => {
+export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, optionQuotes, apiKey }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'live'>('chat');
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -133,10 +134,10 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
     setIsProcessing(true);
 
     try {
-        const apiKey = process.env.API_KEY;
-        if (!apiKey) throw new Error("API Key not configured");
+        const effectiveKey = apiKey || process.env.API_KEY;
+        if (!effectiveKey) throw new Error("Google Gemini API Key not configured. Please add it in Settings.");
 
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = new GoogleGenAI({ apiKey: effectiveKey });
         const context = getMarketContext();
         
         const systemInstruction = `You are a Nifty 50 Market Analyst. 
@@ -182,10 +183,10 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
       setIsLiveConnecting(true);
 
       try {
-          const apiKey = process.env.API_KEY;
-          if (!apiKey) throw new Error("API Key missing");
+          const effectiveKey = apiKey || process.env.API_KEY;
+          if (!effectiveKey) throw new Error("Google Gemini API Key missing");
 
-          const ai = new GoogleGenAI({ apiKey });
+          const ai = new GoogleGenAI({ apiKey: effectiveKey });
           
           // Audio Setup
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -263,10 +264,10 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
               });
           };
 
-      } catch (e) {
+      } catch (e: any) {
           console.error(e);
           setIsLiveConnecting(false);
-          alert("Failed to connect to Gemini Live. Check console/permissions.");
+          alert(`Failed to connect to Gemini Live: ${e.message}`);
       }
   };
 

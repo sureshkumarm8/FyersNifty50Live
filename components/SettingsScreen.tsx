@@ -6,7 +6,7 @@ import {
   ArrowLeft, ToggleLeft, ToggleRight, 
   Settings as SettingsIcon, BookOpen, Star, 
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
-  Layout, MousePointerClick, TrendingUp, Target, Activity
+  Layout, MousePointerClick, TrendingUp, Target, Activity, Bot
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
@@ -27,12 +27,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [activeTab, setActiveTab] = useState<Tab>('configs');
   const [appId, setAppId] = useState(currentCreds.appId);
   const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
+  const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = () => {
-    onSave({ appId, accessToken, bypassMarketHours, refreshInterval });
+    onSave({ appId, accessToken, googleApiKey, bypassMarketHours, refreshInterval });
     onBack();
   };
 
@@ -52,13 +53,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     const template = {
       appId: "XV1234567-100",
       accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE",
+      googleApiKey: "YOUR_GEMINI_API_KEY_HERE",
       bypassMarketHours: false,
       refreshInterval: 60000
     };
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(template, null, 2));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", "fyers_config_template.json");
+    downloadAnchorNode.setAttribute("download", "nifty50_config_template.json");
     document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
@@ -74,6 +76,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         const json = JSON.parse(e.target?.result as string);
         if (json.appId) setAppId(json.appId);
         if (json.accessToken) setAccessToken(json.accessToken);
+        if (json.googleApiKey) setGoogleApiKey(json.googleApiKey);
         if (json.bypassMarketHours !== undefined) setBypassMarketHours(json.bypassMarketHours);
         if (json.refreshInterval !== undefined) setRefreshInterval(json.refreshInterval);
         alert("Configuration imported successfully!");
@@ -158,12 +161,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-400 mb-1">App ID (Client ID)</label>
+                            <label className="block text-sm font-medium text-slate-400 mb-1">Fyers App ID (Client ID)</label>
                             <input type="text" value={appId} onChange={(e) => setAppId(e.target.value)} placeholder="e.g., XV1234567-100" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-slate-600 font-mono text-sm"/>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-slate-400 mb-1">Access Token</label>
+                            <label className="block text-sm font-medium text-slate-400 mb-1">Fyers Access Token</label>
                             <textarea value={accessToken} onChange={(e) => setAccessToken(e.target.value)} placeholder="Paste your generated access token here..." rows={4} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-slate-600 font-mono text-xs resize-none"/>
+                        </div>
+                        
+                        <div className="pt-2 border-t border-white/5">
+                            <label className="block text-sm font-medium text-indigo-400 mb-1 flex items-center gap-2"><Bot size={14}/> Google Gemini API Key</label>
+                            <input type="password" value={googleApiKey} onChange={(e) => setGoogleApiKey(e.target.value)} placeholder="Enter Gemini API Key (Required for AI Features)" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all placeholder-slate-600 font-mono text-sm"/>
+                            <p className="text-xs text-slate-500 mt-1">Leave empty to use environment variable if configured.</p>
                         </div>
                     </div>
                 </section>

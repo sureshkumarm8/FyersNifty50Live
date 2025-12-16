@@ -682,6 +682,7 @@ const App: React.FC = () => {
                    niftyLtp={niftyLtp}
                    historyLog={historyLog}
                    optionQuotes={optionQuotes}
+                   apiKey={credentials.googleApiKey}
                 />
             </div>
         )}
