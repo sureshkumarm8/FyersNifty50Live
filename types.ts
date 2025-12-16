@@ -1,6 +1,5 @@
 
-
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings';
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai';
 
 export interface FyersCredentials {
   appId: string;

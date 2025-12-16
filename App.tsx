@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
 import { CumulativeView } from './components/CumulativeView';
 import { SentimentHistory } from './components/SentimentHistory';
 import { SettingsScreen } from './components/SettingsScreen';
+import { AIView } from './components/AIView';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle } from './types';
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
@@ -290,18 +291,14 @@ const App: React.FC = () => {
     // --- Strict Market Hours Check ---
     if (!credentials.bypassMarketHours) {
         const now = new Date();
-        // Convert current time to IST to check market status
-        // Using "en-US" locale with IST timeZone to parse components
         const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
         const istDate = new Date(istString);
         
-        const day = istDate.getDay(); // 0 = Sun, 6 = Sat
+        const day = istDate.getDay(); 
         const hour = istDate.getHours();
         const min = istDate.getMinutes();
         const timeVal = hour * 100 + min;
 
-        // Market Rules: Mon-Fri (1-5), 09:00 (900) to 15:45 (1545)
-        // Note: Actual market is 09:15-15:30, but we allow buffers for pre/post data
         const isWeekday = day >= 1 && day <= 5;
         const isOpen = timeVal >= 900 && timeVal <= 1545;
 
@@ -316,10 +313,6 @@ const App: React.FC = () => {
       const stockData = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
       if (stockData.length === 0) return;
 
-      const nifty = stockData.find(s => s.symbol === NIFTY_INDEX_SYMBOL); // Note: Nifty index isn't in NIFTY50_SYMBOLS usually
-      // Actually we need to fetch Nifty Index separately or add it to list. 
-      // For now, let's assume one of the stocks or separate call logic.
-      // Re-add fetching NIFTY 50 Index as well
       const indexQuote = await fetchQuotes([NIFTY_INDEX_SYMBOL], credentials);
       const niftyLtpVal = indexQuote.length > 0 ? indexQuote[0].lp : 0;
       setNiftyLtp(niftyLtpVal);
@@ -429,7 +422,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [credentials, isDbLoaded, historyLog]); // Added historyLog dependency for deduping
+  }, [credentials, isDbLoaded, historyLog]); 
 
   useEffect(() => {
     if (isDbLoaded && credentials.appId && credentials.accessToken && !isPaused) {
@@ -504,8 +497,6 @@ const App: React.FC = () => {
                        <p className="text-[10px] text-slate-400 font-mono">LIVE TERMINAL</p>
                    </div>
                </div>
-               
-               {/* Mobile Menu Toggle could go here */}
            </div>
 
            {/* View Switcher (Desktop/Tablet) */}
@@ -521,6 +512,9 @@ const App: React.FC = () => {
                </button>
                <button onClick={() => handleSetViewMode('history')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'history' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Clock size={14} /> History
+               </button>
+               <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Bot size={14} /> Gemini AI
                </button>
            </div>
 
@@ -680,11 +674,21 @@ const App: React.FC = () => {
                 <SentimentHistory history={historyLog} />
             </div>
         )}
+        
+        {viewMode === 'ai' && (
+            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
+                <AIView 
+                   stocks={stocks}
+                   niftyLtp={niftyLtp}
+                   historyLog={historyLog}
+                   optionQuotes={optionQuotes}
+                />
+            </div>
+        )}
 
       </main>
     </div>
   );
 };
 
-// Added default export
 export default App;
