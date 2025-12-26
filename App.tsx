@@ -422,7 +422,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [credentials, isDbLoaded, historyLog]); 
+  }, [credentials, isDbLoaded, historyLog, sessionHistory]); 
 
   useEffect(() => {
     if (isDbLoaded && credentials.appId && credentials.accessToken && !isPaused) {
