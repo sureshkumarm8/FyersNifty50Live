@@ -88,8 +88,6 @@ const App: React.FC = () => {
   useEffect(() => {
       if (!isDbLoaded || historyLog.length === 0) return;
       
-      // Save only the latest snapshot to append (Assuming historyLog grows one by one)
-      // Or safer: save the last added one.
       const lastSnap = historyLog[historyLog.length - 1];
       if (lastSnap) {
           dbService.saveSnapshot(lastSnap).catch(e => console.error("Failed to save snapshot", e));
@@ -100,16 +98,20 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isDbLoaded) return;
     
-    // We use a timeout to batch updates to IDB
+    // Increased timeout to 8 seconds to prevent rapid overwrites during dual-fetch (stocks + options)
     const timer = setTimeout(() => {
-        Object.entries(sessionHistory).forEach(([symbol, candlesVal]) => {
-            // Explicitly cast because TS might infer candlesVal as unknown depending on config
+        // Saving 150+ items can be heavy, do it in a non-blocking way if possible
+        const entries = Object.entries(sessionHistory);
+        if(entries.length === 0) return;
+
+        // Save sequentially or in chunks to avoid locking UI
+        entries.forEach(([symbol, candlesVal]) => {
             const candles = candlesVal as SessionCandle[];
             if (candles && candles.length > 0) {
                  dbService.saveStockSession(symbol, candles).catch(console.error);
             }
         });
-    }, 5000); // Save every 5s max
+    }, 8000); 
 
     return () => clearTimeout(timer);
   }, [sessionHistory, isDbLoaded]);
@@ -142,7 +144,7 @@ const App: React.FC = () => {
   };
 
   const updateSessionHistory = (quotes: EnrichedFyersQuote[]) => {
-      if (!isDbLoaded) return; // Don't collect until DB is ready
+      if (!isDbLoaded) return; 
 
       const nowStr = new Date().toLocaleTimeString('en-IN', { hour12: false });
       const nowTs = Date.now();
@@ -177,7 +179,6 @@ const App: React.FC = () => {
                       day_net_strength: q.day_net_strength || 0
                   };
                   
-                  // In-memory limit: Keep 400 candles for chart
                   if (history.length > 400) history.shift();
                   history.push(candle);
               }
@@ -289,7 +290,6 @@ const App: React.FC = () => {
 
     setIsLoading(true);
 
-    // --- Strict Market Hours Check ---
     if (!credentials.bypassMarketHours) {
         const now = new Date();
         const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
@@ -328,7 +328,7 @@ const App: React.FC = () => {
           const rawOptions = await fetchQuotes(optionSymbols, credentials);
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
           setOptionQuotes(enrichedOptions);
-          updateSessionHistory(enrichedOptions); // Persist Options Data for session continuity
+          updateSessionHistory(enrichedOptions);
           
           // --- Market Snapshot for History Log ---
           const now = new Date();
@@ -337,7 +337,6 @@ const App: React.FC = () => {
           const ptsChg = niftyLtpVal - prevLtp;
           prevNiftyLtpRef.current = niftyLtpVal;
 
-          // Aggregations
           const adv = enrichedStocks.filter(s => (s.lp_chg_day_p || 0) > 0).length;
           const dec = enrichedStocks.filter(s => (s.lp_chg_day_p || 0) < 0).length;
           
@@ -384,9 +383,8 @@ const App: React.FC = () => {
           const putSent = putSellDelta !== 0 ? ((putBuyDelta - putSellDelta) / Math.abs(putSellDelta)) * 100 : 0;
           const optionsSent = callSent - putSent;
 
-          // Only log if minute changed to avoid spamming history
           const lastLogTime = historyLog.length > 0 ? historyLog[historyLog.length - 1].time : '';
-          const currentMin = timeStr.substring(0, 5); // HH:MM
+          const currentMin = timeStr.substring(0, 5); 
           const lastLogMin = lastLogTime.substring(0, 5);
 
           if (currentMin !== lastLogMin) {
@@ -428,9 +426,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isDbLoaded && credentials.appId && credentials.accessToken && !isPaused) {
-      // Initial Fetch
       refreshData();
-      
       const intervalId = setInterval(refreshData, credentials.refreshInterval || 30000);
       return () => clearInterval(intervalId);
     }
@@ -460,7 +456,6 @@ const App: React.FC = () => {
     return filtered;
   }, [stocks, searchQuery, sortConfig]);
 
-  // Loading Screen for DB Hydration
   if (!isDbLoaded) {
       return (
           <div className="h-full w-full flex flex-col items-center justify-center bg-slate-950 text-blue-500 gap-4">
@@ -471,7 +466,6 @@ const App: React.FC = () => {
       );
   }
 
-  // If no credentials, show settings immediately
   if (!credentials.appId && viewMode !== 'settings') {
      return (
         <SettingsScreen 
@@ -537,7 +531,6 @@ const App: React.FC = () => {
                    </div>
                )}
 
-                {/* Pause/Play Button */}
                <button
                   onClick={() => setIsPaused(!isPaused)}
                   className={`p-2 rounded-lg border border-white/10 transition-all ${isPaused ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
@@ -576,7 +569,6 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* Stock Detail Overlay */}
         {selectedStock && (
             <div className="absolute inset-0 z-40 bg-slate-950/90 backdrop-blur-md p-4 animate-in fade-in zoom-in duration-200">
                 <StockDetail 
@@ -640,7 +632,6 @@ const App: React.FC = () => {
 
         {viewMode === 'options' && (
             <div className="flex flex-col h-full px-4 pb-4 relative">
-                {/* Export Button for Options Overlay */}
                 <div className="absolute top-0 right-8 z-30">
                      <button 
                         onClick={() => downloadCSV(optionQuotes, 'nifty50_options')}
@@ -665,7 +656,6 @@ const App: React.FC = () => {
 
         {viewMode === 'history' && (
             <div className="flex flex-col h-full px-4 pb-4 relative">
-                 {/* Export Button for History */}
                  <div className="absolute top-0 right-8 z-30">
                      <button 
                         onClick={() => downloadCSV(historyLog, 'market_history_log')}

@@ -95,7 +95,6 @@ export const dbService = {
   },
 
   // --- Session Data (Stock History) ---
-  // We save the entire array of candles for a symbol
   saveStockSession: async (symbol: string, candles: SessionCandle[]) => {
     const db = await openDB();
     const tx = db.transaction(STORES.SESSION, 'readwrite');
@@ -107,32 +106,21 @@ export const dbService = {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORES.SESSION, 'readonly');
       const store = tx.objectStore(STORES.SESSION);
-      const req = store.getAllKeys();
-      
       const result: SessionHistoryMap = {};
-
-      req.onsuccess = async () => {
-        const keys = req.result as string[];
-        // Fetch values for all keys. 
-        // Note: For extreme performance with 50+ keys, a cursor is better, 
-        // but Promise.all is fine for Nifty 50 size.
-        try {
-             const promises = keys.map(key => {
-                 return new Promise<void>((resVal) => {
-                     const valReq = store.get(key);
-                     valReq.onsuccess = () => {
-                         result[key] = valReq.result;
-                         resVal();
-                     }
-                 })
-             });
-             await Promise.all(promises);
-             resolve(result);
-        } catch(e) {
-            reject(e);
+      
+      const cursorReq = store.openCursor();
+      
+      cursorReq.onsuccess = (e) => {
+        const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+        if (cursor) {
+          result[cursor.key as string] = cursor.value;
+          cursor.continue();
+        } else {
+          resolve(result);
         }
       };
-      req.onerror = () => reject(req.error);
+
+      cursorReq.onerror = () => reject(cursorReq.error);
     });
   },
 
