@@ -327,6 +327,7 @@ const App: React.FC = () => {
           const rawOptions = await fetchQuotes(optionSymbols, credentials);
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
           setOptionQuotes(enrichedOptions);
+          updateSessionHistory(enrichedOptions); // Persist Options Data for session continuity
           
           // --- Market Snapshot for History Log ---
           const now = new Date();
