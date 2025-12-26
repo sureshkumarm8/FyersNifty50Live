@@ -1,4 +1,5 @@
 
+
 export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant';
 
 export interface FyersCredentials {
@@ -208,4 +209,32 @@ export interface SessionCandle {
 
 export interface SessionHistoryMap {
   [symbol: string]: SessionCandle[];
+}
+
+// AI Quant Types
+export interface StrategySignal {
+  market_condition: "TRENDING_UP" | "TRENDING_DOWN" | "SIDEWAYS" | "VOLATILE";
+  signal: "LONG" | "SHORT" | "NO_TRADE";
+  confidence_score: number; // 0 to 100
+  primary_reason: string;
+  risk_level: "LOW" | "MEDIUM" | "HIGH";
+  suggested_trade: {
+    instrument: "NIFTY OPTIONS";
+    strategy_type: string;
+    ideal_strike: string;
+    stop_loss_ref: number;
+    target_ref: number;
+  };
+  hidden_anomaly: {
+    detected: boolean;
+    stock_symbol: string;
+    description: string;
+  };
+}
+
+export interface AnalysisRecord {
+    id: string;
+    timestamp: number;
+    timeStr: string;
+    signal: StrategySignal;
 }

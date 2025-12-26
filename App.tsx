@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
@@ -9,7 +10,7 @@ import { SentimentHistory } from './components/SentimentHistory';
 import { SettingsScreen } from './components/SettingsScreen';
 import { AIView } from './components/AIView';
 import { AIQuantDeck } from './components/AIQuantDeck';
-import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle } from './types';
+import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal } from './types';
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
 import { dbService } from './services/db';
@@ -40,6 +41,12 @@ const App: React.FC = () => {
   // Data States
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
   const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>({});
+
+  // AI Quant State (Lifted)
+  const [quantAnalysis, setQuantAnalysis] = useState<StrategySignal | null>(null);
+  const [quantHistory, setQuantHistory] = useState<AnalysisRecord[]>([]);
+  const [isQuantAnalyzing, setIsQuantAnalyzing] = useState(false);
+  const [quantError, setQuantError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
@@ -82,6 +89,24 @@ const App: React.FC = () => {
     initData();
   }, []);
 
+  // --- 1.1 Quant History Hydration ---
+  useEffect(() => {
+    const today = new Date().toDateString();
+    const key = `quant_history_${today}`;
+    try {
+        const saved = localStorage.getItem(key);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            setQuantHistory(parsed);
+            if (parsed.length > 0) {
+                setQuantAnalysis(parsed[0].signal);
+            }
+        }
+    } catch (e) {
+        console.error("Failed to load quant history", e);
+    }
+  }, []);
+
   // --- 2. Database Persistence (Debounced) ---
   
   // Save Snapshots
@@ -116,6 +141,16 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [sessionHistory, isDbLoaded]);
 
+  // Save Quant History
+  useEffect(() => {
+      const today = new Date().toDateString();
+      const key = `quant_history_${today}`;
+      try {
+        localStorage.setItem(key, JSON.stringify(quantHistory));
+      } catch (e) {
+          console.error("Failed to save quant history", e);
+      }
+  }, [quantHistory]);
 
   const saveCredentials = (newCreds: FyersCredentials) => {
     setCredentials(newCreds); 
@@ -424,7 +459,7 @@ const App: React.FC = () => {
     }
   }, [credentials, isDbLoaded, historyLog, sessionHistory]); 
 
-  // Store the latest version of refreshData in a Ref to avoid breaking the setInterval loop
+  // Stable Interval Logic
   const refreshDataRef = useRef(refreshData);
 
   useEffect(() => {
@@ -433,7 +468,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isDbLoaded && credentials.appId && credentials.accessToken && !isPaused) {
-      // Immediate fetch on mount/start
       refreshDataRef.current();
       
       const intervalId = setInterval(() => {
@@ -444,13 +478,105 @@ const App: React.FC = () => {
       
       return () => clearInterval(intervalId);
     }
-  }, [
-      isDbLoaded, 
-      credentials.appId, 
-      credentials.accessToken, 
-      isPaused, 
-      credentials.refreshInterval // Only reset if interval changes
-  ]);
+  }, [isDbLoaded, credentials.appId, credentials.accessToken, isPaused, credentials.refreshInterval]);
+
+  // --- AI Quant Logic (Executed at App Level) ---
+  const runQuantAnalysis = async () => {
+    if (isQuantAnalyzing || !credentials.googleApiKey) return;
+    setIsQuantAnalyzing(true);
+    setQuantError(null);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey });
+      
+      // Prepare Context
+      const last15Mins = historyLog.slice(-15);
+      const latest = last15Mins[last15Mins.length - 1];
+      
+      const topFlow = stocks
+          .sort((a,b) => (b.day_net_strength || 0) - (a.day_net_strength || 0))
+          .slice(0, 3)
+          .map(s => `${s.short_name}(NetStr:${s.day_net_strength?.toFixed(1)}%)`);
+
+      const dataContext = JSON.stringify({
+         nifty_ltp: niftyLtp,
+         snapshot: {
+            time: latest?.time,
+            overall_sentiment_weighted: latest?.overallSent,
+            option_sentiment: latest?.optionsSent,
+            pcr: latest?.pcr,
+            net_call_flow: latest?.callsBuyQty - latest?.callsSellQty,
+            net_put_flow: latest?.putsBuyQty - latest?.putsSellQty
+         },
+         trend_history_last_15m: last15Mins.map(s => ({ t: s.time, ltp: s.niftyLtp, sent: s.overallSent })),
+         top_flow_stocks: topFlow
+      });
+
+      const systemInstruction = `
+        You are an elite Algorithmic Trader. Analyze the JSON market data provided.
+        
+        RULES:
+        1. "overall_sentiment_weighted" is the most important metric. > 20 is Bullish, < -20 is Bearish.
+        2. "option_sentiment" confirms the trend. If Divergence exists (Price Up, Option Sent Down), signal caution.
+        3. PCR > 1.2 is Oversold/Support (Bullish), < 0.6 is Overbought/Resistance (Bearish) usually, but check trend.
+        
+        OUTPUT FORMAT:
+        Return ONLY valid JSON matching this schema:
+        {
+          "market_condition": "TRENDING_UP" | "TRENDING_DOWN" | "SIDEWAYS" | "VOLATILE",
+          "signal": "LONG" | "SHORT" | "NO_TRADE",
+          "confidence_score": number (0-100),
+          "primary_reason": "Short string explaining the main driver",
+          "risk_level": "LOW" | "MEDIUM" | "HIGH",
+          "suggested_trade": {
+            "instrument": "NIFTY OPTIONS",
+            "strategy_type": "BUY_CALL" | "BUY_PUT" | "BULL_SPREAD" | "BEAR_SPREAD" | "IRON_CONDOR",
+            "ideal_strike": "e.g., 24500 CE",
+            "stop_loss_ref": number (Nifty Spot Level),
+            "target_ref": number (Nifty Spot Level)
+          },
+          "hidden_anomaly": {
+            "detected": boolean,
+            "stock_symbol": "Stock Name or None",
+            "description": "Short description of flow divergence if any"
+          }
+        }
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: `Analyze this market data: ${dataContext}`,
+        config: { 
+            responseMimeType: "application/json",
+            systemInstruction 
+        }
+      });
+
+      const result = JSON.parse(response.text || "{}");
+      
+      const newRecord: AnalysisRecord = {
+          id: Date.now().toString(),
+          timestamp: Date.now(),
+          timeStr: new Date().toLocaleTimeString(),
+          signal: result
+      };
+
+      setQuantAnalysis(result);
+      setQuantHistory(prev => [newRecord, ...prev]);
+
+    } catch (e: any) {
+      setQuantError(e.message);
+    } finally {
+      setIsQuantAnalyzing(false);
+    }
+  };
+
+  const handleClearQuantHistory = () => {
+    if(confirm("Clear today's analysis history?")) {
+        setQuantHistory([]);
+        setQuantAnalysis(null);
+    }
+  };
 
   // --- Filtering & Sorting for Summary View ---
   const sortedStocks = useMemo(() => {
@@ -544,6 +670,12 @@ const App: React.FC = () => {
                        <span className="truncate max-w-[150px]">{error}</span>
                    </div>
                )}
+               {quantError && (
+                    <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs">
+                       <AlertCircle size={14} />
+                       <span className="truncate max-w-[150px]">Quant: {quantError}</span>
+                   </div>
+               )}
                {marketStatusMsg && (
                    <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-yellow-400 text-xs">
                        <Moon size={14} />
@@ -609,6 +741,9 @@ const App: React.FC = () => {
                   onNavigate={handleSetViewMode}
                   onSelectStock={setSelectedStock}
                   marketStatus={marketStatusMsg}
+                  quantAnalysis={quantAnalysis}
+                  isQuantAnalyzing={isQuantAnalyzing}
+                  onRunQuantAnalysis={runQuantAnalysis}
                />
             </div>
         )}
@@ -696,10 +831,12 @@ const App: React.FC = () => {
         {viewMode === 'quant' && (
             <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
                 <AIQuantDeck 
-                   stocks={stocks}
-                   niftyLtp={niftyLtp}
-                   historyLog={historyLog}
-                   optionQuotes={optionQuotes}
+                   analysis={quantAnalysis}
+                   history={quantHistory}
+                   isAnalyzing={isQuantAnalyzing}
+                   onRunAnalysis={runQuantAnalysis}
+                   onClearHistory={handleClearQuantHistory}
+                   onSelectAnalysis={setQuantAnalysis}
                    apiKey={credentials.googleApiKey}
                 />
             </div>

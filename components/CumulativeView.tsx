@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
-import { EnrichedFyersQuote, MarketSnapshot, ViewMode } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Compass, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer } from 'lucide-react';
+import { EnrichedFyersQuote, MarketSnapshot, ViewMode, StrategySignal } from '../types';
+import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, Play, CheckCircle } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
@@ -10,6 +10,10 @@ interface CumulativeViewProps {
   onNavigate: (mode: ViewMode) => void;
   onSelectStock: (symbol: string) => void;
   marketStatus?: string | null;
+  // New AI Props
+  quantAnalysis?: StrategySignal | null;
+  isQuantAnalyzing?: boolean;
+  onRunQuantAnalysis?: () => void;
 }
 
 const formatValue = (val: number) => {
@@ -81,7 +85,17 @@ const parseTime = (timeStr: string) => {
     return d;
 };
 
-export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnapshot, historyLog = [], onNavigate, onSelectStock, marketStatus }) => {
+export const CumulativeView: React.FC<CumulativeViewProps> = ({ 
+    data, 
+    latestSnapshot, 
+    historyLog = [], 
+    onNavigate, 
+    onSelectStock, 
+    marketStatus,
+    quantAnalysis,
+    isQuantAnalyzing,
+    onRunQuantAnalysis
+}) => {
   const [decisionWindow, setDecisionWindow] = useState<number>(5); // Default 5 mins
 
   // --- Session Stats Calculation ---
@@ -148,28 +162,17 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
       let foundIndex = 0;
       let effectiveDurationMins = 0;
 
-      // Find the snapshot closest to targetTime (but not newer than it, if possible)
-      // Since array is chronological, we want the last snapshot where timestamp <= targetTime
-      // Or simply, iterate backwards and find the first snapshot where timestamp <= targetTime + tolerance?
-      // Simple logic: Find index where diff is closest to decisionWindow
-      
-      let bestDiff = -1;
-
       for (let i = historyLog.length - 2; i >= 0; i--) {
           const snapTs = historyLog[i].timestamp || parseTime(historyLog[i].time).getTime();
           const diffMins = (currentTs - snapTs) / 60000;
           
           if (diffMins >= decisionWindow) {
-             // We found a snapshot older than the window. 
-             // This is good. It means we have covered the full window.
              pastSnap = historyLog[i];
              foundIndex = i;
              effectiveDurationMins = diffMins;
              break;
           }
           
-          // If we are at the start of the array and haven't met the condition,
-          // it means the entire history is shorter than the requested window.
           if (i === 0) {
              pastSnap = historyLog[0];
              foundIndex = 0;
@@ -297,104 +300,134 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({ data, latestSnap
   return (
     <div className="flex flex-col gap-4 sm:gap-6 p-2 sm:p-4 max-w-7xl mx-auto w-full pb-20 sm:pb-4">
        
-       {/* Decision Engine Block */}
-       <div className={`glass-panel p-4 sm:p-6 rounded-2xl relative overflow-visible transition-all duration-500 border-2 ${windowAnalysis?.signalClass || 'border-slate-800'}`}>
+       {/* Top Dashboard Row: Decision Engine + AI Insight */}
+       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
            
-           <div className="flex flex-col md:flex-row gap-6">
-               <div className="flex-1 z-10">
-                   <div className="flex items-center justify-between mb-2">
-                       <div className="flex items-center gap-2">
-                           <BrainCircuit size={18} className="text-blue-300" />
-                           <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">
-                             Decision Engine ({windowAnalysis && windowAnalysis.isFallback ? `${windowAnalysis.effectiveDurationMins.toFixed(1)}m` : `${decisionWindow}m`})
-                           </h2>
+           {/* ALGORITHMIC DECISION ENGINE */}
+           <div className={`lg:col-span-2 glass-panel p-4 sm:p-6 rounded-2xl relative overflow-visible transition-all duration-500 border-2 ${windowAnalysis?.signalClass || 'border-slate-800'}`}>
+               <div className="flex flex-col md:flex-row gap-6">
+                   <div className="flex-1 z-10">
+                       <div className="flex items-center justify-between mb-2">
+                           <div className="flex items-center gap-2">
+                               <Activity size={18} className="text-blue-300" />
+                               <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">
+                                 Algorithm Engine ({windowAnalysis && windowAnalysis.isFallback ? `${windowAnalysis.effectiveDurationMins.toFixed(1)}m` : `${decisionWindow}m`})
+                               </h2>
+                           </div>
+                           
+                           <div className="flex gap-2">
+                                {windowAnalysis?.divergence && (
+                                    <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse mr-24 sm:mr-0">
+                                        <AlertTriangle size={12} /> DIV
+                                    </div>
+                                )}
+                           </div>
                        </div>
                        
-                       <div className="flex gap-2">
-                            {windowAnalysis?.isFallback && (
-                                <div className="flex items-center gap-1 text-slate-400 bg-slate-800/50 px-2 py-1 rounded text-[10px] border border-white/5 mr-24 sm:mr-0">
-                                   <Clock size={12} />
-                                   <span>Building History...</span>
-                                </div>
-                            )}
-                            {windowAnalysis?.divergence && (
-                                <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse mr-32 sm:mr-0">
-                                    <AlertTriangle size={12} /> DIV
-                                </div>
-                            )}
+                       <h1 className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${windowAnalysis?.color || 'text-slate-500'}`}>
+                           {windowAnalysis?.prediction || 'INITIALIZING...'}
+                       </h1>
+                       <p className="text-slate-300 mt-2 text-xs sm:text-sm font-medium">
+                           {windowAnalysis?.desc || 'Gathering sufficient market data...'}
+                       </p>
+                       
+                       <div className="mt-4">
+                           <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden relative">
+                               <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-white/20 z-10"></div>
+                               <div 
+                                    className={`h-full transition-all duration-1000 ease-out ${windowAnalysis && windowAnalysis.totalScore > 0 ? 'bg-gradient-to-r from-green-500 to-emerald-300' : 'bg-gradient-to-r from-rose-500 to-red-600'}`} 
+                                    style={{ 
+                                        width: windowAnalysis ? `${Math.min(Math.abs(windowAnalysis.totalScore), 50)}%` : '0%',
+                                        left: windowAnalysis && windowAnalysis.totalScore > 0 ? '50%' : `calc(50% - ${Math.min(Math.abs(windowAnalysis?.totalScore || 0), 50)}%)`
+                                    }}
+                               ></div>
+                           </div>
                        </div>
                    </div>
-                   
-                   <h1 className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${windowAnalysis?.color || 'text-slate-500'}`}>
-                       {windowAnalysis?.prediction || 'INITIALIZING...'}
-                   </h1>
-                   <p className="text-slate-300 mt-2 text-xs sm:text-sm font-medium">
-                       {windowAnalysis?.desc || 'Gathering sufficient market data...'}
-                   </p>
-                   
-                   <div className="mt-4">
-                       <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
-                           <span>Strong Sell</span><span>Neutral</span><span>Strong Buy</span>
+
+                   {/* Window Stats */}
+                   <div className="w-full md:w-48 flex flex-col gap-2 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6 bg-slate-900/20 md:bg-transparent rounded-lg p-3 md:p-0 relative">
+                       <div className="flex justify-end mb-2">
+                           <select 
+                               value={decisionWindow} 
+                               onChange={(e) => setDecisionWindow(Number(e.target.value))}
+                               className="bg-slate-900/90 text-slate-300 text-[10px] font-bold border border-white/10 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                           >
+                               {[1, 3, 5, 10, 15, 30].map(m => (
+                                   <option key={m} value={m}>{m}m Window</option>
+                               ))}
+                           </select>
                        </div>
-                       <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden relative">
-                           <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-white/20 z-10"></div>
-                           <div 
-                                className={`h-full transition-all duration-1000 ease-out ${windowAnalysis && windowAnalysis.totalScore > 0 ? 'bg-gradient-to-r from-green-500 to-emerald-300' : 'bg-gradient-to-r from-rose-500 to-red-600'}`} 
-                                style={{ 
-                                    width: windowAnalysis ? `${Math.min(Math.abs(windowAnalysis.totalScore), 50)}%` : '0%',
-                                    left: windowAnalysis && windowAnalysis.totalScore > 0 ? '50%' : `calc(50% - ${Math.min(Math.abs(windowAnalysis?.totalScore || 0), 50)}%)`
-                                }}
-                           ></div>
+
+                       <div className="flex justify-between items-center text-xs">
+                           <span className="text-slate-400 flex items-center gap-1"><Timer size={10}/> Pts Chg</span>
+                           <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.priceDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
+                               {windowAnalysis ? `${windowAnalysis.priceDelta > 0 ? '+' : ''}${windowAnalysis.priceDelta.toFixed(1)}` : '--'}
+                           </span>
+                       </div>
+                       
+                       <div className="flex justify-between items-center text-xs">
+                           <span className="text-slate-400 flex items-center gap-1"><Target size={10}/> Flow</span>
+                           <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.flowDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
+                                {windowAnalysis ? formatMillions(windowAnalysis.flowDelta) : '--'}
+                           </span>
                        </div>
                    </div>
                </div>
+           </div>
 
-               {/* Window Specific Stats */}
-               <div className="w-full md:w-64 flex flex-col gap-3 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6 bg-slate-900/20 md:bg-transparent rounded-lg p-3 md:p-0 relative">
-                   
-                   {/* Dropdown in stats column header */}
-                   <div className="flex justify-end mb-2">
-                       <select 
-                           value={decisionWindow} 
-                           onChange={(e) => setDecisionWindow(Number(e.target.value))}
-                           className="bg-slate-900/90 text-slate-300 text-[10px] font-bold border border-white/10 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-                       >
-                           {[1, 3, 5, 10, 15, 30].map(m => (
-                               <option key={m} value={m}>{m}m Window</option>
-                           ))}
-                       </select>
-                   </div>
+           {/* AI QUANT INSIGHT CARD */}
+           <div className="glass-panel p-4 sm:p-5 rounded-2xl flex flex-col justify-between relative overflow-hidden group border border-indigo-500/20 bg-indigo-900/5">
+                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                    <BrainCircuit size={80} />
+                </div>
+                
+                <div>
+                    <div className="flex justify-between items-center mb-4">
+                        <div className="flex items-center gap-2">
+                             <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-300">
+                                 <Bot size={16} />
+                             </div>
+                             <h2 className="text-xs font-bold text-indigo-200 uppercase tracking-widest">AI Quant Insight</h2>
+                        </div>
+                        {quantAnalysis && (
+                             <span className="text-[10px] text-slate-500 font-mono">Last: {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                        )}
+                    </div>
 
-                   <div className="flex justify-between items-center text-xs">
-                       <span className="text-slate-400 flex items-center gap-1"><Timer size={10}/> Nifty Move ({windowAnalysis?.effectiveDurationMins.toFixed(0)}m)</span>
-                       <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.priceDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
-                           {windowAnalysis ? `${windowAnalysis.priceDelta > 0 ? '+' : ''}${windowAnalysis.priceDelta.toFixed(1)}` : '--'}
-                       </span>
-                   </div>
-                   
-                   <div className="flex justify-between items-center text-xs">
-                       <span className="text-slate-400 flex items-center gap-1"><Target size={10}/> Net Flow ({windowAnalysis?.effectiveDurationMins.toFixed(0)}m)</span>
-                       <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.flowDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
-                            {windowAnalysis ? formatMillions(windowAnalysis.flowDelta) : '--'}
-                       </span>
-                   </div>
-                   
-                   <div className="h-[1px] bg-white/5 my-1"></div>
+                    {quantAnalysis ? (
+                        <div className="animate-in fade-in duration-300">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className={`text-2xl font-black tracking-tight ${quantAnalysis.signal === 'LONG' ? 'text-emerald-400' : quantAnalysis.signal === 'SHORT' ? 'text-rose-400' : 'text-yellow-400'}`}>
+                                    {quantAnalysis.signal}
+                                </span>
+                                <span className="text-xs font-bold text-slate-400 px-2 py-1 bg-slate-800/50 rounded border border-white/5">
+                                    {quantAnalysis.confidence_score}% Conf.
+                                </span>
+                            </div>
+                            <p className="text-xs text-slate-300 leading-relaxed line-clamp-2 mb-2">
+                                {quantAnalysis.primary_reason}
+                            </p>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                                <CheckCircle size={10} className="text-indigo-400" />
+                                <span>Strategy: <span className="text-white">{quantAnalysis.suggested_trade.strategy_type.replace('_', ' ')}</span></span>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-center py-4">
+                            <p className="text-xs text-slate-500 mb-2">No AI analysis generated yet.</p>
+                        </div>
+                    )}
+                </div>
 
-                   {/* Session Context (Background Info) */}
-                   <div className="flex justify-between items-center text-xs opacity-70">
-                       <span className="text-slate-500">Session Trend</span>
-                       <span className={`font-mono font-bold ${bullishPct > 50 ? 'text-green-400' : 'text-red-400'}`}>
-                           {bullishPct.toFixed(0)}% Bullish
-                       </span>
-                   </div>
-                   <div className="flex justify-between items-center text-xs opacity-70">
-                       <span className="text-slate-500">Option Sent.</span>
-                       <span className={`font-mono font-bold ${latestSnapshot && latestSnapshot.optionsSent > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                           {latestSnapshot ? formatPercent(latestSnapshot.optionsSent) : '--'}
-                       </span>
-                   </div>
-               </div>
+                <button 
+                    onClick={onRunQuantAnalysis}
+                    disabled={isQuantAnalyzing}
+                    className={`mt-4 w-full py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all ${isQuantAnalyzing ? 'bg-slate-800 text-slate-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
+                >
+                    {isQuantAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
+                    {isQuantAnalyzing ? 'Analyzing Market...' : 'Run AI Scan'}
+                </button>
            </div>
        </div>
 

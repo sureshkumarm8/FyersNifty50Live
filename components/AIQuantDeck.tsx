@@ -1,180 +1,33 @@
 
-import React, { useState, useEffect } from 'react';
-import { GoogleGenAI } from "@google/genai";
-import { EnrichedFyersQuote, MarketSnapshot } from '../types';
+import React from 'react';
+import { StrategySignal, AnalysisRecord } from '../types';
 import { 
   Crosshair, Zap, TrendingUp, TrendingDown, 
-  AlertTriangle, Target, RefreshCw, Shield, 
+  AlertTriangle, RefreshCw, Shield, 
   BrainCircuit, BarChart2, Layers, Activity,
   History, Eye, Clock, Trash2
 } from 'lucide-react';
 
 interface AIQuantDeckProps {
-  stocks: EnrichedFyersQuote[];
-  historyLog: MarketSnapshot[];
-  niftyLtp: number | null;
-  optionQuotes: EnrichedFyersQuote[];
+  analysis: StrategySignal | null;
+  history: AnalysisRecord[];
+  isAnalyzing: boolean;
+  onRunAnalysis: () => void;
+  onClearHistory: () => void;
+  onSelectAnalysis: (signal: StrategySignal) => void;
   apiKey?: string;
 }
 
-// Structured Response Interface
-interface StrategySignal {
-  market_condition: "TRENDING_UP" | "TRENDING_DOWN" | "SIDEWAYS" | "VOLATILE";
-  signal: "LONG" | "SHORT" | "NO_TRADE";
-  confidence_score: number; // 0 to 100
-  primary_reason: string;
-  risk_level: "LOW" | "MEDIUM" | "HIGH";
-  suggested_trade: {
-    instrument: "NIFTY OPTIONS";
-    strategy_type: "BUY_CALL" | "BUY_PUT" | "BULL_SPREAD" | "BEAR_SPREAD" | "IRON_CONDOR";
-    ideal_strike: string;
-    stop_loss_ref: number;
-    target_ref: number;
-  };
-  hidden_anomaly: {
-    detected: boolean;
-    stock_symbol: string;
-    description: string;
-  };
-}
-
-interface AnalysisRecord {
-    id: string;
-    timestamp: number;
-    timeStr: string;
-    signal: StrategySignal;
-}
-
-export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({ stocks, historyLog, niftyLtp, optionQuotes, apiKey }) => {
-  const [analysis, setAnalysis] = useState<StrategySignal | null>(null);
-  const [history, setHistory] = useState<AnalysisRecord[]>([]);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Load history from localStorage on mount (per day key)
-  useEffect(() => {
-    const today = new Date().toDateString();
-    const key = `quant_history_${today}`;
-    try {
-        const saved = localStorage.getItem(key);
-        if (saved) {
-            setHistory(JSON.parse(saved));
-        }
-    } catch (e) {
-        console.error("Failed to load quant history", e);
-    }
-  }, []);
-
-  // Save history to localStorage whenever it changes
-  useEffect(() => {
-      const today = new Date().toDateString();
-      const key = `quant_history_${today}`;
-      try {
-        localStorage.setItem(key, JSON.stringify(history));
-      } catch (e) {
-          console.error("Failed to save quant history", e);
-      }
-  }, [history]);
-
-  const runAnalysis = async () => {
-    if (isAnalyzing || !apiKey) return;
-    setIsAnalyzing(true);
-    setError(null);
-
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      
-      // 1. Prepare Data Payload (Compact context)
-      const last15Mins = historyLog.slice(-15);
-      const latest = last15Mins[last15Mins.length - 1];
-      
-      // Top 3 Flow Drivers
-      const topFlow = stocks
-          .sort((a,b) => (b.day_net_strength || 0) - (a.day_net_strength || 0))
-          .slice(0, 3)
-          .map(s => `${s.short_name}(NetStr:${s.day_net_strength?.toFixed(1)}%)`);
-
-      const dataContext = JSON.stringify({
-         nifty_ltp: niftyLtp,
-         snapshot: {
-            time: latest?.time,
-            overall_sentiment_weighted: latest?.overallSent,
-            option_sentiment: latest?.optionsSent,
-            pcr: latest?.pcr,
-            net_call_flow: latest?.callsBuyQty - latest?.callsSellQty,
-            net_put_flow: latest?.putsBuyQty - latest?.putsSellQty
-         },
-         trend_history_last_15m: last15Mins.map(s => ({ t: s.time, ltp: s.niftyLtp, sent: s.overallSent })),
-         top_flow_stocks: topFlow
-      });
-
-      // 2. Strict System Instruction
-      const systemInstruction = `
-        You are an elite Algorithmic Trader. Analyze the JSON market data provided.
-        
-        RULES:
-        1. "overall_sentiment_weighted" is the most important metric. > 20 is Bullish, < -20 is Bearish.
-        2. "option_sentiment" confirms the trend. If Divergence exists (Price Up, Option Sent Down), signal caution.
-        3. PCR > 1.2 is Oversold/Support (Bullish), < 0.6 is Overbought/Resistance (Bearish) usually, but check trend.
-        
-        OUTPUT FORMAT:
-        Return ONLY valid JSON matching this schema:
-        {
-          "market_condition": "TRENDING_UP" | "TRENDING_DOWN" | "SIDEWAYS" | "VOLATILE",
-          "signal": "LONG" | "SHORT" | "NO_TRADE",
-          "confidence_score": number (0-100),
-          "primary_reason": "Short string explaining the main driver",
-          "risk_level": "LOW" | "MEDIUM" | "HIGH",
-          "suggested_trade": {
-            "instrument": "NIFTY OPTIONS",
-            "strategy_type": "BUY_CALL" | "BUY_PUT" | "WAIT",
-            "ideal_strike": "e.g., 24500 CE",
-            "stop_loss_ref": number (Nifty Spot Level),
-            "target_ref": number (Nifty Spot Level)
-          },
-          "hidden_anomaly": {
-            "detected": boolean,
-            "stock_symbol": "Stock Name or None",
-            "description": "Short description of flow divergence if any"
-          }
-        }
-      `;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: `Analyze this market data: ${dataContext}`,
-        config: { 
-            responseMimeType: "application/json",
-            systemInstruction 
-        }
-      });
-
-      const result = JSON.parse(response.text || "{}");
-      
-      const newRecord: AnalysisRecord = {
-          id: Date.now().toString(),
-          timestamp: Date.now(),
-          timeStr: new Date().toLocaleTimeString(),
-          signal: result
-      };
-
-      setAnalysis(result);
-      setHistory(prev => [newRecord, ...prev]);
-
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  const clearHistory = () => {
-      if(confirm("Clear today's analysis history?")) {
-          setHistory([]);
-          setAnalysis(null);
-      }
-  };
-
+export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({ 
+    analysis, 
+    history, 
+    isAnalyzing, 
+    onRunAnalysis, 
+    onClearHistory,
+    onSelectAnalysis,
+    apiKey 
+}) => {
+  
   if (!apiKey) {
       return (
           <div className="flex flex-col items-center justify-center h-full text-slate-500">
@@ -199,7 +52,7 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({ stocks, historyLog, ni
                </p>
            </div>
            <button 
-              onClick={runAnalysis}
+              onClick={onRunAnalysis}
               disabled={isAnalyzing}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${isAnalyzing ? 'bg-slate-800 text-slate-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
            >
@@ -207,12 +60,6 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({ stocks, historyLog, ni
                {isAnalyzing ? 'Computing...' : 'Run Scan'}
            </button>
        </div>
-
-       {error && (
-           <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-xl text-red-300 text-sm flex items-center gap-2 shrink-0">
-               <AlertTriangle size={16} /> {error}
-           </div>
-       )}
 
        <div className="flex-1 flex flex-col gap-6 overflow-hidden">
         {/* Main Dashboard (Active Signal) */}
@@ -326,7 +173,7 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({ stocks, historyLog, ni
                     <BrainCircuit size={64} className="relative text-slate-700" />
                 </div>
                 <p className="font-mono text-sm">Ready to analyze market data...</p>
-                <button onClick={runAnalysis} className="px-6 py-2 bg-indigo-900/30 text-indigo-400 border border-indigo-500/30 rounded-full hover:bg-indigo-900/50 transition-all">
+                <button onClick={onRunAnalysis} disabled={isAnalyzing} className="px-6 py-2 bg-indigo-900/30 text-indigo-400 border border-indigo-500/30 rounded-full hover:bg-indigo-900/50 transition-all">
                     Start Engine
                 </button>
             </div>
@@ -340,7 +187,7 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({ stocks, historyLog, ni
                      <h3 className="text-xs font-bold uppercase tracking-widest">Session Analysis History</h3>
                  </div>
                  {history.length > 0 && (
-                     <button onClick={clearHistory} className="text-slate-600 hover:text-red-400 transition-colors">
+                     <button onClick={onClearHistory} className="text-slate-600 hover:text-red-400 transition-colors">
                          <Trash2 size={14} />
                      </button>
                  )}
@@ -386,7 +233,7 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({ stocks, historyLog, ni
                                     </td>
                                     <td className="px-5 py-3 text-right">
                                         <button 
-                                            onClick={() => setAnalysis(rec.signal)}
+                                            onClick={() => onSelectAnalysis(rec.signal)}
                                             className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
                                             title="View Details"
                                         >
