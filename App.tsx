@@ -424,13 +424,33 @@ const App: React.FC = () => {
     }
   }, [credentials, isDbLoaded, historyLog, sessionHistory]); 
 
+  // Store the latest version of refreshData in a Ref to avoid breaking the setInterval loop
+  const refreshDataRef = useRef(refreshData);
+
+  useEffect(() => {
+    refreshDataRef.current = refreshData;
+  }, [refreshData]);
+
   useEffect(() => {
     if (isDbLoaded && credentials.appId && credentials.accessToken && !isPaused) {
-      refreshData();
-      const intervalId = setInterval(refreshData, credentials.refreshInterval || 30000);
+      // Immediate fetch on mount/start
+      refreshDataRef.current();
+      
+      const intervalId = setInterval(() => {
+          if (refreshDataRef.current) {
+              refreshDataRef.current();
+          }
+      }, credentials.refreshInterval || 30000);
+      
       return () => clearInterval(intervalId);
     }
-  }, [credentials, refreshData, isDbLoaded, isPaused]);
+  }, [
+      isDbLoaded, 
+      credentials.appId, 
+      credentials.accessToken, 
+      isPaused, 
+      credentials.refreshInterval // Only reset if interval changes
+  ]);
 
   // --- Filtering & Sorting for Summary View ---
   const sortedStocks = useMemo(() => {
