@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit } from 'lucide-react';
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
 import { OptionChain } from './components/OptionChain';
@@ -8,6 +8,7 @@ import { CumulativeView } from './components/CumulativeView';
 import { SentimentHistory } from './components/SentimentHistory';
 import { SettingsScreen } from './components/SettingsScreen';
 import { AIView } from './components/AIView';
+import { AIQuantDeck } from './components/AIQuantDeck';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle } from './types';
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
@@ -514,8 +515,11 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('history')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'history' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Clock size={14} /> History
                </button>
+               <button onClick={() => handleSetViewMode('quant')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'quant' ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <BrainCircuit size={14} /> Quant
+               </button>
                <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <Bot size={14} /> Gemini AI
+                   <Bot size={14} /> Chat
                </button>
            </div>
 
@@ -679,6 +683,18 @@ const App: React.FC = () => {
             </div>
         )}
         
+        {viewMode === 'quant' && (
+            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
+                <AIQuantDeck 
+                   stocks={stocks}
+                   niftyLtp={niftyLtp}
+                   historyLog={historyLog}
+                   optionQuotes={optionQuotes}
+                   apiKey={credentials.googleApiKey}
+                />
+            </div>
+        )}
+
         {viewMode === 'ai' && (
             <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
                 <AIView 
