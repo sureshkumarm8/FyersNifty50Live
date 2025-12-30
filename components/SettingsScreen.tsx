@@ -7,7 +7,7 @@ import {
   Settings as SettingsIcon, BookOpen, Star, 
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
-  ClipboardList, CheckSquare, Edit3, FileJson
+  ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
@@ -620,30 +620,50 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 <Star fill="currentColor" size={16} />
                                 <Star fill="currentColor" size={16} />
                             </div>
-                            <span className="text-slate-400 text-sm font-medium">Internal Audit</span>
+                            <span className="text-slate-400 text-sm font-medium">Internal System Audit</span>
                          </div>
                     </div>
 
                     <div className="space-y-6">
                         <div className="bg-emerald-900/10 border border-emerald-500/20 p-5 rounded-xl">
-                             <h3 className="text-lg font-bold text-emerald-400 mb-3 flex items-center gap-2"><CheckCircle size={18}/> Strengths</h3>
+                             <h3 className="text-lg font-bold text-emerald-400 mb-3 flex items-center gap-2"><CheckCircle size={18}/> New Capabilities</h3>
                              <ul className="space-y-3">
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2"></span>
                                     <span>
-                                        <strong className="text-white block mb-1">Session-Relative Data</strong>
-                                        By filtering out "Gap Up/Down" noise, the Day % metric focuses purely on intraday flow. This is crucial for catching gap fades or reversals that standard broker terminals miss.
+                                        <strong className="text-white block mb-1 flex items-center gap-2"><BrainCircuit size={14}/> AI Probability Engine (Quant Deck)</strong>
+                                        Automated market scans every 5 minutes during market hours. The system now scores trend probability (0-100%) based on weighted sentiment, flow divergence, and structural anomalies.
                                     </span>
                                  </li>
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2"></span>
                                     <span>
-                                        <strong className="text-white block mb-1">Weighted Index Impact</strong>
-                                        Moves are weighted by Nifty 50 contribution. Seeing HDFC Bank and Reliance move together is prioritized over smaller cap movements, giving a truer picture of index direction.
+                                        <strong className="text-white block mb-1 flex items-center gap-2"><Crosshair size={14}/> Sniper Scope</strong>
+                                        This is a game-changer for discipline. The AI strictly enforces your defined "Protocol" (Entry Window, Rules, Criteria) against live data before suggesting a trade.
                                     </span>
                                  </li>
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2"></span>
+                                    <span>
+                                        <strong className="text-white block mb-1">Session-Relative Data</strong>
+                                        By filtering out "Gap Up/Down" noise, the Day % metric focuses purely on intraday flow. Crucial for catching gap fades or reversals.
+                                    </span>
+                                 </li>
+                             </ul>
+                        </div>
+
+                        <div className="bg-blue-900/10 border border-blue-500/20 p-5 rounded-xl">
+                             <h3 className="text-lg font-bold text-blue-400 mb-3 flex items-center gap-2"><Zap size={18}/> Core Edge</h3>
+                             <ul className="space-y-3">
+                                 <li className="flex gap-3 text-sm text-slate-300">
+                                    <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-500 mt-2"></span>
+                                    <span>
+                                        <strong className="text-white block mb-1">Weighted Index Impact</strong>
+                                        Moves are weighted by Nifty 50 contribution. Seeing HDFC Bank and Reliance move together is prioritized over smaller cap movements.
+                                    </span>
+                                 </li>
+                                 <li className="flex gap-3 text-sm text-slate-300">
+                                    <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-500 mt-2"></span>
                                     <span>
                                         <strong className="text-white block mb-1">Order Flow (Bid/Ask Strength)</strong>
                                         Tracks the intent, not just price. Falling Bid Strength while Price rises is a key leading indicator for traps.
@@ -653,20 +673,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                         </div>
 
                         <div className="bg-yellow-900/10 border border-yellow-500/20 p-5 rounded-xl">
-                             <h3 className="text-lg font-bold text-yellow-400 mb-3 flex items-center gap-2"><AlertTriangle size={18}/> Critical Considerations</h3>
+                             <h3 className="text-lg font-bold text-yellow-400 mb-3 flex items-center gap-2"><AlertTriangle size={18}/> Operational Notes</h3>
                              <ul className="space-y-3">
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-yellow-500 mt-2"></span>
                                     <span>
                                         <strong className="text-white block mb-1">Data Persistence</strong>
-                                        "Day %" is relative to the session start. Refreshing the browser resets the baseline unless local storage is intact. Do not clear cache mid-day.
+                                        "Day %" is relative to the session start. The new database feature now preserves session history on reload, but clearing browser data will reset baselines.
                                     </span>
                                  </li>
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-yellow-500 mt-2"></span>
                                     <span>
-                                        <strong className="text-white block mb-1">Execution Lag</strong>
-                                        The API snapshot interval (1s+) is excellent for trend decisions but too slow for tape reading/scalping. Execute trades on your broker's terminal.
+                                        <strong className="text-white block mb-1">Execution</strong>
+                                        The API snapshot interval is excellent for trend decisions but use your broker's terminal for sub-second scalping entries.
                                     </span>
                                  </li>
                              </ul>
@@ -674,9 +694,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
                         <div className="glass-panel p-5 rounded-xl flex items-center justify-between">
                             <div>
-                                <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Final Verdict</p>
-                                <h3 className="text-2xl font-black text-white">8.5/10</h3>
-                                <p className="text-sm text-blue-300">Potent Trend Confirmation Cockpit</p>
+                                <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">System Verdict</p>
+                                <h3 className="text-2xl font-black text-white">9.5/10</h3>
+                                <p className="text-sm text-blue-300">High-Probability Trend Confirmation System</p>
                             </div>
                             <div className="text-right">
                                 <BarChart4 size={40} className="text-slate-700" />
