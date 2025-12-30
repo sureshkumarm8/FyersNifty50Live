@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, Crosshair } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
@@ -10,6 +10,7 @@ import { SentimentHistory } from './components/SentimentHistory';
 import { SettingsScreen } from './components/SettingsScreen';
 import { AIView } from './components/AIView';
 import { AIQuantDeck } from './components/AIQuantDeck';
+import { SniperScope } from './components/SniperScope';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal } from './types';
 import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
@@ -642,7 +643,7 @@ const App: React.FC = () => {
            </div>
 
            {/* View Switcher (Desktop/Tablet) */}
-           <div className="flex bg-slate-900/50 p-1 rounded-xl border border-white/5 overflow-x-auto w-full md:w-auto">
+           <div className="flex bg-slate-900/50 p-1 rounded-xl border border-white/5 overflow-x-auto w-full md:w-auto custom-scrollbar">
                <button onClick={() => handleSetViewMode('summary')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'summary' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <PieChart size={14} /> <span className="hidden sm:inline">Cockpit</span>
                </button>
@@ -657,6 +658,9 @@ const App: React.FC = () => {
                </button>
                <button onClick={() => handleSetViewMode('quant')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'quant' ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <BrainCircuit size={14} /> Quant
+               </button>
+               <button onClick={() => handleSetViewMode('sniper')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'sniper' ? 'bg-red-600 text-white shadow-md animate-pulse' : 'text-slate-400 hover:text-white'}`}>
+                   <Crosshair size={14} /> Scope
                </button>
                <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Bot size={14} /> Chat
@@ -838,6 +842,17 @@ const App: React.FC = () => {
                    onClearHistory={handleClearQuantHistory}
                    onSelectAnalysis={setQuantAnalysis}
                    apiKey={credentials.googleApiKey}
+                />
+            </div>
+        )}
+
+        {viewMode === 'sniper' && (
+            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
+                <SniperScope 
+                    snapshot={historyLog[historyLog.length-1]}
+                    niftyLtp={niftyLtp}
+                    stocks={stocks}
+                    apiKey={credentials.googleApiKey}
                 />
             </div>
         )}

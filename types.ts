@@ -1,6 +1,6 @@
 
 
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant';
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant' | 'sniper';
 
 export interface FyersCredentials {
   appId: string;
@@ -252,4 +252,22 @@ export interface TradingSystemProtocol {
   steps?: ProtocolStep[];
   links?: string[];
   rules?: string[];
+}
+
+export interface SniperAnalysis {
+    decision: "EXECUTE" | "WAIT" | "ABORT";
+    rationale: string;
+    matched_step: string;
+    trade_setup?: {
+        direction: "CALL" | "PUT";
+        entry_zone: string;
+        stop_loss: number;
+        target_1: number;
+        target_2: number;
+        rr_ratio: number;
+    };
+    compliance_check: {
+        rule: string;
+        status: "PASS" | "FAIL";
+    }[];
 }
