@@ -1,12 +1,13 @@
 
-import React, { useState, useRef } from 'react';
-import { FyersCredentials } from '../types';
+import React, { useState, useRef, useEffect } from 'react';
+import { FyersCredentials, TradingSystemProtocol } from '../types';
 import { 
   Save, ShieldCheck, Upload, Download, Trash2, 
   ArrowLeft, ToggleLeft, ToggleRight, 
   Settings as SettingsIcon, BookOpen, Star, 
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
-  Layout, MousePointerClick, TrendingUp, Target, Activity, Bot
+  Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
+  ClipboardList, CheckSquare, Edit3, FileJson
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
@@ -17,7 +18,62 @@ interface SettingsScreenProps {
   currentCreds: FyersCredentials;
 }
 
-type Tab = 'configs' | 'guide' | 'glossary' | 'review';
+type Tab = 'configs' | 'guide' | 'glossary' | 'review' | 'system';
+
+const DEFAULT_PROTOCOL: TradingSystemProtocol = {
+  "name": "Nifty Sniper: The Office Protocol",
+  "description": "Systematic intraday scalping protocol for Nifty 50 Options.",
+  "tags": [
+    "Time: 9:25-10:15",
+    "Target: 30 Pts",
+    "Zone Play"
+  ],
+  "steps": [
+    {
+      "title": "09:15 - 09:25 (The Download)",
+      "items": [
+        "Check Global cues & Pre-market settlement.",
+        "Mark Previous Day High (PDH) and Previous Day Low (PDL).",
+        "Wait for initial volatility to settle."
+      ]
+    },
+    {
+      "title": "09:25 - 09:45 (The Entry Window)",
+      "items": [
+        "Look for the 'Zone Play' setup.",
+        "Confirm direction with Option Chain Net Flow.",
+        "Wait for candle close above/below key level."
+      ]
+    },
+    {
+      "title": "10:15 AM (The Hard Stop)",
+      "items": [
+        "Close all active positions regardless of P&L.",
+        "No new trades after this time.",
+        "Journal the session."
+      ]
+    }
+  ],
+  "links": [],
+  "rules": [
+      "Max 2 Trades per day.",
+      "Risk max 2% of capital per trade.",
+      "Never trade against the 'Net Option Flow' trend."
+  ]
+};
+
+const renderSafeString = (val: any): string => {
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number') return String(val);
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'object') {
+        // Handle the specific error case where user might have objects with title/desc in items
+        if (val.title) return val.title;
+        if (val.description) return val.description;
+        return JSON.stringify(val);
+    }
+    return String(val);
+};
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = ({ 
   onBack, 
@@ -30,11 +86,42 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
+  
+  // Protocol State
+  const [protocolData, setProtocolData] = useState<TradingSystemProtocol>(() => {
+      try {
+          const saved = localStorage.getItem('user_trading_protocol');
+          return saved ? JSON.parse(saved) : DEFAULT_PROTOCOL;
+      } catch {
+          return DEFAULT_PROTOCOL;
+      }
+  });
+  const [isEditingProtocol, setIsEditingProtocol] = useState(false);
+  const [protocolJsonInput, setProtocolJsonInput] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const protocolFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+      if (isEditingProtocol) {
+          setProtocolJsonInput(JSON.stringify(protocolData, null, 2));
+      }
+  }, [isEditingProtocol, protocolData]);
 
   const handleSave = () => {
     onSave({ appId, accessToken, googleApiKey, bypassMarketHours, refreshInterval });
     onBack();
+  };
+
+  const handleSaveProtocol = () => {
+      try {
+          const parsed = JSON.parse(protocolJsonInput);
+          setProtocolData(parsed);
+          localStorage.setItem('user_trading_protocol', JSON.stringify(parsed));
+          setIsEditingProtocol(false);
+      } catch (e) {
+          alert("Invalid JSON format");
+      }
   };
 
   const handleReset = async () => {
@@ -88,6 +175,31 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     event.target.value = '';
   };
 
+  const handleProtocolFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const json = JSON.parse(e.target?.result as string);
+        // Loose validation
+        if (json.name || json.steps) {
+             setProtocolData(json);
+             setProtocolJsonInput(JSON.stringify(json, null, 2));
+             localStorage.setItem('user_trading_protocol', JSON.stringify(json));
+             alert("System Protocol imported successfully!");
+        } else {
+            alert("Invalid Protocol JSON. Ensure it has 'name' and 'steps' fields.");
+        }
+      } catch (err) {
+        alert("Error parsing JSON file.");
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-950 animate-in fade-in duration-300">
       <header className="flex-none glass-header z-10 pt-4 px-4 pb-0 flex flex-col gap-4">
@@ -117,11 +229,17 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             >
                 <SettingsIcon size={16} /> Configuration
             </button>
+             <button 
+                onClick={() => setActiveTab('system')}
+                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'system' ? 'border-rose-500 text-rose-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            >
+                <ClipboardList size={16} /> My System
+            </button>
             <button 
                 onClick={() => setActiveTab('guide')}
                 className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'guide' ? 'border-emerald-500 text-emerald-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
             >
-                <Layout size={16} /> Dashboard Guide
+                <Layout size={16} /> Guide
             </button>
             <button 
                 onClick={() => setActiveTab('glossary')}
@@ -211,6 +329,106 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     </button>
                 </section>
             </div>
+        )}
+
+        {activeTab === 'system' && (
+             <div className="max-w-4xl mx-auto space-y-6 animate-in slide-in-from-bottom-4 duration-300 pb-20">
+                 
+                 <div className="glass-panel p-6 rounded-xl relative overflow-hidden">
+                     <div className="flex justify-between items-start mb-6">
+                         <div>
+                             <h2 className="text-2xl font-black text-white">{renderSafeString(protocolData.name)}</h2>
+                             <p className="text-slate-400 text-sm mt-1">{renderSafeString(protocolData.description)}</p>
+                         </div>
+                         <div className="flex gap-2">
+                             <input type="file" ref={protocolFileInputRef} onChange={handleProtocolFileUpload} className="hidden" accept=".json"/>
+                             <button 
+                                 onClick={() => protocolFileInputRef.current?.click()}
+                                 className="p-2 rounded-lg border bg-slate-800 text-slate-400 border-white/10 hover:text-white transition-colors"
+                                 title="Import Protocol JSON"
+                             >
+                                 <Upload size={18} />
+                             </button>
+                             <button 
+                                 onClick={() => setIsEditingProtocol(!isEditingProtocol)}
+                                 className={`p-2 rounded-lg border transition-colors ${isEditingProtocol ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-white/10 hover:text-white'}`}
+                                 title={isEditingProtocol ? "Save Manual Edits" : "Edit JSON Manually"}
+                             >
+                                 {isEditingProtocol ? <Save size={18} /> : <Edit3 size={18} />}
+                             </button>
+                         </div>
+                     </div>
+
+                     {isEditingProtocol ? (
+                         <div className="space-y-4">
+                             <div className="bg-yellow-900/20 p-3 rounded border border-yellow-500/20 text-xs text-yellow-200 flex items-start gap-2">
+                                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                 <p>Edit your protocol JSON below. Ensure valid syntax.</p>
+                             </div>
+                             <textarea 
+                                 value={protocolJsonInput}
+                                 onChange={(e) => setProtocolJsonInput(e.target.value)}
+                                 className="w-full h-[500px] bg-slate-900 font-mono text-xs text-slate-300 p-4 rounded-lg border border-slate-700 focus:outline-none focus:border-indigo-500"
+                             />
+                             <div className="flex justify-end gap-3">
+                                 <button onClick={() => setIsEditingProtocol(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors text-sm">Cancel</button>
+                                 <button onClick={handleSaveProtocol} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors text-sm font-bold">Save Changes</button>
+                             </div>
+                         </div>
+                     ) : (
+                         <div className="space-y-8">
+                             {/* Tags */}
+                             <div className="flex flex-wrap gap-2">
+                                 {protocolData.tags?.map((tag, i) => (
+                                     <span key={i} className="px-3 py-1 rounded-full bg-slate-800/50 border border-white/10 text-xs font-bold text-blue-300 flex items-center gap-1">
+                                         <Zap size={10} className="text-yellow-400" /> {renderSafeString(tag)}
+                                     </span>
+                                 ))}
+                             </div>
+
+                             {/* Execution Timeline */}
+                             <div className="relative">
+                                 <div className="absolute left-3.5 top-2 bottom-2 w-0.5 bg-slate-800"></div>
+                                 <div className="space-y-8">
+                                     {protocolData.steps?.map((step, idx) => (
+                                         <div key={idx} className="relative pl-10">
+                                             <div className="absolute left-0 top-1 w-8 h-8 rounded-full bg-slate-900 border-2 border-slate-700 flex items-center justify-center z-10">
+                                                 <Clock size={14} className="text-slate-400" />
+                                             </div>
+                                             <h3 className="text-lg font-bold text-white mb-3">{renderSafeString(step.title)}</h3>
+                                             <ul className="space-y-2">
+                                                 {step.items.map((item, ii) => (
+                                                     <li key={ii} className="flex items-start gap-2 text-sm text-slate-300 bg-slate-800/30 p-2 rounded border border-white/5">
+                                                         <CheckSquare size={16} className="text-emerald-500 shrink-0 mt-0.5" />
+                                                         <span>{renderSafeString(item) || "N/A"}</span>
+                                                     </li>
+                                                 ))}
+                                             </ul>
+                                         </div>
+                                     ))}
+                                 </div>
+                             </div>
+
+                             {/* Rules */}
+                             {protocolData.rules && protocolData.rules.length > 0 && (
+                                 <div className="bg-rose-900/10 border border-rose-500/20 rounded-xl p-5">
+                                     <h3 className="text-rose-400 font-bold text-sm uppercase tracking-widest mb-3 flex items-center gap-2">
+                                         <ShieldCheck size={16} /> Cardinal Rules
+                                     </h3>
+                                     <ul className="space-y-2">
+                                         {protocolData.rules.map((rule, i) => (
+                                             <li key={i} className="text-sm text-slate-200 flex items-start gap-2">
+                                                 <div className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0"></div>
+                                                 {renderSafeString(rule)}
+                                             </li>
+                                         ))}
+                                     </ul>
+                                 </div>
+                             )}
+                         </div>
+                     )}
+                 </div>
+             </div>
         )}
 
         {activeTab === 'guide' && (

@@ -238,3 +238,18 @@ export interface AnalysisRecord {
     timeStr: string;
     signal: StrategySignal;
 }
+
+// Protocol Types
+export interface ProtocolStep { 
+  title: string; 
+  items: string[]; 
+}
+
+export interface TradingSystemProtocol {
+  name: string;
+  description?: string;
+  tags?: string[];
+  steps?: ProtocolStep[];
+  links?: string[];
+  rules?: string[];
+}
