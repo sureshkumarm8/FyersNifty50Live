@@ -69,9 +69,7 @@ const AdvancedChart: React.FC<{
         return `${x},${y}`;
     }).join(' ');
 
-    // Flow Bars (Centered at 50% height?) No, let's put them as bars from center line
-    // Or better: An Area chart at the bottom?
-    // Let's do a dual-axis visual. Price is Line. Flow is Bars.
+    // Flow Bars (Visualized as simple vertical lines or rects)
     
     return (
         <div className="relative w-full h-full select-none" style={{ height: `${height}px` }}>
@@ -142,39 +140,66 @@ const AdvancedChart: React.FC<{
     );
 };
 
-// --- History Mini Table ---
+// --- History Mini Table (Expanded with all columns) ---
 const HistorySnippet: React.FC<{ history: MarketSnapshot[] }> = ({ history }) => {
     // Show last 5 reversed
     const last5 = [...history].reverse().slice(0, 5);
 
     return (
-        <div className="w-full">
-            <table className="w-full text-xs text-left whitespace-nowrap">
-                <thead className="text-[9px] uppercase font-bold text-slate-500 border-b border-white/5">
+        <div className="w-full overflow-x-auto custom-scrollbar">
+            <table className="w-full text-xs text-center whitespace-nowrap border-collapse">
+                <thead className="text-[9px] uppercase font-bold text-slate-500 bg-slate-900/50">
                     <tr>
-                        <th className="pb-2 pl-2">Time</th>
-                        <th className="pb-2 text-right">Nifty</th>
-                        <th className="pb-2 text-right">Sent.</th>
-                        <th className="pb-2 text-right">Flow</th>
-                        <th className="pb-2 text-right pr-2">PCR</th>
+                        <th className="px-3 py-2 text-left sticky left-0 bg-slate-900/90 z-10 border-b border-white/5 shadow-[2px_0_5px_rgba(0,0,0,0.3)]">Time</th>
+                        <th className="px-2 py-2 border-b border-white/5">Nifty LTP</th>
+                        <th className="px-2 py-2 border-b border-white/5">Pts Chg</th>
+                        <th className="px-2 py-2 border-b border-white/5 border-l border-white/5">Overall Sent.</th>
+                        <th className="px-2 py-2 border-b border-white/5">Adv/Dec</th>
+                        <th className="px-2 py-2 border-b border-white/5">Stk Str</th>
+                        
+                        <th className="px-2 py-2 border-b border-white/5 border-l border-white/5">Call Str</th>
+                        <th className="px-2 py-2 border-b border-white/5">Put Str</th>
+                        <th className="px-2 py-2 border-b border-white/5">PCR</th>
+                        <th className="px-2 py-2 border-b border-white/5 bg-white/5">Opt Str</th>
+                        
+                        <th className="px-2 py-2 border-b border-white/5 border-l border-white/5">Calls Buy/Sell (M)</th>
+                        <th className="px-2 py-2 border-b border-white/5">Puts Buy/Sell (M)</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                     {last5.map((row, i) => (
-                        <tr key={row.timestamp || i} className="hover:bg-white/5 transition-colors">
-                            <td className="py-2 pl-2 font-mono text-slate-400">{row.time}</td>
-                            <td className="py-2 text-right font-mono font-medium text-white">{row.niftyLtp}</td>
-                            <td className={`py-2 text-right font-bold ${row.overallSent > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {row.overallSent > 0 ? '+' : ''}{Math.round(row.overallSent)}%
+                        <tr key={row.timestamp || i} className="hover:bg-white/5 transition-colors group">
+                            <td className="px-3 py-2 text-left font-mono text-slate-400 sticky left-0 bg-slate-950/80 backdrop-blur-sm group-hover:bg-slate-900/90 group-hover:text-blue-300 border-r border-white/5 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.3)]">
+                                {row.time}
                             </td>
-                            <td className={`py-2 text-right font-bold ${row.optionsSent > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {row.optionsSent > 0 ? '+' : ''}{Math.round(row.optionsSent)}%
+                            <td className="px-2 py-2 font-mono font-medium text-white">{formatNumber(row.niftyLtp)}</td>
+                            <td className={`px-2 py-2 font-mono font-bold ${row.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>
+                                {row.ptsChg > 0 ? '+' : ''}{row.ptsChg.toFixed(1)}
                             </td>
-                            <td className="py-2 text-right font-mono text-blue-200 pr-2">{row.pcr.toFixed(2)}</td>
+                            
+                            <td className="px-2 py-2 border-l border-white/5 font-bold bg-white/5">{formatPercent(row.overallSent)}</td>
+                            <td className="px-2 py-2 font-mono text-[10px]">
+                               <span className="text-bull font-bold">{row.adv}</span> / <span className="text-bear font-bold">{row.dec}</span>
+                            </td>
+                            <td className="px-2 py-2">{formatPercent(row.stockSent)}</td>
+                            
+                            <td className="px-2 py-2 border-l border-white/5 text-slate-300">{formatPercent(row.callSent)}</td>
+                            <td className="px-2 py-2 text-slate-300">{formatPercent(row.putSent)}</td>
+                            <td className={`px-2 py-2 font-mono font-bold ${row.pcr > 1 ? 'text-bull' : row.pcr < 0.7 ? 'text-bear' : 'text-blue-200'}`}>
+                                {row.pcr.toFixed(2)}
+                            </td>
+                            <td className="px-2 py-2 font-bold bg-white/5 border-l border-white/5">{formatPercent(row.optionsSent)}</td>
+                            
+                            <td className="px-2 py-2 border-l border-white/5 font-mono text-[10px] opacity-80">
+                               <span className="text-bull">{formatMillions(row.callsBuyQty)}</span> <span className="text-slate-600">/</span> <span className="text-bear">{formatMillions(row.callsSellQty)}</span>
+                            </td>
+                            <td className="px-2 py-2 font-mono text-[10px] opacity-80">
+                               <span className="text-bull">{formatMillions(row.putsBuyQty)}</span> <span className="text-slate-600">/</span> <span className="text-bear">{formatMillions(row.putsSellQty)}</span>
+                            </td>
                         </tr>
                     ))}
                     {last5.length === 0 && (
-                        <tr><td colSpan={5} className="py-4 text-center text-slate-600 italic">No data yet</td></tr>
+                        <tr><td colSpan={12} className="py-4 text-center text-slate-600 italic">No data yet</td></tr>
                     )}
                 </tbody>
             </table>
