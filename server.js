@@ -1,3 +1,4 @@
+
 import http from 'http';
 import { URL } from 'url';
 
@@ -73,6 +74,7 @@ const server = http.createServer(async (req, res) => {
      const symbol = reqUrl.searchParams.get('symbol');
      const range_from = reqUrl.searchParams.get('range_from');
      const range_to = reqUrl.searchParams.get('range_to');
+     const resolution = reqUrl.searchParams.get('resolution') || '1';
 
      if (!symbol || !range_from || !range_to) {
         res.writeHead(400);
@@ -82,9 +84,9 @@ const server = http.createServer(async (req, res) => {
 
      try {
        const encodedSymbol = encodeURIComponent(symbol);
-       const fyersUrl = `https://api.fyers.in/data-rest/v3/history?symbol=${encodedSymbol}&resolution=1&date_format=1&range_from=${range_from}&range_to=${range_to}&cont_flag=1`;
+       const fyersUrl = `https://api.fyers.in/data-rest/v3/history?symbol=${encodedSymbol}&resolution=${resolution}&date_format=1&range_from=${range_from}&range_to=${range_to}&cont_flag=1`;
        
-       console.log(`[Proxy] History Request: ${symbol}`);
+       console.log(`[Proxy] History Request: ${symbol} (${resolution})`);
 
        const fyersResponse = await fetch(fyersUrl, {
          method: 'GET',

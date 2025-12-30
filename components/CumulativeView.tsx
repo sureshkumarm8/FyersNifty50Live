@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState } from 'react';
-import { EnrichedFyersQuote, MarketSnapshot, ViewMode, StrategySignal } from '../types';
+import { EnrichedFyersQuote, MarketSnapshot, ViewMode, StrategySignal, SectorMetric } from '../types';
 import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, Play, CheckCircle } from 'lucide-react';
 
 interface CumulativeViewProps {
@@ -14,6 +14,7 @@ interface CumulativeViewProps {
   quantAnalysis?: StrategySignal | null;
   isQuantAnalyzing?: boolean;
   onRunQuantAnalysis?: () => void;
+  sectors?: SectorMetric[];
 }
 
 const formatValue = (val: number) => {
@@ -94,7 +95,8 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
     marketStatus,
     quantAnalysis,
     isQuantAnalyzing,
-    onRunQuantAnalysis
+    onRunQuantAnalysis,
+    sectors = []
 }) => {
   const [decisionWindow, setDecisionWindow] = useState<number>(5); // Default 5 mins
 
@@ -431,51 +433,32 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
            </div>
        </div>
 
-       {historyLog.length > 0 && (
-          <div className="glass-panel rounded-xl overflow-hidden">
-             <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
-                 <Clock size={16} className="text-blue-400" />
-                 <h3 className="text-xs font-bold text-blue-200 uppercase tracking-widest">Recent Pulse (Last 5 Mins)</h3>
-             </div>
-             <div className="overflow-x-auto custom-scrollbar">
-               <table className="w-full text-xs sm:text-sm whitespace-nowrap text-center">
-                  <thead className="bg-slate-900/30 text-slate-500 uppercase text-[10px] font-bold">
-                     <tr>
-                        <th className="px-3 py-2 text-left">Time</th>
-                        <th className="px-3 py-2">Nifty</th>
-                        <th className="px-3 py-2">Chg</th>
-                        <th className="px-3 py-2 border-l border-white/5">Over. Sent</th>
-                        <th className="px-3 py-2">Adv/Dec</th>
-                        <th className="px-3 py-2">Stk Str</th>
-                        <th className="px-3 py-2 border-l border-white/5">Call Str</th>
-                        <th className="px-3 py-2">Put Str</th>
-                        <th className="px-3 py-2">PCR</th>
-                        <th className="px-3 py-2 bg-white/5">Opt Str</th>
-                        <th className="px-3 py-2 border-l border-white/5">Calls Flow (M)</th>
-                        <th className="px-3 py-2">Puts Flow (M)</th>
-                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                     {historyLog.slice().reverse().slice(0, 5).map((snap, idx) => (
-                        <tr key={idx} className="hover:bg-white/5 transition-colors group">
-                           <td className="px-3 py-2 text-left font-mono text-slate-300 font-bold bg-slate-900/30">{snap.time}</td>
-                           <td className="px-3 py-2 font-mono text-slate-400">{formatNumber(snap.niftyLtp, 2)}</td>
-                           <td className={`px-3 py-2 font-mono font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>{snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg.toFixed(1)}</td>
-                           <td className={`px-3 py-2 border-l border-white/5 font-bold ${snap.overallSent >= 0 ? 'text-bull' : 'text-bear'}`}>{formatPercent(snap.overallSent)}</td>
-                           <td className="px-3 py-2 font-mono"><span className="text-bull">{snap.adv}</span>/<span className="text-bear">{snap.dec}</span></td>
-                           <td className="px-3 py-2">{formatPercent(snap.stockSent)}</td>
-                           <td className="px-3 py-2 border-l border-white/5">{formatPercent(snap.callSent)}</td>
-                           <td className="px-3 py-2">{formatPercent(snap.putSent)}</td>
-                           <td className={`px-3 py-2 font-mono font-bold ${snap.pcr > 1 ? 'text-bull' : snap.pcr < 0.7 ? 'text-bear' : 'text-blue-200'}`}>{snap.pcr.toFixed(2)}</td>
-                           <td className={`px-3 py-2 font-bold bg-white/5 ${snap.optionsSent >= 0 ? 'text-bull' : 'text-bear'}`}>{formatPercent(snap.optionsSent)}</td>
-                           <td className="px-3 py-2 border-l border-white/5 font-mono text-[10px] opacity-80"><span className="text-bull">{formatMillions(snap.callsBuyQty)}</span>/<span className="text-bear">{formatMillions(snap.callsSellQty)}</span></td>
-                           <td className="px-3 py-2 font-mono text-[10px] opacity-80"><span className="text-bull">{formatMillions(snap.putsBuyQty)}</span>/<span className="text-bear">{formatMillions(snap.putsSellQty)}</span></td>
-                        </tr>
-                     ))}
-                  </tbody>
-               </table>
-             </div>
-          </div>
+       {/* SECTOR HEATMAP BAR */}
+       {sectors.length > 0 && (
+           <div className="glass-panel rounded-xl p-4">
+                <div className="flex justify-between items-center mb-3">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <Activity size={14} /> Sector Performance (Weighted)
+                    </h3>
+                </div>
+                <div className="flex items-center gap-1 h-12 w-full rounded-lg overflow-hidden bg-slate-900/50">
+                    {sectors.map(sec => {
+                        const width = (sec.weight / 100) * 100; // Simplified scale
+                        const isBull = sec.change_p > 0;
+                        return (
+                            <div 
+                                key={sec.name} 
+                                style={{ width: `${width}%` }} 
+                                className={`h-full flex flex-col justify-center items-center relative group cursor-help border-r border-slate-950 ${isBull ? 'bg-emerald-500/20 hover:bg-emerald-500/40' : 'bg-rose-500/20 hover:bg-rose-500/40'} transition-all`}
+                                title={`${sec.name}: ${sec.change_p.toFixed(2)}%`}
+                            >
+                                <span className={`text-[10px] font-bold ${isBull ? 'text-emerald-400' : 'text-rose-400'}`}>{sec.name}</span>
+                                {width > 8 && <span className="text-[9px] text-slate-500">{sec.change_p.toFixed(2)}%</span>}
+                            </div>
+                        );
+                    })}
+                </div>
+           </div>
        )}
 
        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -516,49 +499,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
            </div>
        </div>
 
-       <div className="glass-panel rounded-xl overflow-hidden p-0">
-           <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center gap-2">
-               <Scale size={14} className="text-purple-400" />
-               <h3 className="text-[10px] font-bold text-purple-200 uppercase tracking-widest">Market Stats</h3>
-           </div>
-           <div className="overflow-x-auto custom-scrollbar">
-               <table className="w-full text-xs sm:text-sm whitespace-nowrap">
-                   <thead className="bg-slate-900/30 text-slate-500 uppercase text-[9px] font-bold">
-                       <tr>
-                           <th className="px-3 py-2 text-left sticky left-0 bg-slate-900 z-10">Segment</th>
-                           <th className="px-3 py-2 text-right text-bull-light">Buy Qty</th>
-                           <th className="px-3 py-2 text-right text-bear-light">Sell Qty</th>
-                           <th className="px-3 py-2 text-right">Net Qty</th>
-                           <th className="px-3 py-2 text-right">Sentiment</th>
-                       </tr>
-                   </thead>
-                   <tbody className="divide-y divide-white/5 font-mono text-xs">
-                       <tr className="hover:bg-white/5 transition-colors">
-                           <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Equity</td>
-                           <td className="px-3 py-2 text-right text-slate-300">{formatValue(stats.total_buy_qty)}</td>
-                           <td className="px-3 py-2 text-right text-slate-300">{formatValue(stats.total_sell_qty)}</td>
-                           <td className={`px-3 py-2 text-right font-bold ${stats.total_buy_qty - stats.total_sell_qty > 0 ? 'text-bull' : 'text-bear'}`}>{formatValue(stats.total_buy_qty - stats.total_sell_qty)}</td>
-                           <td className="px-3 py-2 text-right">{formatPercent(weightedLpDay)}</td>
-                       </tr>
-                       <tr className="hover:bg-white/5 transition-colors">
-                           <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Opt CE</td>
-                           <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsBuyQty) : '--'}</td>
-                           <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.callsSellQty) : '--'}</td>
-                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && (latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>{latestSnapshot ? formatValue(latestSnapshot.callsBuyQty - latestSnapshot.callsSellQty) : '--'}</td>
-                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && latestSnapshot.callSent > 0 ? 'text-bull' : 'text-bear'}`}>{latestSnapshot ? formatPercent(latestSnapshot.callSent) : '--'}</td>
-                       </tr>
-                        <tr className="hover:bg-white/5 transition-colors">
-                           <td className="px-3 py-2 font-bold text-slate-300 sticky left-0 bg-slate-900/90 backdrop-blur z-10 font-sans">Opt PE</td>
-                           <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsBuyQty) : '--'}</td>
-                           <td className="px-3 py-2 text-right text-slate-300">{latestSnapshot ? formatValue(latestSnapshot.putsSellQty) : '--'}</td>
-                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && (latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) > 0 ? 'text-bull' : 'text-bear'}`}>{latestSnapshot ? formatValue(latestSnapshot.putsBuyQty - latestSnapshot.putsSellQty) : '--'}</td>
-                           <td className={`px-3 py-2 text-right font-bold ${latestSnapshot && latestSnapshot.putSent > 0 ? 'text-bull' : 'text-bear'}`}>{latestSnapshot ? formatPercent(latestSnapshot.putSent) : '--'}</td>
-                       </tr>
-                   </tbody>
-               </table>
-           </div>
-       </div>
-
+       {/* Top Drivers/Draggers */}
        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 flex-1 min-h-0">
           <div className="glass-card rounded-xl overflow-hidden flex flex-col">
              <div className="p-3 border-b border-white/5 bg-bull/10 flex items-center gap-2">

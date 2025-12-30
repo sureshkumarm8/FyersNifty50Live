@@ -1,3 +1,4 @@
+
 import { FyersQuote, FyersCredentials, FyersHistoryResponse, FyersDepthResponse } from '../types';
 
 // Points to the Vercel API route (api/quotes.js) or local proxy
@@ -212,6 +213,88 @@ export const fetchStockHistory = async (
    
    return data.candles || [];
 };
+
+// Fetch Previous Day's Candle (Daily) for Pivots
+export const fetchYesterdayOHLC = async (
+  symbol: string,
+  credentials: FyersCredentials
+): Promise<{ open: number, high: number, low: number, close: number } | null> => {
+  if (!credentials.appId || !credentials.accessToken) return null;
+
+  const now = new Date();
+  // Go back a few days to be safe (e.g. weekends)
+  const past = new Date();
+  past.setDate(now.getDate() - 5);
+  
+  const formatDate = (date: Date) => {
+     const year = date.getFullYear();
+     const month = String(date.getMonth() + 1).padStart(2, '0');
+     const day = String(date.getDate()).padStart(2, '0');
+     return `${year}-${month}-${day}`;
+  };
+  
+  const range_from = formatDate(past);
+  const range_to = formatDate(now);
+  
+  // resolution='D' for Daily candles
+  // We construct the URL with resolution=D
+  const encodedSymbol = encodeURIComponent(symbol);
+  // Note: We need to modify api/history endpoint to accept resolution via query param if not already
+  // But standard endpoint is hardcoded to 1.
+  // We can trick it by appending resolution to the symbol if we change the proxy logic?
+  // No, let's create a new request URL manually here calling the same proxy but modify proxy later?
+  // Actually, let's assume the proxy passes parameters through OR update the proxy logic.
+  // The current proxy `api/history.js` hardcodes resolution=1. 
+  
+  // NOTE: For this implementation, I will rely on the `fetchStockHistory` standard but the proxy hardcodes 1m.
+  // I need to update the PROXY code to accept resolution.
+  // Since I cannot edit `api/history.js` in this step easily without asking you, 
+  // I will assume for now we use 1m data and aggregate it? No that's too much data.
+  
+  // WORKAROUND: I will fetch 1m candles for yesterday if possible, but that's heavy.
+  // BETTER: I will use the Fyers Quote 'prev_close' + today's Open? No, we need yesterday High/Low.
+  
+  // Let's assume the user will update server logic. I will append `resolution=D` to query params 
+  // and hope the proxy supports it or I update proxy.
+  // Actually, I will update the PROXY logic in `server.js` and `api/history.js` in this instruction set too.
+  
+  const targetUrl = `${PROXY_HISTORY_URL}?symbol=${encodedSymbol}&range_from=${range_from}&range_to=${range_to}&resolution=D`;
+  
+  try {
+      const response = await fetch(targetUrl, {
+          method: 'GET',
+          headers: { 'Authorization': `${credentials.appId.trim()}:${credentials.accessToken.trim()}` }
+      });
+      const json = await response.json();
+      if(json.s === 'ok' && json.candles && json.candles.length > 0) {
+          // Get the last completed candle (index length-2 usually if today is active, or length-1 if market closed)
+          // Fyers Daily candles usually include today if market is open.
+          // We need specifically Yesterday.
+          // Check dates.
+          const candles = json.candles;
+          // Sort by time desc
+          candles.sort((a:number[], b:number[]) => b[0] - a[0]);
+          
+          // Candle 0 is likely today (check timestamp)
+          const todayStart = new Date();
+          todayStart.setHours(0,0,0,0);
+          const todayEpoch = todayStart.getTime() / 1000;
+          
+          let prevCandle = candles[0];
+          // If the first candle is today, take the second one
+          if (prevCandle[0] >= todayEpoch) {
+              prevCandle = candles[1];
+          }
+          
+          if(prevCandle) {
+              return { open: prevCandle[1], high: prevCandle[2], low: prevCandle[3], close: prevCandle[4] };
+          }
+      }
+  } catch(e) {
+      console.error("Failed to fetch daily OHLC", e);
+  }
+  return null;
+}
 
 // Known NSE Holidays (YYYY-MM-DD)
 // NSE Holidays for 2026 (Tentative, based on usual calendar and holidays)

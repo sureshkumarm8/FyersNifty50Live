@@ -1,5 +1,4 @@
 
-
 export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant' | 'sniper';
 
 export interface FyersCredentials {
@@ -154,6 +153,7 @@ export interface EnrichedFyersQuote extends FyersQuote {
   // Market Impact Logic
   weight?: number;            // Nifty 50 Weightage (%)
   index_contribution?: number; // (Change% * Weight) - Rough impact score
+  sector?: string;
 }
 
 export interface MarketSnapshot {
@@ -237,6 +237,9 @@ export interface AnalysisRecord {
     timestamp: number;
     timeStr: string;
     signal: StrategySignal;
+    entryLtp?: number;
+    result?: 'WIN' | 'LOSS' | 'NEUTRAL' | 'PENDING';
+    exitLtp?: number; 
 }
 
 // Protocol Types
@@ -270,4 +273,26 @@ export interface SniperAnalysis {
         rule: string;
         status: "PASS" | "FAIL";
     }[];
+}
+
+// New Structural Context Types
+export interface SectorMetric {
+  name: string;
+  weight: number;
+  change_p: number; // Weighted Change
+  contribution: number;
+  bullish_stocks: number;
+  bearish_stocks: number;
+}
+
+export interface PivotPoints {
+  pivot: number;
+  r1: number;
+  s1: number;
+  r2: number;
+  s2: number;
+  cpr_bc: number;
+  cpr_tc: number;
+  dayHigh?: number;
+  dayLow?: number;
 }

@@ -5,7 +5,7 @@ import {
   Crosshair, Zap, TrendingUp, TrendingDown, 
   AlertTriangle, RefreshCw, Shield, 
   BrainCircuit, BarChart2, Layers, Activity,
-  History, Eye, Clock, Trash2, Radio
+  History, Eye, Clock, Trash2, Radio, CheckCircle2, XCircle
 } from 'lucide-react';
 
 interface AIQuantDeckProps {
@@ -215,6 +215,7 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
                                 <th className="px-5 py-3">Signal</th>
                                 <th className="px-5 py-3">Confidence</th>
                                 <th className="px-5 py-3">Strategy</th>
+                                <th className="px-5 py-3">Result (15m)</th>
                                 <th className="px-5 py-3 hidden md:table-cell">Reason</th>
                                 <th className="px-5 py-3 text-right">Action</th>
                             </tr>
@@ -237,6 +238,12 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
                                         </div>
                                     </td>
                                     <td className="px-5 py-3 text-white font-medium">{rec.signal.suggested_trade.strategy_type.replace(/_/g, ' ')}</td>
+                                    <td className="px-5 py-3">
+                                        {rec.result === 'WIN' && <span className="flex items-center gap-1 text-emerald-400 text-xs font-bold"><CheckCircle2 size={12}/> WON</span>}
+                                        {rec.result === 'LOSS' && <span className="flex items-center gap-1 text-rose-400 text-xs font-bold"><XCircle size={12}/> LOSS</span>}
+                                        {rec.result === 'NEUTRAL' && <span className="text-slate-500 text-xs">-</span>}
+                                        {(!rec.result || rec.result === 'PENDING') && <span className="text-slate-600 text-[10px] italic">Evaluating...</span>}
+                                    </td>
                                     <td className="px-5 py-3 text-slate-400 text-xs hidden md:table-cell max-w-xs truncate" title={rec.signal.primary_reason}>
                                         {rec.signal.primary_reason}
                                     </td>

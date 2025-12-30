@@ -11,9 +11,9 @@ import { SettingsScreen } from './components/SettingsScreen';
 import { AIView } from './components/AIView';
 import { AIQuantDeck } from './components/AIQuantDeck';
 import { SniperScope } from './components/SniperScope';
-import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal } from './types';
-import { fetchQuotes, getNiftyOptionSymbols } from './services/fyersService';
-import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL } from './constants';
+import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal, SectorMetric, PivotPoints } from './types';
+import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
+import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
 import { dbService } from './services/db';
 import { downloadCSV } from './services/csv';
 
@@ -36,6 +36,9 @@ const App: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<number>(0);
 
   const [stocks, setStocks] = useState<EnrichedFyersQuote[]>([]);
+  const [sectors, setSectors] = useState<SectorMetric[]>([]); // New Sector State
+  const [pivots, setPivots] = useState<PivotPoints | null>(null); // New Pivot State
+
   const [optionQuotes, setOptionQuotes] = useState<EnrichedFyersQuote[]>([]);
   const [niftyLtp, setNiftyLtp] = useState<number | null>(null);
   
@@ -60,6 +63,7 @@ const App: React.FC = () => {
   const initialOptionsRef = useRef<Record<string, FyersQuote>>({});
   
   const prevNiftyLtpRef = useRef<number | null>(null);
+  const didFetchPivots = useRef(false);
 
   // --- 1. Database Hydration (On Mount) ---
   useEffect(() => {
@@ -108,9 +112,40 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // --- 1.2 Pivot Calculation (One-time) ---
+  useEffect(() => {
+     const initPivots = async () => {
+        if (!credentials.appId || !credentials.accessToken || didFetchPivots.current) return;
+        didFetchPivots.current = true;
+        
+        try {
+            const data = await fetchYesterdayOHLC(NIFTY_INDEX_SYMBOL, credentials);
+            if (data) {
+                const { high: h, low: l, close: c } = data;
+                const p = (h + l + c) / 3;
+                const bc = (h + l) / 2;
+                const tc = (p - bc) + p;
+                
+                setPivots({
+                    pivot: p,
+                    r1: (2 * p) - l,
+                    s1: (2 * p) - h,
+                    r2: p + (h - l),
+                    s2: p - (h - l),
+                    cpr_bc: bc,
+                    cpr_tc: tc,
+                    dayHigh: h,
+                    dayLow: l
+                });
+            }
+        } catch (e) {
+            console.error("Failed to calc pivots", e);
+        }
+     };
+     initPivots();
+  }, [credentials]);
+
   // --- 2. Database Persistence (Debounced) ---
-  
-  // Save Snapshots
   useEffect(() => {
       if (!isDbLoaded || historyLog.length === 0) return;
       
@@ -120,17 +155,11 @@ const App: React.FC = () => {
       }
   }, [historyLog, isDbLoaded]);
 
-  // Save Session Data
   useEffect(() => {
     if (!isDbLoaded) return;
-    
-    // Increased timeout to 8 seconds to prevent rapid overwrites during dual-fetch (stocks + options)
     const timer = setTimeout(() => {
-        // Saving 150+ items can be heavy, do it in a non-blocking way if possible
         const entries = Object.entries(sessionHistory);
         if(entries.length === 0) return;
-
-        // Save sequentially or in chunks to avoid locking UI
         entries.forEach(([symbol, candlesVal]) => {
             const candles = candlesVal as SessionCandle[];
             if (candles && candles.length > 0) {
@@ -138,7 +167,6 @@ const App: React.FC = () => {
             }
         });
     }, 8000); 
-
     return () => clearTimeout(timer);
   }, [sessionHistory, isDbLoaded]);
 
@@ -169,7 +197,7 @@ const App: React.FC = () => {
       prevViewModeRef.current = viewMode;
     }
     setViewMode(mode);
-    setSelectedStock(null); // Close overlay when navigation changes
+    setSelectedStock(null); 
   };
 
   const handleSort = (field: SortField) => {
@@ -232,9 +260,7 @@ const App: React.FC = () => {
       return currentData.map(curr => {
         const prev = prevRef.current[curr.symbol];
         
-        // Load initial data from session history if available, otherwise set it
         if (!initialRef.current[curr.symbol]) {
-           // If we have history from DB, use the first candle
            const sessionStartData = sessionHistory[curr.symbol]?.[0];
            if(sessionStartData) {
               initialRef.current[curr.symbol] = {
@@ -292,11 +318,12 @@ const App: React.FC = () => {
             }
         }
         
-        let weight, index_contribution;
+        let weight, index_contribution, sector;
         if (isStock) {
             const symbolKey = curr.short_name || curr.symbol.replace('NSE:', '').replace('-EQ', '');
             weight = NIFTY_WEIGHTAGE[symbolKey] || 0.1; 
             index_contribution = (lp_chg_day_p || 0) * weight;
+            sector = SECTOR_MAPPING[symbolKey] || 'OTHER';
         }
 
         prevRef.current[curr.symbol] = curr;
@@ -316,10 +343,60 @@ const App: React.FC = () => {
           lp_chg_1m_p,
           lp_chg_day_p,
           weight,
-          index_contribution
+          index_contribution,
+          sector
         };
       });
   };
+
+  const calculateSectors = (stocks: EnrichedFyersQuote[]) => {
+      const sectMap: Record<string, SectorMetric> = {};
+      
+      stocks.forEach(s => {
+          const name = s.sector || 'OTHER';
+          if (!sectMap[name]) {
+              sectMap[name] = { name, weight: 0, change_p: 0, contribution: 0, bullish_stocks: 0, bearish_stocks: 0 };
+          }
+          const m = sectMap[name];
+          const w = s.weight || 0;
+          m.weight += w;
+          m.contribution += (s.index_contribution || 0);
+          if ((s.lp_chg_day_p || 0) > 0) m.bullish_stocks++;
+          else m.bearish_stocks++;
+      });
+
+      return Object.values(sectMap).map(m => ({
+          ...m,
+          change_p: m.weight > 0 ? m.contribution / m.weight : 0
+      })).sort((a,b) => b.contribution - a.contribution);
+  };
+
+  const runFeedbackLoop = useCallback((currentLtp: number) => {
+      setQuantHistory(prev => {
+          const now = Date.now();
+          let updated = false;
+          const newHistory = prev.map(record => {
+               // Only grade if pending and older than 15 mins
+               if (!record.result && (now - record.timestamp > 900000)) { // 15 mins
+                   updated = true;
+                   let result: 'WIN' | 'LOSS' | 'NEUTRAL' = 'NEUTRAL';
+                   const entry = record.entryLtp || currentLtp; // Fallback
+                   
+                   if (record.signal.signal === 'LONG') {
+                       if (currentLtp > entry + 5) result = 'WIN';
+                       else if (currentLtp < entry - 5) result = 'LOSS';
+                   } else if (record.signal.signal === 'SHORT') {
+                       if (currentLtp < entry - 5) result = 'WIN';
+                       else if (currentLtp > entry + 5) result = 'LOSS';
+                   }
+
+                   return { ...record, result, exitLtp: currentLtp };
+               }
+               return record;
+          });
+          return updated ? newHistory : prev;
+      });
+  }, []);
 
   const refreshData = useCallback(async () => {
     if (!credentials.appId || !credentials.accessToken || !isDbLoaded) return;
@@ -341,13 +418,8 @@ const App: React.FC = () => {
 
         if (!isWeekday || !isOpen) {
             setMarketStatusMsg("Market Closed (09:00 - 15:45 IST)");
-            // FIX: Do not return early. Allow fetch to proceed to populate static data.
-            // Only stop loading spinner if we already have data to prevent flicker, 
-            // otherwise let it run to populate initial state.
             if (stocks.length > 0) {
                setIsLoading(false);
-               // We can choose to return here to stop polling if data is loaded,
-               // but if user just opened app, stocks is empty, so we must fetch once.
                return; 
             }
         }
@@ -365,6 +437,13 @@ const App: React.FC = () => {
       setStocks(enrichedStocks);
       updateSessionHistory(enrichedStocks);
 
+      // Calculate Sectors
+      const sectorMetrics = calculateSectors(enrichedStocks);
+      setSectors(sectorMetrics);
+      
+      // Run Feedback Loop
+      if (niftyLtpVal > 0) runFeedbackLoop(niftyLtpVal);
+
       // --- Option Chain Logic ---
       if (niftyLtpVal > 0) {
           const optionSymbols = getNiftyOptionSymbols(niftyLtpVal);
@@ -373,7 +452,7 @@ const App: React.FC = () => {
           setOptionQuotes(enrichedOptions);
           updateSessionHistory(enrichedOptions);
           
-          // --- Market Snapshot for History Log ---
+          // --- Market Snapshot ---
           const now = new Date();
           const timeStr = now.toLocaleTimeString('en-IN', { hour12: false });
           const prevLtp = prevNiftyLtpRef.current || niftyLtpVal;
@@ -465,7 +544,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [credentials, isDbLoaded, historyLog, sessionHistory, stocks.length]); // Added stocks.length dependency for check
+  }, [credentials, isDbLoaded, historyLog, sessionHistory, stocks.length, runFeedbackLoop]); // Added runFeedbackLoop
 
   // Stable Interval Logic
   const refreshDataRef = useRef(refreshData);
@@ -497,7 +576,6 @@ const App: React.FC = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey });
       
-      // Prepare Context
       const last15Mins = historyLog.slice(-15);
       const latest = last15Mins[last15Mins.length - 1];
       
@@ -517,7 +595,8 @@ const App: React.FC = () => {
             net_put_flow: latest?.putsBuyQty - latest?.putsSellQty
          },
          trend_history_last_15m: last15Mins.map(s => ({ t: s.time, ltp: s.niftyLtp, sent: s.overallSent })),
-         top_flow_stocks: topFlow
+         top_flow_stocks: topFlow,
+         pivot_levels: pivots ? `Pivot:${pivots.pivot}, R1:${pivots.r1}, S1:${pivots.s1}` : 'Unavailable'
       });
 
       const systemInstruction = `
@@ -527,6 +606,7 @@ const App: React.FC = () => {
         1. "overall_sentiment_weighted" is the most important metric. > 20 is Bullish, < -20 is Bearish.
         2. "option_sentiment" confirms the trend. If Divergence exists (Price Up, Option Sent Down), signal caution.
         3. PCR > 1.2 is Oversold/Support (Bullish), < 0.6 is Overbought/Resistance (Bearish) usually, but check trend.
+        4. Check Pivot levels. Buying below S1 is Contrarian. Buying above R1 is breakout.
         
         OUTPUT FORMAT:
         Return ONLY valid JSON matching this schema:
@@ -566,31 +646,29 @@ const App: React.FC = () => {
           id: Date.now().toString(),
           timestamp: Date.now(),
           timeStr: new Date().toLocaleTimeString(),
-          signal: result
+          signal: result,
+          entryLtp: niftyLtp || 0
       };
 
       setQuantAnalysis(result);
       setQuantHistory(prev => [newRecord, ...prev]);
 
     } catch (e: any) {
-      setQuantError(e.message);
+        setQuantError(e.message);
     } finally {
-      setIsQuantAnalyzing(false);
+        setIsQuantAnalyzing(false);
     }
-  }, [credentials.googleApiKey, isQuantAnalyzing, historyLog, stocks, niftyLtp]);
+  }, [credentials.googleApiKey, isQuantAnalyzing, historyLog, stocks, niftyLtp, pivots]);
 
   // --- Auto-Run Quant Analysis (Every 5 Mins) ---
   useEffect(() => {
-      // Don't auto-run if manual is running or data isn't ready
       if (!credentials.googleApiKey || historyLog.length === 0 || isQuantAnalyzing) return;
 
       const lastRecord = quantHistory.length > 0 ? quantHistory[0] : null;
       const lastTime = lastRecord ? lastRecord.timestamp : 0;
       const now = Date.now();
       
-      // Check if 5 minutes have passed since last scan
       if (now - lastTime >= 300000) { 
-          // Market Hours Check (09:15 - 15:30)
           const date = new Date();
           const t = date.getHours() * 100 + date.getMinutes();
           const isMarketHours = t >= 915 && t <= 1530;
@@ -777,6 +855,7 @@ const App: React.FC = () => {
                   quantAnalysis={quantAnalysis}
                   isQuantAnalyzing={isQuantAnalyzing}
                   onRunQuantAnalysis={runQuantAnalysis}
+                  sectors={sectors}
                />
             </div>
         )}
@@ -872,6 +951,7 @@ const App: React.FC = () => {
                     niftyLtp={niftyLtp}
                     stocks={stocks}
                     apiKey={credentials.googleApiKey}
+                    pivots={pivots}
                 />
             </div>
         )}

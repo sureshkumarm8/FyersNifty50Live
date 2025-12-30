@@ -1,14 +1,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
-import { MarketSnapshot, EnrichedFyersQuote, TradingSystemProtocol, SniperAnalysis } from '../types';
-import { Crosshair, ShieldAlert, CheckCircle, XCircle, Search, Target, Zap, Activity, Play, Lock, AlertTriangle } from 'lucide-react';
+import { MarketSnapshot, EnrichedFyersQuote, TradingSystemProtocol, SniperAnalysis, PivotPoints } from '../types';
+import { Crosshair, ShieldAlert, CheckCircle, XCircle, Search, Target, Zap, Activity, Play, Lock, AlertTriangle, Volume2 } from 'lucide-react';
 
 interface SniperScopeProps {
   snapshot: MarketSnapshot;
   niftyLtp: number | null;
   stocks: EnrichedFyersQuote[]; // Passed for breadth/heavyweight context
   apiKey?: string;
+  pivots: PivotPoints | null;
 }
 
 const DEFAULT_PROTOCOL: TradingSystemProtocol = {
@@ -17,11 +18,12 @@ const DEFAULT_PROTOCOL: TradingSystemProtocol = {
     rules: []
 };
 
-export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, stocks, apiKey }) => {
+export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, stocks, apiKey, pivots }) => {
   const [protocol, setProtocol] = useState<TradingSystemProtocol>(DEFAULT_PROTOCOL);
   const [isScanning, setIsScanning] = useState(false);
   const [analysis, setAnalysis] = useState<SniperAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   useEffect(() => {
     const saved = localStorage.getItem('user_trading_protocol');
@@ -33,6 +35,14 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
       }
     }
   }, []);
+
+  // Audio Announce
+  const announce = (text: string) => {
+     if (!soundEnabled || !window.speechSynthesis) return;
+     const utterance = new SpeechSynthesisUtterance(text);
+     utterance.rate = 1.0;
+     window.speechSynthesis.speak(utterance);
+  };
 
   const runSniperScan = async () => {
     if (!apiKey) {
@@ -65,7 +75,14 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
             option_flow_net: (snapshot.callsBuyQty - snapshot.callsSellQty) - (snapshot.putsBuyQty - snapshot.putsSellQty),
             pcr: snapshot.pcr,
             heavyweights_status: heavyweights,
-            momentum_1m: snapshot.stockSent // proxy for short term momentum
+            momentum_1m: snapshot.stockSent,
+            pivot_structure: pivots ? {
+                pivot: pivots.pivot,
+                r1: pivots.r1,
+                s1: pivots.s1,
+                cpr: `${pivots.cpr_bc}-${pivots.cpr_tc}`,
+                location: niftyLtp > pivots.r1 ? "ABOVE_R1" : niftyLtp < pivots.s1 ? "BELOW_S1" : "INSIDE_RANGE"
+            } : 'Not Available'
         };
 
         const systemInstruction = `
@@ -79,10 +96,10 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
 
             TASK:
             1. Check the 'current_time' against protocol steps. Which step are we in?
-            2. Check if market conditions (Sentiment, Flow, PCR, Heavyweights) match the protocol's entry criteria.
+            2. Check if market conditions (Sentiment, Flow, PCR, Heavyweights, Pivot Structure) match the protocol's entry criteria.
             3. Check if any "Cardinal Rules" are being violated.
             4. If conditions align, calculate trade parameters (Entry, SL, Targets) based on Nifty LTP.
-               - Stop Loss should be logical (e.g., 20-30 pts away or below support).
+               - Stop Loss should be logical (e.g., 20-30 pts away or below support like S1/Pivot).
                - Risk/Reward minimum 1:1.5.
 
             OUTPUT JSON SCHEMA:
@@ -116,6 +133,15 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
         const result = JSON.parse(response.text || "{}");
         setAnalysis(result);
 
+        // TTS
+        if (result.decision === 'EXECUTE') {
+            announce(`Sniper Triggered. Buy ${result.trade_setup.direction}. Stop Loss ${result.trade_setup.stop_loss}`);
+        } else if (result.decision === 'ABORT') {
+            announce("Scan complete. Protocol Aborted.");
+        } else {
+            announce("Conditions not met. Waiting.");
+        }
+
     } catch (e: any) {
         setError(e.message || "Scan failed");
     } finally {
@@ -138,9 +164,14 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
                    <Crosshair className="text-red-500 animate-pulse" size={32} /> 
                    SNIPER <span className="text-red-500">SCOPE</span>
                </h1>
-               <p className="text-xs text-slate-400 font-mono mt-1">
-                   Protocol-Driven Execution Engine
-               </p>
+               <div className="flex items-center gap-3 mt-1">
+                   <p className="text-xs text-slate-400 font-mono">
+                       Protocol-Driven Execution Engine
+                   </p>
+                   <button onClick={() => setSoundEnabled(!soundEnabled)} className={`p-1 rounded ${soundEnabled ? 'text-green-400 bg-green-900/20' : 'text-slate-500 bg-slate-800'}`}>
+                       <Volume2 size={12} />
+                   </button>
+               </div>
            </div>
            
            <div className="text-right">
@@ -237,6 +268,18 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
             {/* Right: The Target Solution */}
             <div className="flex flex-col gap-4">
                 
+                {/* Pivot Structure Context */}
+                {pivots && (
+                    <div className="glass-panel p-3 rounded-xl flex justify-between items-center bg-slate-900/40">
+                         <div className="text-xs font-bold text-slate-500 uppercase">Structure</div>
+                         <div className="flex gap-4 text-xs font-mono">
+                             <span className="text-slate-400">S1: <span className="text-white">{Math.round(pivots.s1)}</span></span>
+                             <span className="text-blue-400">P: <span className="text-white">{Math.round(pivots.pivot)}</span></span>
+                             <span className="text-slate-400">R1: <span className="text-white">{Math.round(pivots.r1)}</span></span>
+                         </div>
+                    </div>
+                )}
+
                 {analysis ? (
                     <div className="flex-1 flex flex-col gap-4 animate-in slide-in-from-right duration-500">
                         

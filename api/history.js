@@ -1,3 +1,4 @@
+
 export default async function handler(request, response) {
   // CORS configuration
   response.setHeader('Access-Control-Allow-Credentials', true);
@@ -12,7 +13,7 @@ export default async function handler(request, response) {
     return response.status(200).end();
   }
 
-  const { symbol, range_from, range_to } = request.query;
+  const { symbol, range_from, range_to, resolution } = request.query;
   const authHeader = request.headers['authorization'];
 
   if (!authHeader) {
@@ -23,10 +24,12 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: 'Missing required parameters (symbol, range_from, range_to)' });
   }
 
+  const resVal = resolution || '1'; // Default to 1m if not specified
+
   try {
     const encodedSymbol = encodeURIComponent(symbol);
     // resolution=1 (1 minute), date_format=1 (epoch)
-    const fyersUrl = `https://api.fyers.in/data-rest/v3/history?symbol=${encodedSymbol}&resolution=1&date_format=1&range_from=${range_from}&range_to=${range_to}&cont_flag=1`;
+    const fyersUrl = `https://api.fyers.in/data-rest/v3/history?symbol=${encodedSymbol}&resolution=${resVal}&date_format=1&range_from=${range_from}&range_to=${range_to}&cont_flag=1`;
     
     const fetchResponse = await fetch(fyersUrl, {
       method: 'GET',
