@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode, StrategySignal, SectorMetric } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, Play, CheckCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, Play, CheckCircle, ArrowUp, ArrowDown, Minus, BarChart3, ListFilter } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
@@ -30,51 +30,155 @@ const formatPercent = (num: number) => {
     const isPos = num > 0;
     const isNeg = num < 0;
     const colorClass = isPos ? 'text-bull text-glow-green' : isNeg ? 'text-bear text-glow-red' : 'text-slate-400';
-    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{num.toFixed(1)}%</span>;
+    return <span className={`font-mono font-bold ${colorClass}`}>{isPos ? '+' : ''}{Math.abs(num).toFixed(1)}%</span>;
 };
 const formatMillions = (num: number) => {
     const val = num / 1000000;
     return `${val.toFixed(2)}M`;
 };
 
+// --- Advanced Chart Component ---
+const AdvancedChart: React.FC<{ 
+    data: MarketSnapshot[]; 
+    width?: string; 
+    height?: number 
+}> = ({ data, width = "100%", height = 160 }) => {
+    if (data.length < 2) return <div className={`h-[${height}px] w-full bg-slate-800/20 rounded flex items-center justify-center text-xs text-slate-600`}>Insufficient Data</div>;
 
-// --- Sparkline Component ---
-const Sparkline: React.FC<{ data: number[]; color: string; height?: number }> = ({ data, color, height = 40 }) => {
-    if (data.length < 2) return <div className={`h-[${height}px] w-full bg-slate-800/20 rounded`}></div>;
+    // 1. Prepare Data Series
+    const prices = data.map(d => d.niftyLtp);
+    const flows = data.map(d => d.optionsSent); // Net Option Flow % (-100 to 100)
     
-    const max = Math.max(...data, 0.1);
-    const min = Math.min(...data, -0.1);
-    const range = max - min;
-    const width = 100;
+    // 2. Calculate Scales (Normalize to 0-100 relative to SVG height)
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const priceRange = maxPrice - minPrice || 1;
+
+    // Flow is usually -100 to 100, but we scale based on max magnitude seen to keep it visible
+    const maxFlowMag = Math.max(...flows.map(Math.abs), 10); // Min magnitude 10 to avoid blown up noise
     
-    const points = data.map((val, i) => {
-        const x = (i / (data.length - 1)) * width;
-        const y = height - ((val - min) / range) * height; 
+    // 3. Generate SVG Paths
+    const pointsCount = data.length;
+    const stepX = 100 / (pointsCount - 1); // Percent width per step
+
+    // Price Line Points
+    const pricePoints = prices.map((p, i) => {
+        const x = i * stepX;
+        // Invert Y (0 is top)
+        const y = 100 - ((p - minPrice) / priceRange) * 80 - 10; // Keep 10% padding top/bottom
         return `${x},${y}`;
     }).join(' ');
 
+    // Flow Bars (Centered at 50% height?) No, let's put them as bars from center line
+    // Or better: An Area chart at the bottom?
+    // Let's do a dual-axis visual. Price is Line. Flow is Bars.
+    
     return (
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible preserve-3d">
-            <polyline
-                fill="none"
-                stroke={color}
-                strokeWidth="2"
-                points={points}
-                vectorEffect="non-scaling-stroke"
-                className="drop-shadow-md"
-            />
-            {min < 0 && max > 0 && (
-                <line 
-                    x1="0" 
-                    y1={height - ((0 - min) / range) * height} 
-                    x2="100" 
-                    y2={height - ((0 - min) / range) * height} 
-                    stroke="rgba(255,255,255,0.1)" 
-                    strokeWidth="1" 
-                    strokeDasharray="2" 
+        <div className="relative w-full h-full select-none" style={{ height: `${height}px` }}>
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full overflow-visible">
+                {/* Defs for Gradients */}
+                <defs>
+                    <linearGradient id="bullGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
+                        <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+                    </linearGradient>
+                    <linearGradient id="bearGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#ef4444" stopOpacity="0.3" />
+                        <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
+                    </linearGradient>
+                </defs>
+
+                {/* Zero Line for Flow (Approx middle if using separate scale, but here let's put it at bottom overlay) */}
+                <line x1="0" y1="50" x2="100" y2="50" stroke="rgba(255,255,255,0.05)" strokeWidth="0.5" strokeDasharray="2" />
+
+                {/* Flow Bars (Visualized as simple vertical lines or rects) */}
+                {flows.map((f, i) => {
+                    const x = i * stepX;
+                    const heightPercent = (Math.abs(f) / maxFlowMag) * 40; // Max 40% height
+                    const isPos = f >= 0;
+                    // Start from bottom (100) up
+                    return (
+                        <rect 
+                            key={i}
+                            x={x - (stepX/2)*0.8} 
+                            y={100 - heightPercent} 
+                            width={Math.max(stepX * 0.8, 0.5)} 
+                            height={heightPercent} 
+                            fill={isPos ? '#10b981' : '#ef4444'} 
+                            opacity="0.3"
+                            rx="0.5"
+                        />
+                    );
+                })}
+
+                {/* Price Line Shadow */}
+                <polyline 
+                    points={pricePoints} 
+                    fill="none" 
+                    stroke="rgba(0,0,0,0.5)" 
+                    strokeWidth="4" 
+                    className="drop-shadow-sm"
                 />
-            )}
-        </svg>
+                {/* Price Line Main */}
+                <polyline 
+                    points={pricePoints} 
+                    fill="none" 
+                    stroke="url(#lineGradient)" 
+                    strokeWidth="2" 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round"
+                    className="text-blue-400"
+                    style={{ stroke: 'currentColor' }}
+                />
+                
+                {/* End Dot */}
+                <circle cx="100" cy={100 - ((prices[prices.length-1] - minPrice) / priceRange) * 80 - 10} r="1.5" fill="#fff" className="animate-pulse" />
+            </svg>
+            
+            {/* Labels Overlay */}
+            <div className="absolute top-1 left-2 text-[9px] text-blue-300/80 font-mono bg-slate-950/50 px-1 rounded">Price</div>
+            <div className="absolute bottom-1 left-2 text-[9px] text-slate-500 font-mono">Flow Strength</div>
+        </div>
+    );
+};
+
+// --- History Mini Table ---
+const HistorySnippet: React.FC<{ history: MarketSnapshot[] }> = ({ history }) => {
+    // Show last 5 reversed
+    const last5 = [...history].reverse().slice(0, 5);
+
+    return (
+        <div className="w-full">
+            <table className="w-full text-xs text-left whitespace-nowrap">
+                <thead className="text-[9px] uppercase font-bold text-slate-500 border-b border-white/5">
+                    <tr>
+                        <th className="pb-2 pl-2">Time</th>
+                        <th className="pb-2 text-right">Nifty</th>
+                        <th className="pb-2 text-right">Sent.</th>
+                        <th className="pb-2 text-right">Flow</th>
+                        <th className="pb-2 text-right pr-2">PCR</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                    {last5.map((row, i) => (
+                        <tr key={row.timestamp || i} className="hover:bg-white/5 transition-colors">
+                            <td className="py-2 pl-2 font-mono text-slate-400">{row.time}</td>
+                            <td className="py-2 text-right font-mono font-medium text-white">{row.niftyLtp}</td>
+                            <td className={`py-2 text-right font-bold ${row.overallSent > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {row.overallSent > 0 ? '+' : ''}{Math.round(row.overallSent)}%
+                            </td>
+                            <td className={`py-2 text-right font-bold ${row.optionsSent > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {row.optionsSent > 0 ? '+' : ''}{Math.round(row.optionsSent)}%
+                            </td>
+                            <td className="py-2 text-right font-mono text-blue-200 pr-2">{row.pcr.toFixed(2)}</td>
+                        </tr>
+                    ))}
+                    {last5.length === 0 && (
+                        <tr><td colSpan={5} className="py-4 text-center text-slate-600 italic">No data yet</td></tr>
+                    )}
+                </tbody>
+            </table>
+        </div>
     );
 };
 
@@ -291,10 +395,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
   const momentumNet = stats.weightedBuyMomemtum - stats.weightedSellMomentum;
   const weightedLpDay = stats.totalWeight > 0 ? stats.weighted_lp_day / stats.totalWeight : 0;
 
-  const sparkData = historyLog.slice(-30);
-  const flowData = sparkData.map(s => (s.callsBuyQty - s.callsSellQty) - (s.putsBuyQty - s.putsSellQty));
-  const trendData = sparkData.map(s => s.overallSent);
-
+  const sparkData = historyLog.slice(-40); // Last 40 points for the chart
   const indexMovers = [...data].sort((a, b) => (b.index_contribution || 0) - (a.index_contribution || 0));
   const topLifters = indexMovers.slice(0, 5);
   const topDraggers = indexMovers.reverse().slice(0, 5);
@@ -461,41 +562,69 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
            </div>
        )}
 
-       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-           <div onClick={() => onNavigate('stocks')} className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 transition-all group">
-               <div className="flex justify-between items-start mb-2">
+       {/* --- NEW: TREND ANALYSIS BOARD (Revamped Visuals + History) --- */}
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+           
+           {/* Left: Combined Trend Chart */}
+           <div className="glass-panel p-5 rounded-2xl flex flex-col">
+               <div className="flex justify-between items-start mb-4">
                    <div>
-                       <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Activity size={12}/> Weighted Breadth</p>
-                       <p className={`text-2xl font-mono font-bold ${bullishPct > 50 ? 'text-bull' : 'text-bear'}`}>{bullishPct.toFixed(1)}%</p>
-                   </div>
-                   <div className={`px-2 py-1 rounded text-[10px] font-bold ${weightedLpDay >= 0 ? 'bg-bull/10 text-bull' : 'bg-bear/10 text-bear'}`}>{formatPercent(weightedLpDay)}</div>
-               </div>
-               <div className="h-10 w-full"><Sparkline data={trendData} color={bullishPct > 50 ? '#10b981' : '#ef4444'} /></div>
-           </div>
-           <div onClick={() => onNavigate('options')} className="glass-panel p-4 rounded-xl cursor-pointer hover:bg-white/5 transition-all group">
-               <div className="flex justify-between items-start mb-2">
-                   <div>
-                       <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Target size={12}/> Net Option Flow</p>
-                       <div className="text-xl font-mono font-bold">{latestSnapshot?.optionsSent ? formatPercent(latestSnapshot.optionsSent) : '--'}</div>
+                       <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-1">
+                           <BarChart3 size={14} className="text-blue-400" /> Price vs Net Flow Divergence
+                       </h3>
+                       <p className="text-[10px] text-slate-500">Comparing Nifty Moves (Line) vs Option Intent (Bars)</p>
                    </div>
                    <div className="text-right">
-                        <p className="text-[10px] text-slate-500">PCR</p>
-                        <p className={`text-sm font-mono font-bold ${latestSnapshot && latestSnapshot.pcr > 1 ? 'text-bull' : 'text-blue-200'}`}>{latestSnapshot?.pcr.toFixed(2) || '--'}</p>
+                       <span className={`text-2xl font-black font-mono tracking-tight ${latestSnapshot?.niftyLtp || 0 > 0 ? 'text-white' : 'text-white'}`}>
+                           {latestSnapshot?.niftyLtp?.toLocaleString() || '--'}
+                       </span>
                    </div>
                </div>
-               <div className="h-10 w-full"><Sparkline data={flowData} color={latestSnapshot && latestSnapshot.optionsSent > 0 ? '#10b981' : '#ef4444'} /></div>
+               
+               <div className="flex-1 bg-slate-900/30 rounded-xl border border-white/5 p-2">
+                   <AdvancedChart data={sparkData} height={180} />
+               </div>
            </div>
-           <div className="glass-panel p-4 rounded-xl flex flex-col justify-center">
-               <div className="flex justify-between items-center mb-3">
-                   <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1"><Zap size={12} className="text-yellow-400"/> Momentum (1m)</p>
-                   <span className={`text-xs font-mono font-bold ${momentumNet > 0 ? 'text-bull' : 'text-bear'}`}>{formatValue(momentumNet)}</span>
-               </div>
-               <div className="relative h-2 bg-slate-800 rounded-full overflow-hidden flex">
-                   <div className="w-1/2 flex justify-end"><div className="h-full bg-bear rounded-l-full" style={{ width: `${Math.min(Math.abs(stats.weightedSellMomentum)/500000 * 100, 100)}%`, opacity: 0.8 }}></div></div>
-                   <div className="w-1/2 flex justify-start"><div className="h-full bg-bull rounded-r-full" style={{ width: `${Math.min(Math.abs(stats.weightedBuyMomemtum)/500000 * 100, 100)}%`, opacity: 0.8 }}></div></div>
-                   <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10"></div>
-               </div>
-               <div className="flex justify-between mt-2 text-[9px] text-slate-500 font-mono uppercase"><span>Sell Pressure</span><span>Buy Pressure</span></div>
+
+           {/* Right: History Log & Momentum */}
+           <div className="flex flex-col gap-4">
+                {/* Momentum Gauge Card */}
+                <div className="glass-panel p-4 rounded-xl flex items-center justify-between">
+                    <div>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold flex items-center gap-1 mb-1"><Zap size={12} className="text-yellow-400"/> Instant Momentum (1m)</p>
+                        <span className={`text-xl font-mono font-bold ${momentumNet > 0 ? 'text-bull' : 'text-bear'}`}>
+                            {formatValue(momentumNet)}
+                        </span>
+                    </div>
+                    
+                    <div className="flex-1 mx-6 relative h-3 bg-slate-800 rounded-full overflow-hidden">
+                        {/* Center Marker */}
+                        <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10"></div>
+                        <div 
+                            className={`absolute top-0 bottom-0 transition-all duration-500 ${momentumNet > 0 ? 'left-1/2 bg-bull' : 'right-1/2 bg-bear'}`} 
+                            style={{ width: `${Math.min(Math.abs(momentumNet) / 2000000 * 50, 50)}%` }} // Normalized scale
+                        ></div>
+                    </div>
+                    
+                    <div className="text-right">
+                        <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">PCR</p>
+                        <p className={`text-lg font-mono font-bold ${latestSnapshot && latestSnapshot.pcr > 1 ? 'text-bull' : 'text-blue-200'}`}>
+                            {latestSnapshot?.pcr.toFixed(2)}
+                        </p>
+                    </div>
+                </div>
+
+                {/* Last 5 History Table */}
+                <div className="flex-1 glass-panel rounded-xl overflow-hidden flex flex-col">
+                    <div className="px-4 py-3 bg-slate-900/50 border-b border-white/5 flex items-center justify-between">
+                        <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                            <ListFilter size={12} /> Recent Trend Log (Last 5)
+                        </h3>
+                    </div>
+                    <div className="flex-1 overflow-auto bg-slate-950/20">
+                        <HistorySnippet history={historyLog} />
+                    </div>
+                </div>
            </div>
        </div>
 

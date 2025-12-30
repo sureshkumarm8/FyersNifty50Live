@@ -7,15 +7,17 @@ A high-performance real-time stock tracking and analysis dashboard for **Nifty50
 
 ## 🚀 Features
 
-### 🧠 AI Quant Deck (New!)
+### 🧠 AI Quant Deck (Advanced)
 *   **Auto-Scan Engine**: Runs automatically every 5 minutes during market hours (09:15 - 15:30) to analyze market structure.
 *   **Probability Scoring**: Generates a confidence score (0-100%) for Long/Short trends based on weighted sentiment and option flow.
+*   **Quant Feedback Loop**: Self-grading mechanism that marks past signals as **WIN** or **LOSS** after 15 minutes, building a transparent track record.
 *   **Trade Suggestions**: AI proposes specific Option Strategies (e.g., Bull Call Spread) with ideal strikes and spot-based stops.
 *   **Anomaly Detection**: Identifies hidden divergences where price is moving against the flow.
 
-### 🎯 Sniper Scope (New!)
+### 🎯 Sniper Scope (Execution Engine)
 *   **Protocol Enforcement**: Define your own trading rules and schedule (e.g., "09:45 Entry Window").
-*   **Execution Logic**: The AI checks live market data against your specific protocol before giving an "EXECUTE" signal.
+*   **Pivot Point Context**: Automatically calculates Daily Pivot, R1, S1, and CPR levels from previous day's OHLC. The AI uses this to filter trades (e.g., avoiding longs at Resistance).
+*   **Audio Alerts (TTS)**: Text-to-Speech announcements for trade signals ("Sniper Triggered. Buy Call.") so you don't have to stare at the screen.
 *   **Compliance Check**: Ensures you don't violate your own risk rules (e.g., "Never trade against Net Option Flow").
 
 ### 🤖 AI Analyst Chat & Live Voice
@@ -30,6 +32,7 @@ A high-performance real-time stock tracking and analysis dashboard for **Nifty50
 *   **Totals Row**: Cumulative weighted averages for Bid/Ask changes fixed at the top.
 
 ### 📈 Smart Cumulative Summary
+*   **Sector Heatmap**: Visual bar showing real-time weighted performance of sectors (Banks, IT, Auto, Energy).
 *   **Weighted Analysis**: Calculates impact based on **Nifty 50 Weightage**.
 *   **Market Breadth**: Visualizes Bullish vs Bearish weight impact.
 *   **Buying/Selling Pressure**: Aggregates `Volume * Price * Weight` to show true institutional money flow.

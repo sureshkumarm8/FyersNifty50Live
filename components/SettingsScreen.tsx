@@ -7,7 +7,8 @@ import {
   Settings as SettingsIcon, BookOpen, Star, 
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
-  ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair
+  ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair,
+  Volume2, Layers
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
@@ -638,15 +639,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2"></span>
                                     <span>
-                                        <strong className="text-white block mb-1 flex items-center gap-2"><Crosshair size={14}/> Sniper Scope</strong>
-                                        This is a game-changer for discipline. The AI strictly enforces your defined "Protocol" (Entry Window, Rules, Criteria) against live data before suggesting a trade.
+                                        <strong className="text-white block mb-1 flex items-center gap-2"><Crosshair size={14}/> Sniper Scope & Audio Alerts</strong>
+                                        This is a game-changer for discipline. The AI strictly enforces your defined "Protocol" against live data. <span className="text-emerald-400 font-bold">New:</span> Audio Alerts (TTS) announce trade signals hands-free.
                                     </span>
                                  </li>
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-500 mt-2"></span>
                                     <span>
-                                        <strong className="text-white block mb-1">Session-Relative Data</strong>
-                                        By filtering out "Gap Up/Down" noise, the Day % metric focuses purely on intraday flow. Crucial for catching gap fades or reversals.
+                                        <strong className="text-white block mb-1 flex items-center gap-2"><Layers size={14}/> Pivot Point Context</strong>
+                                        The system now calculates previous day's High, Low, and Close to determine CPR, R1, and S1 levels. The AI uses this "Location" context to filter bad trades (e.g., buying into resistance).
                                     </span>
                                  </li>
                              </ul>
@@ -658,15 +659,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-500 mt-2"></span>
                                     <span>
-                                        <strong className="text-white block mb-1">Weighted Index Impact</strong>
-                                        Moves are weighted by Nifty 50 contribution. Seeing HDFC Bank and Reliance move together is prioritized over smaller cap movements.
+                                        <strong className="text-white block mb-1 flex items-center gap-2"><Activity size={14}/> Sectoral Heatmap</strong>
+                                        A visual bar showing weighted performance of Banks, IT, Auto, etc. Helps identify if a move is broad-based or just one sector pulling the index.
                                     </span>
                                  </li>
                                  <li className="flex gap-3 text-sm text-slate-300">
                                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-500 mt-2"></span>
                                     <span>
-                                        <strong className="text-white block mb-1">Order Flow (Bid/Ask Strength)</strong>
-                                        Tracks the intent, not just price. Falling Bid Strength while Price rises is a key leading indicator for traps.
+                                        <strong className="text-white block mb-1 flex items-center gap-2"><CheckSquare size={14}/> Quant Feedback Loop</strong>
+                                        The system now "grades" its own signals after 15 minutes. It marks past predictions as <span className="text-emerald-400">WIN</span> or <span className="text-rose-400">LOSS</span> based on price movement, building a track record.
                                     </span>
                                  </li>
                              </ul>
@@ -695,8 +696,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                         <div className="glass-panel p-5 rounded-xl flex items-center justify-between">
                             <div>
                                 <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">System Verdict</p>
-                                <h3 className="text-2xl font-black text-white">9.5/10</h3>
-                                <p className="text-sm text-blue-300">High-Probability Trend Confirmation System</p>
+                                <h3 className="text-2xl font-black text-white">9.8/10</h3>
+                                <p className="text-sm text-blue-300">Pro-Grade Institutional Terminal</p>
                             </div>
                             <div className="text-right">
                                 <BarChart4 size={40} className="text-slate-700" />
