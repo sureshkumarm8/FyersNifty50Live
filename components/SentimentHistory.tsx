@@ -2,7 +2,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { MarketSnapshot } from '../types';
-import { Clock, Activity, Bot, Send, X, MessageSquare, Loader2, Sparkles, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Clock, Activity, Bot, Send, X, MessageSquare, Loader2, Sparkles, ChevronRight, ChevronLeft, Download } from 'lucide-react';
+import { downloadCSV } from '../services/csv';
 
 interface SentimentHistoryProps {
   history: MarketSnapshot[];
@@ -51,11 +52,12 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, api
   }, [messages, isAiOpen]);
 
   const generateContext = () => {
-      // Take last 30 entries to avoid token limits but give enough trend context
-      const recentHistory = history.slice(-30).map(s => 
-          `Time:${s.time}|Nifty:${s.niftyLtp}|OverallSent:${s.overallSent.toFixed(1)}|OptSent:${s.optionsSent.toFixed(1)}|PCR:${s.pcr.toFixed(2)}`
+      // Full history is vital for analyzing morning trends vs current.
+      // Gemini 2.5 Flash has a large context window, so we pass the full session log.
+      const fullHistory = history.map(s => 
+          `T:${s.time}|N:${s.niftyLtp}|Sent:${s.overallSent.toFixed(1)}|Opt:${s.optionsSent.toFixed(1)}|PCR:${s.pcr.toFixed(2)}|CallM:${(s.callsBuyQty/1000000).toFixed(2)}|PutM:${(s.putsBuyQty/1000000).toFixed(2)}`
       ).join('\n');
-      return `RECENT HISTORY LOG (Last 30 mins):\n${recentHistory}`;
+      return `FULL SESSION HISTORY LOG:\n${fullHistory}`;
   };
 
   const handleSend = async (overrideInput?: string) => {
@@ -113,6 +115,13 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, api
                      <Activity size={14} className="animate-pulse text-green-500" />
                      Live Feed (1 min)
                   </div>
+                  <button 
+                      onClick={() => downloadCSV(history, 'market_history_log')}
+                      className="p-2 rounded-lg bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                      title="Export CSV"
+                  >
+                      <Download size={16} />
+                  </button>
                   <button 
                     onClick={() => setIsAiOpen(!isAiOpen)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold ${isAiOpen ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-white/10 hover:bg-slate-700 hover:text-white'}`}

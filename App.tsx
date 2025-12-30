@@ -815,16 +815,6 @@ const App: React.FC = () => {
 
         {viewMode === 'history' && (
             <div className="flex flex-col h-full px-4 pb-4 relative">
-                 <div className="absolute top-0 right-8 z-30">
-                     <button 
-                        onClick={() => downloadCSV(historyLog, 'market_history_log')}
-                        className="flex items-center gap-2 px-3 py-1 bg-slate-800/80 hover:bg-slate-700 border border-slate-600 rounded-b-lg text-xs text-slate-300 transition-colors shadow-lg backdrop-blur-sm"
-                        title="Export History Log"
-                    >
-                        <Download size={12} />
-                        <span>CSV</span>
-                    </button>
-                </div>
                 <SentimentHistory 
                     history={historyLog} 
                     apiKey={credentials.googleApiKey}
