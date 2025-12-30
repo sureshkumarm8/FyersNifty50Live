@@ -341,8 +341,15 @@ const App: React.FC = () => {
 
         if (!isWeekday || !isOpen) {
             setMarketStatusMsg("Market Closed (09:00 - 15:45 IST)");
-            setIsLoading(false);
-            return;
+            // FIX: Do not return early. Allow fetch to proceed to populate static data.
+            // Only stop loading spinner if we already have data to prevent flicker, 
+            // otherwise let it run to populate initial state.
+            if (stocks.length > 0) {
+               setIsLoading(false);
+               // We can choose to return here to stop polling if data is loaded,
+               // but if user just opened app, stocks is empty, so we must fetch once.
+               return; 
+            }
         }
     }
 
@@ -458,7 +465,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [credentials, isDbLoaded, historyLog, sessionHistory]); 
+  }, [credentials, isDbLoaded, historyLog, sessionHistory, stocks.length]); // Added stocks.length dependency for check
 
   // Stable Interval Logic
   const refreshDataRef = useRef(refreshData);

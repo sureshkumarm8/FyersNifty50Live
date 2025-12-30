@@ -104,7 +104,7 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, api
     <div className="flex h-full gap-4 overflow-hidden relative">
       
       {/* --- Main Table Panel --- */}
-      <div className={`flex flex-col h-full glass-panel rounded-2xl overflow-hidden shadow-2xl transition-all duration-300 ${isAiOpen ? 'flex-[0.65]' : 'flex-1'}`}>
+      <div className={`flex flex-col h-full glass-panel rounded-2xl overflow-hidden shadow-2xl transition-all duration-300 ${isAiOpen ? 'w-[55%] hidden sm:flex' : 'w-full'}`}>
           <div className="p-5 border-b border-white/10 glass-header flex items-center justify-between">
               <h2 className="text-lg font-bold text-blue-400 flex items-center gap-3 uppercase tracking-wider">
                  <Clock size={20} className="text-blue-500" />
@@ -192,7 +192,7 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, api
 
       {/* --- AI Chat Panel (Collapsible) --- */}
       {isAiOpen && (
-          <div className="flex-1 min-w-[320px] max-w-[400px] glass-panel rounded-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 border-l border-white/10">
+          <div className="flex-1 w-full sm:w-[45%] glass-panel rounded-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 border-l border-white/10">
                <div className="p-4 bg-indigo-900/20 border-b border-indigo-500/20 flex items-center justify-between">
                    <div className="flex items-center gap-2 text-indigo-300">
                        <Bot size={18} />
