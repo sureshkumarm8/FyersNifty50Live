@@ -5,7 +5,7 @@ import {
   Crosshair, Zap, TrendingUp, TrendingDown, 
   AlertTriangle, RefreshCw, Shield, 
   BrainCircuit, BarChart2, Layers, Activity,
-  History, Eye, Clock, Trash2
+  History, Eye, Clock, Trash2, Radio
 } from 'lucide-react';
 
 interface AIQuantDeckProps {
@@ -47,9 +47,18 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
                    <BrainCircuit className="text-indigo-400" /> 
                    QUANT <span className="text-indigo-500">DECK</span>
                </h1>
-               <p className="text-xs text-slate-400 font-mono">
-                   AI-Powered Probability Engine & Signal Generator
-               </p>
+               <div className="flex items-center gap-3">
+                   <p className="text-xs text-slate-400 font-mono">
+                       AI-Powered Probability Engine
+                   </p>
+                   <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-indigo-900/30 border border-indigo-500/20">
+                       <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                       </span>
+                       <span className="text-[9px] font-bold text-indigo-300 uppercase tracking-wide">Auto-Scan Active (5m)</span>
+                   </div>
+               </div>
            </div>
            <button 
               onClick={onRunAnalysis}

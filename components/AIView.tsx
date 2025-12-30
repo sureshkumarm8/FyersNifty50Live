@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { EnrichedFyersQuote, MarketSnapshot } from '../types';
-import { Send, Mic, StopCircle, Bot, Sparkles, Loader2, Info, Search, Volume2, Globe } from 'lucide-react';
+import { Send, Mic, StopCircle, Bot, Sparkles, Loader2, Info, Search, Volume2, Globe, Trash2 } from 'lucide-react';
 
 interface AIViewProps {
   stocks: EnrichedFyersQuote[];
@@ -18,7 +18,7 @@ interface ChatMessage {
   isError?: boolean;
 }
 
-// Audio Utils
+// --- Audio Utils ---
 function createBlob(data: Float32Array): Blob {
   const l = data.length;
   const int16 = new Int16Array(l);
@@ -26,7 +26,6 @@ function createBlob(data: Float32Array): Blob {
     int16[i] = data[i] * 32768;
   }
   
-  // Custom simple implementation to avoid external deps for base64
   let binary = '';
   const bytes = new Uint8Array(int16.buffer);
   const len = bytes.byteLength;
@@ -70,14 +69,88 @@ async function decodeAudioData(
   return buffer;
 }
 
+// --- Markdown Renderer ---
+const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
+    // A lightweight markdown parser for chat display
+    const parseMarkdown = (text: string) => {
+        let html = text
+            // Escape HTML (basic)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            // Headers
+            .replace(/^### (.*$)/gim, '<h3 class="font-bold text-lg text-indigo-300 mt-2 mb-1">$1</h3>')
+            .replace(/^## (.*$)/gim, '<h2 class="font-bold text-xl text-white mt-3 mb-2">$1</h2>')
+            .replace(/^# (.*$)/gim, '<h1 class="font-black text-2xl text-white mt-4 mb-2">$1</h1>')
+            // Bold
+            .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+            // Italic
+            .replace(/\*(.*?)\*/g, '<em class="text-slate-300">$1</em>')
+            // Code Blocks
+            .replace(/```([^`]+)```/g, '<pre class="bg-slate-950 p-3 rounded-lg border border-white/10 my-2 overflow-x-auto text-xs font-mono text-emerald-400">$1</pre>')
+            // Inline Code
+            .replace(/`([^`]+)`/g, '<code class="bg-slate-800 px-1.5 py-0.5 rounded font-mono text-xs text-yellow-300">$1</code>')
+            // Links
+            .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300 underline decoration-blue-500/30 underline-offset-2">$1</a>')
+            // Unordered Lists
+            .replace(/^\s*-\s+(.*)$/gm, '<li class="flex items-start gap-2 mb-1"><span class="mt-1.5 w-1 h-1 bg-slate-400 rounded-full shrink-0"></span><span>$1</span></li>')
+            // Ordered Lists (Basic support)
+            .replace(/^\s*(\d+)\.\s+(.*)$/gm, '<li class="flex items-start gap-2 mb-1"><span class="font-mono text-slate-500 text-xs mt-0.5">$1.</span><span>$2</span></li>');
+
+        // Wrap lists
+        html = html.replace(/<li.*?>.*?<\/li>/gs, (match) => `<ul class="my-2 pl-1">${match}</ul>`);
+        
+        // Paragraphs (Double newline)
+        html = html.split('\n\n').map(p => {
+            if (p.startsWith('<ul') || p.startsWith('<h') || p.startsWith('<pre')) return p;
+            return `<p class="mb-2 last:mb-0">${p}</p>`;
+        }).join('');
+
+        // Single newlines to BR within paragraphs
+        html = html.replace(/\n/g, '<br/>');
+
+        return html;
+    };
+
+    return <div className="markdown-content text-sm leading-relaxed text-slate-300" dangerouslySetInnerHTML={{ __html: parseMarkdown(content) }} />;
+};
+
 export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, optionQuotes, apiKey }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'live'>('chat');
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([
-      { role: 'model', text: "Hello! I am your Market Analyst. I have access to real-time Nifty 50 data. Ask me about trends, option flow, or specific stocks." }
-  ]);
+  
+  // Persistence Key
+  const todayKey = `ai_chat_history_${new Date().toDateString()}`;
+  
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [useSearch, setUseSearch] = useState(false);
+
+  // Load History
+  useEffect(() => {
+      const saved = localStorage.getItem(todayKey);
+      if (saved) {
+          try {
+              setMessages(JSON.parse(saved));
+          } catch (e) {
+              setMessages([{ role: 'model', text: "Hello! I am your Market Analyst. I have access to real-time Nifty 50 data. Ask me about trends, option flow, or specific stocks." }]);
+          }
+      } else {
+          setMessages([{ role: 'model', text: "Hello! I am your Market Analyst. I have access to real-time Nifty 50 data. Ask me about trends, option flow, or specific stocks." }]);
+      }
+  }, []);
+
+  // Save History
+  useEffect(() => {
+      if (messages.length > 0) {
+          localStorage.setItem(todayKey, JSON.stringify(messages));
+      }
+  }, [messages, todayKey]);
+
+  const clearHistory = () => {
+      if(confirm("Clear today's chat history?")) {
+          setMessages([{ role: 'model', text: "Chat cleared. Ready for new analysis." }]);
+          localStorage.removeItem(todayKey);
+      }
+  };
 
   // Live State
   const [isLiveConnected, setIsLiveConnected] = useState(false);
@@ -142,7 +215,8 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
         
         const systemInstruction = `You are a Nifty 50 Market Analyst. 
         Current Market Data: ${context}
-        Answer concisely. If the user asks about something outside this data (like news), use Google Search if enabled.`;
+        Answer concisely using Markdown. Use bold for key numbers (e.g. **24,500**). Use lists for multiple points.
+        If the user asks about something outside this data (like news), use Google Search if enabled.`;
 
         const config: any = { systemInstruction };
         if (useSearch) {
@@ -165,7 +239,7 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
                 .map((c: any) => c.web?.uri ? `[${c.web.title}](${c.web.uri})` : null)
                 .filter(Boolean)
                 .join(', ');
-            if (links) finalText += `\n\nSources: ${links}`;
+            if (links) finalText += `\n\n**Sources:** ${links}`;
         }
 
         setMessages(prev => [...prev, { role: 'model', text: finalText }]);
@@ -296,8 +370,6 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
           audioContextRef.current.close();
           audioContextRef.current = null;
       }
-      // Note: session.close() is not available on the promise wrapper directly in some versions,
-      // usually we just stop sending data and close contexts. The server will timeout.
   };
 
   return (
@@ -321,14 +393,26 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
       {/* CHAT MODE */}
       {activeTab === 'chat' && (
           <div className="flex-1 glass-panel rounded-2xl flex flex-col overflow-hidden relative">
+              
+              {/* Toolbar */}
+              <div className="absolute top-4 right-4 z-10">
+                  <button onClick={clearHistory} className="p-2 rounded-lg bg-slate-800/50 text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors" title="Clear Chat History">
+                      <Trash2 size={14} />
+                  </button>
+              </div>
+
               <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
                   {messages.map((m, idx) => (
                       <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[80%] rounded-2xl p-4 text-sm leading-relaxed ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-800 text-slate-200 rounded-bl-none border border-white/5'} ${m.isError ? 'bg-red-900/50 border-red-500' : ''}`}>
-                              <div className="mb-1 flex items-center gap-2 opacity-70 text-xs font-bold uppercase">
+                          <div className={`max-w-[85%] rounded-2xl p-4 ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-800/80 rounded-bl-none border border-white/5'} ${m.isError ? 'bg-red-900/50 border-red-500' : ''}`}>
+                              <div className="mb-2 flex items-center gap-2 opacity-60 text-[10px] font-bold uppercase tracking-wider">
                                   {m.role === 'user' ? 'You' : <><Bot size={12}/> Gemini Analyst</>}
                               </div>
-                              <div className="whitespace-pre-wrap">{m.text}</div>
+                              {m.role === 'user' ? (
+                                  <div className="text-sm leading-relaxed">{m.text}</div>
+                              ) : (
+                                  <MarkdownRenderer content={m.text} />
+                              )}
                           </div>
                       </div>
                   ))}

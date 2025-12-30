@@ -489,7 +489,7 @@ const App: React.FC = () => {
   }, [isDbLoaded, credentials.appId, credentials.accessToken, isPaused, credentials.refreshInterval]);
 
   // --- AI Quant Logic (Executed at App Level) ---
-  const runQuantAnalysis = async () => {
+  const runQuantAnalysis = useCallback(async () => {
     if (isQuantAnalyzing || !credentials.googleApiKey) return;
     setIsQuantAnalyzing(true);
     setQuantError(null);
@@ -577,7 +577,29 @@ const App: React.FC = () => {
     } finally {
       setIsQuantAnalyzing(false);
     }
-  };
+  }, [credentials.googleApiKey, isQuantAnalyzing, historyLog, stocks, niftyLtp]);
+
+  // --- Auto-Run Quant Analysis (Every 5 Mins) ---
+  useEffect(() => {
+      // Don't auto-run if manual is running or data isn't ready
+      if (!credentials.googleApiKey || historyLog.length === 0 || isQuantAnalyzing) return;
+
+      const lastRecord = quantHistory.length > 0 ? quantHistory[0] : null;
+      const lastTime = lastRecord ? lastRecord.timestamp : 0;
+      const now = Date.now();
+      
+      // Check if 5 minutes have passed since last scan
+      if (now - lastTime >= 300000) { 
+          // Market Hours Check (09:15 - 15:30)
+          const date = new Date();
+          const t = date.getHours() * 100 + date.getMinutes();
+          const isMarketHours = t >= 915 && t <= 1530;
+          
+          if (credentials.bypassMarketHours || isMarketHours) {
+              runQuantAnalysis();
+          }
+      }
+  }, [historyLog, quantHistory, isQuantAnalyzing, credentials, runQuantAnalysis]);
 
   const handleClearQuantHistory = () => {
     if(confirm("Clear today's analysis history?")) {
