@@ -32,15 +32,45 @@ const INTERVAL_OPTIONS = [
 ];
 
 export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, stocks, apiKey, pivots }) => {
-  const [protocol, setProtocol] = useState<TradingSystemProtocol>(DEFAULT_PROTOCOL);
-  const [isScanning, setIsScanning] = useState(false); // Validating/Fetching state
-  const [isLooping, setIsLooping] = useState(false);   // Auto-Scan Active state
-  const [scanInterval, setScanInterval] = useState(30000);
+  // --- State Initialization with Persistence ---
   
-  const [analysis, setAnalysis] = useState<SniperAnalysis | null>(null);
-  const [history, setHistory] = useState<SniperHistoryRecord[]>([]);
+  const [protocol, setProtocol] = useState<TradingSystemProtocol>(() => {
+      try {
+          const saved = localStorage.getItem('user_trading_protocol');
+          return saved ? JSON.parse(saved) : DEFAULT_PROTOCOL;
+      } catch { return DEFAULT_PROTOCOL; }
+  });
+
+  const [isScanning, setIsScanning] = useState(false); // Transient state
+  
+  const [isLooping, setIsLooping] = useState(() => {
+      return localStorage.getItem('sniper_is_looping') === 'true';
+  });
+  
+  const [scanInterval, setScanInterval] = useState(() => {
+      const saved = localStorage.getItem('sniper_interval');
+      return saved ? Number(saved) : 30000;
+  });
+  
+  const [analysis, setAnalysis] = useState<SniperAnalysis | null>(() => {
+      try {
+        const saved = localStorage.getItem('sniper_analysis');
+        return saved ? JSON.parse(saved) : null;
+      } catch { return null; }
+  });
+
+  const [history, setHistory] = useState<SniperHistoryRecord[]>(() => {
+      try {
+        const saved = localStorage.getItem('sniper_history');
+        return saved ? JSON.parse(saved) : [];
+      } catch { return []; }
+  });
+
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+       return localStorage.getItem('sniper_sound') !== 'false'; // Default true
+  });
+  
   const [error, setError] = useState<string | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Refs for accessing fresh data inside interval closure
   const snapshotRef = useRef(snapshot);
@@ -56,18 +86,23 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
     pivotsRef.current = pivots;
   }, [snapshot, niftyLtp, stocks, pivots]);
 
+  // Sync Protocol Ref and Persist
   useEffect(() => {
-    const saved = localStorage.getItem('user_trading_protocol');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setProtocol(parsed);
-        protocolRef.current = parsed;
-      } catch (e) {
-        console.error("Failed to load protocol");
-      }
-    }
-  }, []);
+    protocolRef.current = protocol;
+    localStorage.setItem('user_trading_protocol', JSON.stringify(protocol));
+  }, [protocol]);
+
+  // Persist Other States
+  useEffect(() => { localStorage.setItem('sniper_is_looping', String(isLooping)); }, [isLooping]);
+  useEffect(() => { localStorage.setItem('sniper_interval', String(scanInterval)); }, [scanInterval]);
+  useEffect(() => { localStorage.setItem('sniper_sound', String(soundEnabled)); }, [soundEnabled]);
+  
+  useEffect(() => { 
+      if (analysis) localStorage.setItem('sniper_analysis', JSON.stringify(analysis));
+      else localStorage.removeItem('sniper_analysis');
+  }, [analysis]);
+  
+  useEffect(() => { localStorage.setItem('sniper_history', JSON.stringify(history)); }, [history]);
 
   // Audio Announce
   const announce = (text: string) => {
