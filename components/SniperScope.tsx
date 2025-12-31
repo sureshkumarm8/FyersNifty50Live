@@ -19,9 +19,47 @@ interface SniperHistoryRecord extends SniperAnalysis {
 }
 
 const DEFAULT_PROTOCOL: TradingSystemProtocol = {
-    name: "Default Protocol",
-    steps: [],
-    rules: []
+    name: "Nifty Intraday Momentum (Standard)",
+    description: "Trend following system based on Option Flow & Pivot Structures.",
+    steps: [
+        {
+            title: "09:15 - 09:30 (Market Settlement)",
+            items: [
+                "Do NOT trade. Wait for initial volatility to settle.",
+                "Mark the Opening Range High (ORH) and Low (ORL).",
+                "Check Sector Heatmap for leading/lagging sectors."
+            ]
+        },
+        {
+            title: "09:30 - 11:00 (Morning Momentum)",
+            items: [
+                "Look for breakouts of the 15-minute Opening Range.",
+                "Confirm trade direction with Net Option Flow (Green for Calls, Red for Puts).",
+                "Ensure Heavyweights (HDFC/Reliance) are supporting the move."
+            ]
+        },
+        {
+            title: "11:00 - 13:00 (Consolidation Zone)",
+            items: [
+                "Caution: Volume typically drops.",
+                "Only trade reversals from key Pivot Points (R1, S1, CPR).",
+                "Avoid breakouts unless volume is 2x average."
+            ]
+        },
+        {
+            title: "13:00 - 15:15 (European Trend)",
+            items: [
+                "Look for Day High/Low breaks.",
+                "Trend continuation entries if PCR aligns with price (e.g., Price Up + PCR > 1)."
+            ]
+        }
+    ],
+    rules: [
+        "Never trade against the overall 'Option Sentiment' (Net Flow).",
+        "Stop Loss must be placed below the recent Swing Low or nearest Pivot level.",
+        "Risk Reward must be at least 1:1.5.",
+        "Abort if Nifty is trading inside the CPR (Central Pivot Range) - Choppy Zone."
+    ]
 };
 
 const INTERVAL_OPTIONS = [
@@ -37,7 +75,14 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
   const [protocol, setProtocol] = useState<TradingSystemProtocol>(() => {
       try {
           const saved = localStorage.getItem('user_trading_protocol');
-          return saved ? JSON.parse(saved) : DEFAULT_PROTOCOL;
+          if (saved) {
+              const parsed = JSON.parse(saved);
+              // Validation: If saved protocol has no steps/rules, revert to default
+              if (parsed.steps && parsed.steps.length > 0) {
+                  return parsed;
+              }
+          }
+          return DEFAULT_PROTOCOL;
       } catch { return DEFAULT_PROTOCOL; }
   });
 
@@ -174,7 +219,7 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
 
             TASK:
             1. Check the 'current_time' against protocol steps. Which step are we in?
-            2. Check if market conditions (Sentiment, Flow, PCR, Heavyweights, Pivot Structure) match the protocol's entry criteria.
+            2. Check if market conditions (Sentiment, Flow, PCR, Heavyweights, Pivot Structure) match the protocol's entry criteria for THIS specific time step.
             3. Check if any "Cardinal Rules" are being violated.
             4. If conditions align, calculate trade parameters (Entry, SL, Targets) based on Nifty LTP.
                - Stop Loss should be logical (e.g., 20-30 pts away or below support like S1/Pivot).
