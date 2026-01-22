@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { FyersCredentials } from '../types';
-import { X, Save, AlertTriangle, ShieldCheck, Upload, Download, FileJson, Trash2, ToggleLeft, ToggleRight, Clock } from 'lucide-react';
+import { X, Save, AlertTriangle, ShieldCheck, Upload, Download, FileJson, Trash2, ToggleLeft, ToggleRight, Clock, Bot } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -18,6 +19,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [appId, setAppId] = useState(currentCreds.appId);
   const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
+  const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -25,11 +27,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setAppId(currentCreds.appId);
       setAccessToken(currentCreds.accessToken);
       setBypassMarketHours(currentCreds.bypassMarketHours || false);
+      setAiEnabled(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
     }
   }, [isOpen, currentCreds]);
 
   const handleSave = () => {
-    onSave({ appId, accessToken, bypassMarketHours });
+    onSave({ appId, accessToken, bypassMarketHours, aiEnabled });
     onClose();
   };
 
@@ -44,7 +47,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const template = {
       appId: "XV1234567-100",
       accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE",
-      bypassMarketHours: false
+      bypassMarketHours: false,
+      aiEnabled: true
     };
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(template, null, 2));
     const downloadAnchorNode = document.createElement('a');
@@ -75,6 +79,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }
         if (json.bypassMarketHours !== undefined) {
             setBypassMarketHours(json.bypassMarketHours);
+        }
+        if (json.aiEnabled !== undefined) {
+            setAiEnabled(json.aiEnabled);
         }
 
         if (!loaded) {
@@ -175,6 +182,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 rows={4}
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-gray-600 font-mono text-xs resize-none"
               />
+            </div>
+
+            {/* AI Toggle */}
+            <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg border border-white/5">
+                <div className="flex items-center gap-3">
+                   <div className={`p-2 rounded-lg ${aiEnabled ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-700 text-slate-500'}`}>
+                      <Bot size={18} />
+                   </div>
+                   <div>
+                      <p className="text-sm font-medium text-slate-200">Enable AI Features</p>
+                      <p className="text-xs text-slate-500">Quant Analysis, Sniper Scope & Chat</p>
+                   </div>
+                </div>
+                <button 
+                  onClick={() => setAiEnabled(!aiEnabled)}
+                  className={`transition-colors duration-200 focus:outline-none ${aiEnabled ? 'text-indigo-400' : 'text-slate-600'}`}
+                >
+                    {aiEnabled ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
+                </button>
             </div>
 
             {/* Market Hours Bypass Toggle */}

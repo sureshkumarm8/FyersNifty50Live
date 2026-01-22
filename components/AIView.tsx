@@ -1,8 +1,9 @@
 
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { EnrichedFyersQuote, MarketSnapshot } from '../types';
-import { Send, Mic, StopCircle, Bot, Sparkles, Loader2, Info, Search, Volume2, Globe, Trash2 } from 'lucide-react';
+import { Send, Mic, StopCircle, Bot, Sparkles, Loader2, Info, Search, Volume2, Globe, Trash2, ShieldAlert } from 'lucide-react';
 
 interface AIViewProps {
   stocks: EnrichedFyersQuote[];
@@ -10,6 +11,7 @@ interface AIViewProps {
   historyLog: MarketSnapshot[];
   optionQuotes: EnrichedFyersQuote[];
   apiKey?: string;
+  aiEnabled?: boolean;
 }
 
 interface ChatMessage {
@@ -113,7 +115,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
     return <div className="markdown-content text-sm leading-relaxed text-slate-300" dangerouslySetInnerHTML={{ __html: parseMarkdown(content) }} />;
 };
 
-export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, optionQuotes, apiKey }) => {
+export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, optionQuotes, apiKey, aiEnabled }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'live'>('chat');
   const [input, setInput] = useState('');
   
@@ -371,6 +373,15 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
           audioContextRef.current = null;
       }
   };
+
+  if (aiEnabled === false) {
+    return (
+        <div className="flex flex-col items-center justify-center h-full text-slate-500">
+            <ShieldAlert size={48} className="mb-4 text-slate-700" />
+            <p>AI Features are disabled. Enable them in Settings.</p>
+        </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full gap-4">

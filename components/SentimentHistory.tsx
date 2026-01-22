@@ -1,4 +1,5 @@
 
+
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { MarketSnapshot } from '../types';
@@ -8,6 +9,7 @@ import { downloadCSV } from '../services/csv';
 interface SentimentHistoryProps {
   history: MarketSnapshot[];
   apiKey?: string;
+  aiEnabled?: boolean;
 }
 
 const formatNumber = (num: number, decimals = 2) => num.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -74,7 +76,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
     return <div className="markdown-content text-sm leading-relaxed text-slate-300" dangerouslySetInnerHTML={{ __html: parseMarkdown(content) }} />;
 };
 
-export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, apiKey }) => {
+export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, apiKey, aiEnabled }) => {
   const [isAiOpen, setIsAiOpen] = useState(false);
   
   // Persistence for History Chat
@@ -184,10 +186,11 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, api
                   </button>
                   <button 
                     onClick={() => setIsAiOpen(!isAiOpen)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold ${isAiOpen ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-white/10 hover:bg-slate-700 hover:text-white'}`}
+                    disabled={aiEnabled === false}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold ${aiEnabled === false ? 'opacity-50 cursor-not-allowed bg-slate-800 text-slate-500' : isAiOpen ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-white/10 hover:bg-slate-700 hover:text-white'}`}
                   >
                       {isAiOpen ? <ChevronRight size={14}/> : <Bot size={14} />}
-                      {isAiOpen ? 'Close AI' : 'Analyze with AI'}
+                      {aiEnabled === false ? 'AI Disabled' : isAiOpen ? 'Close AI' : 'Analyze with AI'}
                   </button>
               </div>
           </div>

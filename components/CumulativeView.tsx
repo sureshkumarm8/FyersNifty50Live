@@ -1,4 +1,5 @@
 
+
 import React, { useMemo, useState } from 'react';
 import { EnrichedFyersQuote, MarketSnapshot, ViewMode, StrategySignal, SectorMetric } from '../types';
 import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, Play, CheckCircle, ArrowUp, ArrowDown, Minus, BarChart3, ListFilter } from 'lucide-react';
@@ -15,6 +16,7 @@ interface CumulativeViewProps {
   isQuantAnalyzing?: boolean;
   onRunQuantAnalysis?: () => void;
   sectors?: SectorMetric[];
+  aiEnabled?: boolean;
 }
 
 const formatValue = (val: number) => {
@@ -225,7 +227,8 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
     quantAnalysis,
     isQuantAnalyzing,
     onRunQuantAnalysis,
-    sectors = []
+    sectors = [],
+    aiEnabled
 }) => {
   const [decisionWindow, setDecisionWindow] = useState<number>(5); // Default 5 mins
 
@@ -543,18 +546,20 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
                         </div>
                     ) : (
                         <div className="text-center py-4">
-                            <p className="text-xs text-slate-500 mb-2">No AI analysis generated yet.</p>
+                            <p className="text-xs text-slate-500 mb-2">
+                                {aiEnabled === false ? "AI features are currently disabled." : "No AI analysis generated yet."}
+                            </p>
                         </div>
                     )}
                 </div>
 
                 <button 
                     onClick={onRunQuantAnalysis}
-                    disabled={isQuantAnalyzing}
-                    className={`mt-4 w-full py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all ${isQuantAnalyzing ? 'bg-slate-800 text-slate-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
+                    disabled={isQuantAnalyzing || aiEnabled === false}
+                    className={`mt-4 w-full py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all ${isQuantAnalyzing || aiEnabled === false ? 'bg-slate-800 text-slate-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
                 >
                     {isQuantAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
-                    {isQuantAnalyzing ? 'Analyzing Market...' : 'Run AI Scan'}
+                    {aiEnabled === false ? 'AI Disabled' : isQuantAnalyzing ? 'Analyzing Market...' : 'Run AI Scan'}
                 </button>
            </div>
        </div>

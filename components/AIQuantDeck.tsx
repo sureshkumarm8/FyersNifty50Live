@@ -5,7 +5,7 @@ import {
   Crosshair, Zap, TrendingUp, TrendingDown, 
   AlertTriangle, RefreshCw, Shield, 
   BrainCircuit, BarChart2, Layers, Activity,
-  History, Eye, Clock, Trash2, Radio, CheckCircle2, XCircle
+  History, Eye, Clock, Trash2, Radio, CheckCircle2, XCircle, Bot, Cpu
 } from 'lucide-react';
 
 interface AIQuantDeckProps {
@@ -16,6 +16,7 @@ interface AIQuantDeckProps {
   onClearHistory: () => void;
   onSelectAnalysis: (signal: StrategySignal) => void;
   apiKey?: string;
+  aiEnabled?: boolean;
 }
 
 export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({ 
@@ -25,17 +26,14 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
     onRunAnalysis, 
     onClearHistory,
     onSelectAnalysis,
-    apiKey 
+    apiKey,
+    aiEnabled
 }) => {
   
-  if (!apiKey) {
-      return (
-          <div className="flex flex-col items-center justify-center h-full text-slate-500">
-              <Shield size={48} className="mb-4 text-slate-700" />
-              <p>Please configure your Google AI API Key in Settings to use the Quant Deck.</p>
-          </div>
-      );
-  }
+  // Logic determined by parent (App.tsx), here we just render based on props.
+  // If no API key and no AI Enabled, it will run in Local Heuristic Mode.
+  
+  const isLocalMode = !apiKey || aiEnabled === false;
 
   return (
     <div className="flex flex-col h-full overflow-hidden p-4 max-w-7xl mx-auto w-full gap-4">
@@ -44,26 +42,26 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
        <div className="flex justify-between items-center shrink-0">
            <div>
                <h1 className="text-2xl font-black text-white flex items-center gap-2">
-                   <BrainCircuit className="text-indigo-400" /> 
-                   QUANT <span className="text-indigo-500">DECK</span>
+                   {isLocalMode ? <Cpu className="text-blue-400" /> : <BrainCircuit className="text-indigo-400" />}
+                   QUANT <span className={isLocalMode ? "text-blue-500" : "text-indigo-500"}>DECK</span>
                </h1>
                <div className="flex items-center gap-3">
                    <p className="text-xs text-slate-400 font-mono">
-                       AI-Powered Probability Engine
+                       {isLocalMode ? "Local Heuristic Probability Engine" : "AI-Powered Probability Engine"}
                    </p>
-                   <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-indigo-900/30 border border-indigo-500/20">
+                   <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${isLocalMode ? 'bg-blue-900/30 border-blue-500/20' : 'bg-indigo-900/30 border-indigo-500/20'}`}>
                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isLocalMode ? 'bg-blue-400' : 'bg-indigo-400'}`}></span>
+                          <span className={`relative inline-flex rounded-full h-2 w-2 ${isLocalMode ? 'bg-blue-500' : 'bg-indigo-500'}`}></span>
                        </span>
-                       <span className="text-[9px] font-bold text-indigo-300 uppercase tracking-wide">Auto-Scan Active (5m)</span>
+                       <span className={`text-[9px] font-bold uppercase tracking-wide ${isLocalMode ? 'text-blue-300' : 'text-indigo-300'}`}>Auto-Scan Active (5m)</span>
                    </div>
                </div>
            </div>
            <button 
               onClick={onRunAnalysis}
               disabled={isAnalyzing}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${isAnalyzing ? 'bg-slate-800 text-slate-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${isAnalyzing ? 'bg-slate-800 text-slate-500' : isLocalMode ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
            >
                <RefreshCw size={16} className={isAnalyzing ? 'animate-spin' : ''} />
                {isAnalyzing ? 'Computing...' : 'Run Scan'}
@@ -178,12 +176,12 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
         ) : (
             <div className="flex flex-col items-center justify-center min-h-[300px] text-slate-600 space-y-4 glass-panel rounded-2xl border-dashed border-slate-800 shrink-0">
                 <div className="relative">
-                    <div className="absolute inset-0 bg-indigo-500/20 blur-xl rounded-full"></div>
-                    <BrainCircuit size={64} className="relative text-slate-700" />
+                    <div className={`absolute inset-0 blur-xl rounded-full ${isLocalMode ? 'bg-blue-500/20' : 'bg-indigo-500/20'}`}></div>
+                    {isLocalMode ? <Cpu size={64} className="relative text-slate-700" /> : <BrainCircuit size={64} className="relative text-slate-700" />}
                 </div>
                 <p className="font-mono text-sm">Ready to analyze market data...</p>
-                <button onClick={onRunAnalysis} disabled={isAnalyzing} className="px-6 py-2 bg-indigo-900/30 text-indigo-400 border border-indigo-500/30 rounded-full hover:bg-indigo-900/50 transition-all">
-                    Start Engine
+                <button onClick={onRunAnalysis} disabled={isAnalyzing} className={`px-6 py-2 rounded-full border transition-all ${isLocalMode ? 'bg-blue-900/30 text-blue-400 border-blue-500/30 hover:bg-blue-900/50' : 'bg-indigo-900/30 text-indigo-400 border-indigo-500/30 hover:bg-indigo-900/50'}`}>
+                    Start {isLocalMode ? 'Local' : 'AI'} Engine
                 </button>
             </div>
         )}
@@ -215,7 +213,7 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
                                 <th className="px-5 py-3">Signal</th>
                                 <th className="px-5 py-3">Confidence</th>
                                 <th className="px-5 py-3">Strategy</th>
-                                <th className="px-5 py-3">Result (15m)</th>
+                                <th className="px-5 py-3">Result (5m)</th>
                                 <th className="px-5 py-3 hidden md:table-cell">Reason</th>
                                 <th className="px-5 py-3 text-right">Action</th>
                             </tr>

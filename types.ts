@@ -1,4 +1,5 @@
 
+
 export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant' | 'sniper';
 
 export interface FyersCredentials {
@@ -7,6 +8,7 @@ export interface FyersCredentials {
   bypassMarketHours?: boolean; 
   refreshInterval?: number;
   googleApiKey?: string;
+  aiEnabled?: boolean;
 }
 
 // Fyers V3 Quote Response Interface (Internal UI Model)

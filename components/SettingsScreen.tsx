@@ -86,6 +86,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
+  const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
   
   // Protocol State
@@ -110,7 +111,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   }, [isEditingProtocol, protocolData]);
 
   const handleSave = () => {
-    onSave({ appId, accessToken, googleApiKey, bypassMarketHours, refreshInterval });
+    onSave({ appId, accessToken, googleApiKey, bypassMarketHours, refreshInterval, aiEnabled });
     onBack();
   };
 
@@ -143,6 +144,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE",
       googleApiKey: "YOUR_GEMINI_API_KEY_HERE",
       bypassMarketHours: false,
+      aiEnabled: true,
       refreshInterval: 60000
     };
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(template, null, 2));
@@ -167,6 +169,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         if (json.googleApiKey) setGoogleApiKey(json.googleApiKey);
         if (json.bypassMarketHours !== undefined) setBypassMarketHours(json.bypassMarketHours);
         if (json.refreshInterval !== undefined) setRefreshInterval(json.refreshInterval);
+        if (json.aiEnabled !== undefined) setAiEnabled(json.aiEnabled);
         alert("Configuration imported successfully!");
       } catch (err) {
         alert("Error parsing JSON file.");
@@ -305,6 +308,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 {REFRESH_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                             </select>
                         </div>
+                        
+                        {/* AI Toggle */}
+                        <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg border border-white/5">
+                            <div className="flex items-center gap-3">
+                               <div className={`p-2 rounded-lg ${aiEnabled ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-700 text-slate-500'}`}>
+                                  <Bot size={18} />
+                               </div>
+                               <div>
+                                  <p className="text-sm font-medium text-slate-200">Enable AI Features</p>
+                                  <p className="text-xs text-slate-500">Quant Analysis, Sniper Scope & Chat</p>
+                               </div>
+                            </div>
+                            <button 
+                              onClick={() => setAiEnabled(!aiEnabled)}
+                              className={`transition-colors duration-200 focus:outline-none ${aiEnabled ? 'text-indigo-400' : 'text-slate-600'}`}
+                            >
+                                {aiEnabled ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
+                            </button>
+                        </div>
+
                         <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg border border-white/5">
                             <div className="flex items-center gap-3">
                                 <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400">

@@ -21,9 +21,11 @@ const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     try {
       const saved = localStorage.getItem('fyers_creds');
-      return saved ? JSON.parse(saved) : { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value };
+      const parsed = saved ? JSON.parse(saved) : { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value };
+      if (parsed.aiEnabled === undefined) parsed.aiEnabled = true;
+      return parsed;
     } catch (e) {
-      return { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value };
+      return { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value, aiEnabled: true };
     }
   });
 
@@ -376,8 +378,8 @@ const App: React.FC = () => {
           const now = Date.now();
           let updated = false;
           const newHistory = prev.map(record => {
-               // Only grade if pending and older than 15 mins
-               if (!record.result && (now - record.timestamp > 900000)) { // 15 mins
+               // Feedback loop reduced to 5 mins (300000ms)
+               if (!record.result && (now - record.timestamp > 300000)) { 
                    updated = true;
                    let result: 'WIN' | 'LOSS' | 'NEUTRAL' = 'NEUTRAL';
                    const entry = record.entryLtp || currentLtp; // Fallback
@@ -567,80 +569,151 @@ const App: React.FC = () => {
     }
   }, [isDbLoaded, credentials.appId, credentials.accessToken, isPaused, credentials.refreshInterval]);
 
-  // --- AI Quant Logic (Executed at App Level) ---
+  // --- Hybrid Quant Logic (AI + Local Heuristic) ---
   const runQuantAnalysis = useCallback(async () => {
-    if (isQuantAnalyzing || !credentials.googleApiKey) return;
+    if (isQuantAnalyzing) return;
+    
+    // Check local fallback condition
+    const useLocalEngine = !credentials.aiEnabled || !credentials.googleApiKey;
+    
     setIsQuantAnalyzing(true);
     setQuantError(null);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey });
-      
-      const last15Mins = historyLog.slice(-15);
-      const latest = last15Mins[last15Mins.length - 1];
-      
-      const topFlow = stocks
-          .sort((a,b) => (b.day_net_strength || 0) - (a.day_net_strength || 0))
-          .slice(0, 3)
-          .map(s => `${s.short_name}(NetStr:${s.day_net_strength?.toFixed(1)}%)`);
+      let result: StrategySignal;
 
-      const dataContext = JSON.stringify({
-         nifty_ltp: niftyLtp,
-         snapshot: {
-            time: latest?.time,
-            overall_sentiment_weighted: latest?.overallSent,
-            option_sentiment: latest?.optionsSent,
-            pcr: latest?.pcr,
-            net_call_flow: latest?.callsBuyQty - latest?.callsSellQty,
-            net_put_flow: latest?.putsBuyQty - latest?.putsSellQty
-         },
-         trend_history_last_15m: last15Mins.map(s => ({ t: s.time, ltp: s.niftyLtp, sent: s.overallSent })),
-         top_flow_stocks: topFlow,
-         pivot_levels: pivots ? `Pivot:${pivots.pivot}, R1:${pivots.r1}, S1:${pivots.s1}` : 'Unavailable'
-      });
-
-      const systemInstruction = `
-        You are an elite Algorithmic Trader. Analyze the JSON market data provided.
-        
-        RULES:
-        1. "overall_sentiment_weighted" is the most important metric. > 20 is Bullish, < -20 is Bearish.
-        2. "option_sentiment" confirms the trend. If Divergence exists (Price Up, Option Sent Down), signal caution.
-        3. PCR > 1.2 is Oversold/Support (Bullish), < 0.6 is Overbought/Resistance (Bearish) usually, but check trend.
-        4. Check Pivot levels. Buying below S1 is Contrarian. Buying above R1 is breakout.
-        
-        OUTPUT FORMAT:
-        Return ONLY valid JSON matching this schema:
-        {
-          "market_condition": "TRENDING_UP" | "TRENDING_DOWN" | "SIDEWAYS" | "VOLATILE",
-          "signal": "LONG" | "SHORT" | "NO_TRADE",
-          "confidence_score": number (0-100),
-          "primary_reason": "Short string explaining the main driver",
-          "risk_level": "LOW" | "MEDIUM" | "HIGH",
-          "suggested_trade": {
-            "instrument": "NIFTY OPTIONS",
-            "strategy_type": "BUY_CALL" | "BUY_PUT" | "BULL_SPREAD" | "BEAR_SPREAD" | "IRON_CONDOR",
-            "ideal_strike": "e.g., 24500 CE",
-            "stop_loss_ref": number (Nifty Spot Level),
-            "target_ref": number (Nifty Spot Level)
-          },
-          "hidden_anomaly": {
-            "detected": boolean,
-            "stock_symbol": "Stock Name or None",
-            "description": "Short description of flow divergence if any"
+      if (useLocalEngine) {
+          // --- LOCAL HEURISTIC ENGINE ---
+          if (historyLog.length < 5 || !niftyLtp) {
+              throw new Error("Insufficient data for Local Analysis. Need at least 5 mins of history.");
           }
-        }
-      `;
+          
+          const latest = historyLog[historyLog.length - 1];
+          const fiveMinsAgo = historyLog[Math.max(0, historyLog.length - 5)];
+          
+          const priceChange = latest.niftyLtp - fiveMinsAgo.niftyLtp;
+          const flow = latest.optionsSent;
+          const pcr = latest.pcr;
+          
+          // Basic Trend Logic
+          let signal: "LONG" | "SHORT" | "NO_TRADE" = "NO_TRADE";
+          let confidence = 50;
+          let reason = "Market is consolidating.";
+          let marketCond: any = "SIDEWAYS";
+          
+          if (priceChange > 10 && flow > 10 && pcr > 0.8) {
+              signal = "LONG";
+              confidence = Math.min(60 + (priceChange), 95);
+              reason = `Strong Momentum (+${priceChange.toFixed(1)}pts) confirmed by Option Flow (+${flow.toFixed(1)}%).`;
+              marketCond = "TRENDING_UP";
+          } else if (priceChange < -10 && flow < -10 && pcr < 1.2) {
+              signal = "SHORT";
+              confidence = Math.min(60 + Math.abs(priceChange), 95);
+              reason = `Bearish Momentum (${priceChange.toFixed(1)}pts) confirmed by Put writing and flow.`;
+              marketCond = "TRENDING_DOWN";
+          } else if (Math.abs(priceChange) < 10 && Math.abs(flow) > 30) {
+              reason = "Divergence detected: Price is flat but Flow is aggressive.";
+              marketCond = "VOLATILE";
+          }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: `Analyze this market data: ${dataContext}`,
-        config: { 
-            responseMimeType: "application/json",
-            systemInstruction 
-        }
-      });
+          // Strike Selection Logic (Simple ATM +/-)
+          const strikeStep = 50;
+          const atm = Math.round(niftyLtp / 50) * 50;
+          const targetStrike = signal === 'LONG' ? atm + 100 : signal === 'SHORT' ? atm - 100 : atm;
+          
+          result = {
+              market_condition: marketCond,
+              signal: signal,
+              confidence_score: Math.round(confidence),
+              primary_reason: reason,
+              risk_level: Math.abs(flow) > 50 ? "HIGH" : "MEDIUM",
+              suggested_trade: {
+                  instrument: "NIFTY OPTIONS",
+                  strategy_type: signal === 'LONG' ? 'BULL_CALL_SPREAD' : signal === 'SHORT' ? 'BEAR_PUT_SPREAD' : 'IRON_CONDOR',
+                  ideal_strike: `${targetStrike} ${signal === 'LONG' ? 'CE' : 'PE'}`,
+                  stop_loss_ref: signal === 'LONG' ? niftyLtp - 30 : niftyLtp + 30,
+                  target_ref: signal === 'LONG' ? niftyLtp + 60 : niftyLtp - 60
+              },
+              hidden_anomaly: {
+                  detected: Math.abs(priceChange) < 5 && Math.abs(flow) > 40,
+                  stock_symbol: "N/A",
+                  description: "Potential accumulation/distribution phase detected via Local Engine."
+              }
+          };
+          
+          // Fake delay for UX
+          await new Promise(resolve => setTimeout(resolve, 800));
 
-      const result = JSON.parse(response.text || "{}");
+      } else {
+          // --- AI ENGINE (Gemini) ---
+          const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey! });
+          
+          const last15Mins = historyLog.slice(-15);
+          const latest = last15Mins[last15Mins.length - 1];
+          
+          const topFlow = stocks
+              .sort((a,b) => (b.day_net_strength || 0) - (a.day_net_strength || 0))
+              .slice(0, 3)
+              .map(s => `${s.short_name}(NetStr:${s.day_net_strength?.toFixed(1)}%)`);
+
+          const dataContext = JSON.stringify({
+             nifty_ltp: niftyLtp,
+             snapshot: {
+                time: latest?.time,
+                overall_sentiment_weighted: latest?.overallSent,
+                option_sentiment: latest?.optionsSent,
+                pcr: latest?.pcr,
+                net_call_flow: latest?.callsBuyQty - latest?.callsSellQty,
+                net_put_flow: latest?.putsBuyQty - latest?.putsSellQty
+             },
+             trend_history_last_15m: last15Mins.map(s => ({ t: s.time, ltp: s.niftyLtp, sent: s.overallSent })),
+             top_flow_stocks: topFlow,
+             pivot_levels: pivots ? `Pivot:${pivots.pivot}, R1:${pivots.r1}, S1:${pivots.s1}` : 'Unavailable'
+          });
+
+          const systemInstruction = `
+            You are an elite Algorithmic Trader. Analyze the JSON market data provided.
+            
+            RULES:
+            1. "overall_sentiment_weighted" is the most important metric. > 20 is Bullish, < -20 is Bearish.
+            2. "option_sentiment" confirms the trend. If Divergence exists (Price Up, Option Sent Down), signal caution.
+            3. PCR > 1.2 is Oversold/Support (Bullish), < 0.6 is Overbought/Resistance (Bearish) usually, but check trend.
+            4. Check Pivot levels. Buying below S1 is Contrarian. Buying above R1 is breakout.
+            
+            OUTPUT FORMAT:
+            Return ONLY valid JSON matching this schema:
+            {
+              "market_condition": "TRENDING_UP" | "TRENDING_DOWN" | "SIDEWAYS" | "VOLATILE",
+              "signal": "LONG" | "SHORT" | "NO_TRADE",
+              "confidence_score": number (0-100),
+              "primary_reason": "Short string explaining the main driver",
+              "risk_level": "LOW" | "MEDIUM" | "HIGH",
+              "suggested_trade": {
+                "instrument": "NIFTY OPTIONS",
+                "strategy_type": "BUY_CALL" | "BUY_PUT" | "BULL_SPREAD" | "BEAR_SPREAD" | "IRON_CONDOR",
+                "ideal_strike": "e.g., 24500 CE",
+                "stop_loss_ref": number (Nifty Spot Level),
+                "target_ref": number (Nifty Spot Level)
+              },
+              "hidden_anomaly": {
+                "detected": boolean,
+                "stock_symbol": "Stock Name or None",
+                "description": "Short description of flow divergence if any"
+              }
+            }
+          `;
+
+          const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: `Analyze this market data: ${dataContext}`,
+            config: { 
+                responseMimeType: "application/json",
+                systemInstruction 
+            }
+          });
+
+          result = JSON.parse(response.text || "{}");
+      }
       
       const newRecord: AnalysisRecord = {
           id: Date.now().toString(),
@@ -658,11 +731,14 @@ const App: React.FC = () => {
     } finally {
         setIsQuantAnalyzing(false);
     }
-  }, [credentials.googleApiKey, isQuantAnalyzing, historyLog, stocks, niftyLtp, pivots]);
+  }, [credentials.googleApiKey, credentials.aiEnabled, isQuantAnalyzing, historyLog, stocks, niftyLtp, pivots]);
 
   // --- Auto-Run Quant Analysis (Every 5 Mins) ---
   useEffect(() => {
-      if (!credentials.googleApiKey || historyLog.length === 0 || isQuantAnalyzing) return;
+      // Allow running if local mode (no key required if !aiEnabled) or if AI enabled with key
+      const canRun = (credentials.aiEnabled && credentials.googleApiKey) || (!credentials.aiEnabled);
+      
+      if (!canRun || historyLog.length === 0 || isQuantAnalyzing) return;
 
       const lastRecord = quantHistory.length > 0 ? quantHistory[0] : null;
       const lastTime = lastRecord ? lastRecord.timestamp : 0;
@@ -856,6 +932,7 @@ const App: React.FC = () => {
                   isQuantAnalyzing={isQuantAnalyzing}
                   onRunQuantAnalysis={runQuantAnalysis}
                   sectors={sectors}
+                  aiEnabled={credentials.aiEnabled}
                />
             </div>
         )}
@@ -926,6 +1003,7 @@ const App: React.FC = () => {
                 <SentimentHistory 
                     history={historyLog} 
                     apiKey={credentials.googleApiKey}
+                    aiEnabled={credentials.aiEnabled}
                 />
             </div>
         )}
@@ -940,6 +1018,7 @@ const App: React.FC = () => {
                    onClearHistory={handleClearQuantHistory}
                    onSelectAnalysis={setQuantAnalysis}
                    apiKey={credentials.googleApiKey}
+                   aiEnabled={credentials.aiEnabled}
                 />
             </div>
         )}
@@ -952,6 +1031,7 @@ const App: React.FC = () => {
                     stocks={stocks}
                     apiKey={credentials.googleApiKey}
                     pivots={pivots}
+                    aiEnabled={credentials.aiEnabled}
                 />
             </div>
         )}
@@ -964,6 +1044,7 @@ const App: React.FC = () => {
                    historyLog={historyLog}
                    optionQuotes={optionQuotes}
                    apiKey={credentials.googleApiKey}
+                   aiEnabled={credentials.aiEnabled}
                 />
             </div>
         )}

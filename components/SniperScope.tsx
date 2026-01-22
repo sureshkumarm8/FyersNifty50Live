@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { MarketSnapshot, EnrichedFyersQuote, TradingSystemProtocol, SniperAnalysis, PivotPoints } from '../types';
-import { Crosshair, ShieldAlert, CheckCircle, XCircle, Search, Target, Zap, Activity, Play, Lock, AlertTriangle, Volume2, History, Clock, ChevronDown, StopCircle, PauseCircle, Trash2, Eye } from 'lucide-react';
+import { Crosshair, ShieldAlert, CheckCircle, XCircle, Search, Target, Zap, Activity, Play, Lock, AlertTriangle, Volume2, VolumeX, History, Clock, ChevronDown, StopCircle, PauseCircle, Trash2, Eye } from 'lucide-react';
 
 interface SniperScopeProps {
   snapshot: MarketSnapshot;
@@ -10,6 +10,7 @@ interface SniperScopeProps {
   stocks: EnrichedFyersQuote[]; // Passed for breadth/heavyweight context
   apiKey?: string;
   pivots: PivotPoints | null;
+  aiEnabled?: boolean;
 }
 
 interface SniperHistoryRecord extends SniperAnalysis {
@@ -69,7 +70,7 @@ const INTERVAL_OPTIONS = [
     { label: '2 Minutes', value: 120000 },
 ];
 
-export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, stocks, apiKey, pivots }) => {
+export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, stocks, apiKey, pivots, aiEnabled }) => {
   // --- State Initialization with Persistence ---
   
   const [protocol, setProtocol] = useState<TradingSystemProtocol>(() => {
@@ -158,8 +159,8 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
   };
 
   const runSniperScan = async () => {
-    if (!apiKey) {
-        setError("API Key missing. Please add it in Settings.");
+    if (!apiKey || aiEnabled === false) {
+        setError(!apiKey ? "API Key missing. Please add it in Settings." : "AI Features Disabled");
         setIsLooping(false);
         return;
     }
@@ -317,12 +318,23 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
                    <Crosshair className="text-red-500 animate-pulse" size={32} /> 
                    SNIPER <span className="text-red-500">SCOPE</span>
                </h1>
-               <div className="flex items-center gap-3 mt-1">
+               <div className="flex items-center gap-4 mt-2">
                    <p className="text-xs text-slate-400 font-mono">
                        Protocol-Driven Execution Engine
                    </p>
-                   <button onClick={() => setSoundEnabled(!soundEnabled)} className={`p-1 rounded ${soundEnabled ? 'text-green-400 bg-green-900/20' : 'text-slate-500 bg-slate-800'}`} title="Toggle Voice Announcements">
-                       <Volume2 size={12} />
+                   
+                   {/* Voice Toggle Switch */}
+                   <button 
+                       onClick={() => setSoundEnabled(!soundEnabled)} 
+                       className={`flex items-center gap-2 px-3 py-1 rounded-full border transition-all duration-300 text-xs font-bold ${
+                           soundEnabled 
+                           ? 'bg-green-900/30 text-green-400 border-green-500/30 shadow-[0_0_10px_rgba(74,222,128,0.2)]' 
+                           : 'bg-slate-800 text-slate-500 border-slate-700'
+                       }`}
+                       title={soundEnabled ? "Voice Alerts Enabled" : "Voice Alerts Disabled"}
+                   >
+                       {soundEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}
+                       <span>VOICE ALERTS: {soundEnabled ? 'ON' : 'OFF'}</span>
                    </button>
                </div>
            </div>
@@ -391,13 +403,21 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
 
                     <button 
                         onClick={toggleLoop}
+                        disabled={aiEnabled === false}
                         className={`relative z-10 w-48 h-48 rounded-full flex flex-col items-center justify-center transition-all duration-300 ${
-                            isLooping 
+                            aiEnabled === false
+                            ? 'bg-slate-800 border-4 border-slate-700 opacity-50 cursor-not-allowed'
+                            : isLooping 
                             ? 'bg-slate-900 border-4 border-red-500 shadow-[0_0_30px_rgba(239,68,68,0.4)]' 
                             : 'bg-gradient-to-br from-red-600 to-rose-800 hover:scale-105 hover:shadow-[0_0_50px_rgba(220,38,38,0.5)] border-4 border-red-500'
                         }`}
                     >
-                        {isScanning ? (
+                        {aiEnabled === false ? (
+                             <div className="flex flex-col items-center">
+                                 <ShieldAlert size={48} className="text-slate-500 mb-2" />
+                                 <span className="text-xs text-slate-500 font-bold">AI DISABLED</span>
+                             </div>
+                        ) : isScanning ? (
                             <Activity size={48} className="text-red-500 animate-pulse" />
                         ) : isLooping ? (
                             <div className="animate-pulse">
@@ -408,7 +428,7 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
                             <Target size={48} className="text-white mb-2" />
                         )}
                         
-                        {!isScanning && (
+                        {!isScanning && aiEnabled !== false && (
                             <span className={`text-lg font-black tracking-widest ${isLooping ? 'text-red-500' : 'text-white'}`}>
                                 {isLooping ? 'STOP' : 'ENGAGE'}
                             </span>
