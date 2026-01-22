@@ -8,7 +8,7 @@ import {
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
   ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair,
-  Volume2, Layers
+  Volume2, Layers, Key, Lock, Cpu
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
@@ -217,13 +217,23 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </button>
             <h1 className="text-xl font-bold text-white">System Configuration</h1>
             </div>
-            <button
-            onClick={handleSave}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-blue-500/20"
-            >
-            <Save size={18} />
-            <span className="hidden sm:inline">Save & Close</span>
-            </button>
+            <div className="flex items-center gap-3">
+                <button 
+                    onClick={handleReset}
+                    className="flex items-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-colors"
+                    title="Reset All Data"
+                >
+                    <Trash2 size={18} />
+                    <span className="hidden sm:inline text-xs font-bold uppercase">Reset</span>
+                </button>
+                <button
+                    onClick={handleSave}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-blue-500/20"
+                >
+                    <Save size={18} />
+                    <span className="hidden sm:inline">Save & Close</span>
+                </button>
+            </div>
         </div>
 
         <div className="flex gap-1 overflow-x-auto custom-scrollbar">
@@ -263,95 +273,159 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 bg-slate-950">
         
         {activeTab === 'configs' && (
-            <div className="max-w-3xl mx-auto space-y-8 animate-in slide-in-from-bottom-4 duration-300">
-                <section className="glass-panel p-6 rounded-xl">
-                    <h2 className="text-lg font-semibold text-blue-300 mb-4 flex items-center gap-2"><SettingsIcon size={18}/> API Credentials</h2>
-                    <div className="space-y-4">
-                        <div className="bg-blue-900/20 border border-blue-800/50 p-3 rounded text-sm text-blue-200 flex gap-2 items-start">
-                            <ShieldCheck size={16} className="mt-0.5 shrink-0 text-blue-400" />
-                            <p>Requests are proxied securely. Credentials are only stored locally in your browser.</p>
-                        </div>
-
-                        <div className="flex gap-3">
-                            <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".json"/>
-                            <button onClick={() => fileInputRef.current?.click()} className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-300 transition-colors">
-                                <Upload size={16} /> Import
-                            </button>
-                            <button onClick={handleDownloadTemplate} className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-300 transition-colors">
-                                <Download size={16} /> Template
-                            </button>
-                        </div>
-
-                        <div>
-                            <label className="block text-sm font-medium text-slate-400 mb-1">Fyers App ID (Client ID)</label>
-                            <input type="text" value={appId} onChange={(e) => setAppId(e.target.value)} placeholder="e.g., XV1234567-100" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-slate-600 font-mono text-sm"/>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-400 mb-1">Fyers Access Token</label>
-                            <textarea value={accessToken} onChange={(e) => setAccessToken(e.target.value)} placeholder="Paste your generated access token here..." rows={4} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder-slate-600 font-mono text-xs resize-none"/>
-                        </div>
-                        
-                        <div className="pt-2 border-t border-white/5">
-                            <label className="block text-sm font-medium text-indigo-400 mb-1 flex items-center gap-2"><Bot size={14}/> Google Gemini API Key</label>
-                            <input type="password" value={googleApiKey} onChange={(e) => setGoogleApiKey(e.target.value)} placeholder="Enter Gemini API Key (Required for AI Features)" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all placeholder-slate-600 font-mono text-sm"/>
-                            <p className="text-xs text-slate-500 mt-1">Leave empty to use environment variable if configured.</p>
+            <div className="max-w-4xl mx-auto space-y-6 animate-in slide-in-from-bottom-4 duration-300 pb-20">
+                
+                {/* CONNECTION CARD */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800">
+                    <div className="px-6 py-4 bg-slate-900/50 border-b border-white/5 flex justify-between items-center">
+                        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                            <div className="p-1.5 bg-blue-500/10 rounded-lg text-blue-400"><Key size={18}/></div>
+                            Broker Connection
+                        </h2>
+                        <div className="flex gap-2">
+                             {/* Import/Export buttons small */}
+                             <button onClick={() => fileInputRef.current?.click()} className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-white/10 transition-colors flex items-center gap-2">
+                                <Upload size={12}/> Import
+                             </button>
+                             <button onClick={handleDownloadTemplate} className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-white/10 transition-colors flex items-center gap-2">
+                                <Download size={12}/> Template
+                             </button>
+                             <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".json"/>
                         </div>
                     </div>
-                </section>
-                
-                <section className="glass-panel p-6 rounded-xl">
-                    <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2"><Zap size={18}/> General Settings</h2>
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-400 mb-1">Refresh Interval</label>
-                            <select value={refreshInterval} onChange={(e) => setRefreshInterval(Number(e.target.value))} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all">
-                                {REFRESH_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                            </select>
-                        </div>
-                        
-                        {/* AI Toggle */}
-                        <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg border border-white/5">
-                            <div className="flex items-center gap-3">
-                               <div className={`p-2 rounded-lg ${aiEnabled ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-700 text-slate-500'}`}>
-                                  <Bot size={18} />
-                               </div>
-                               <div>
-                                  <p className="text-sm font-medium text-slate-200">Enable AI Features</p>
-                                  <p className="text-xs text-slate-500">Quant Analysis, Sniper Scope & Chat</p>
-                               </div>
+                    
+                    <div className="p-6 space-y-6">
+                        <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-lg flex gap-3 items-start">
+                            <ShieldCheck size={18} className="text-blue-400 mt-0.5 shrink-0" />
+                            <div>
+                                <h4 className="text-sm font-bold text-blue-300">Secure Client-Side Storage</h4>
+                                <p className="text-xs text-slate-400 mt-1">Your credentials are encrypted and stored locally in your browser. Requests are routed through a secure proxy to prevent CORS issues.</p>
                             </div>
-                            <button 
-                              onClick={() => setAiEnabled(!aiEnabled)}
-                              className={`transition-colors duration-200 focus:outline-none ${aiEnabled ? 'text-indigo-400' : 'text-slate-600'}`}
-                            >
-                                {aiEnabled ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
-                            </button>
                         </div>
 
-                        <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-lg border border-white/5">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400">
-                                    <Clock size={18} />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Fyers App ID</label>
+                                <div className="relative group">
+                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-400 transition-colors">
+                                        <SettingsIcon size={16} />
+                                    </div>
+                                    <input 
+                                        type="text" 
+                                        value={appId} 
+                                        onChange={(e) => setAppId(e.target.value)} 
+                                        placeholder="e.g. XV12345-100"
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono"
+                                    />
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Access Token</label>
+                                <div className="relative group h-full">
+                                     <div className="absolute left-3 top-3 text-slate-500 group-focus-within:text-blue-400 transition-colors">
+                                        <Key size={16} />
+                                    </div>
+                                    <textarea 
+                                        value={accessToken} 
+                                        onChange={(e) => setAccessToken(e.target.value)} 
+                                        placeholder="Paste token here..."
+                                        rows={1}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono resize-none min-h-[46px] overflow-hidden"
+                                        style={{ minHeight: '46px' }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* AI INTEGRATION CARD */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800">
+                    <div className="px-6 py-4 bg-slate-900/50 border-b border-white/5">
+                        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                            <div className="p-1.5 bg-indigo-500/10 rounded-lg text-indigo-400"><Bot size={18}/></div>
+                            Intelligence Engine
+                        </h2>
+                    </div>
+                    <div className="p-6 space-y-6">
+                         <div className="flex items-center justify-between p-4 bg-slate-950/50 border border-white/5 rounded-xl">
+                            <div className="flex items-center gap-4">
+                                <div className={`p-3 rounded-full ${aiEnabled ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-800 text-slate-600'}`}>
+                                    <BrainCircuit size={24} />
                                 </div>
                                 <div>
-                                    <p className="text-sm font-medium text-slate-200">Test Mode (Bypass Timing)</p>
-                                    <p className="text-xs text-slate-500">Fetch data outside market hours (09:17 - 15:15)</p>
+                                    <h3 className="text-sm font-bold text-white">AI Capabilities</h3>
+                                    <p className="text-xs text-slate-500">Enable Quant Analysis, Sniper Scope & Voice Chat</p>
                                 </div>
                             </div>
-                            <button onClick={() => setBypassMarketHours(!bypassMarketHours)} className={`transition-colors duration-200 focus:outline-none ${bypassMarketHours ? 'text-green-400' : 'text-slate-600'}`}>
-                                {bypassMarketHours ? <ToggleRight size={32} /> : <ToggleLeft size={32} />}
+                            <button onClick={() => setAiEnabled(!aiEnabled)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${aiEnabled ? 'bg-indigo-600' : 'bg-slate-700'}`}>
+                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${aiEnabled ? 'translate-x-6' : 'translate-x-1'}`}/>
                             </button>
-                        </div>
-                    </div>
-                </section>
+                         </div>
 
-                <section className="glass-panel p-6 rounded-xl border border-red-500/20 bg-red-900/5">
-                    <h2 className="text-lg font-semibold text-red-400 mb-4">Danger Zone</h2>
-                    <p className="text-sm text-red-300/70 mb-3">This will permanently delete all stored settings and data.</p>
-                    <button onClick={handleReset} className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-red-900/20 hover:bg-red-900/40 border border-red-900/50 rounded-lg text-sm text-red-300 transition-colors">
-                        <Trash2 size={16} /> Reset App Data
-                    </button>
-                </section>
+                         <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Gemini API Key</label>
+                            <div className="relative group">
+                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors">
+                                    <Lock size={16} />
+                                </div>
+                                <input 
+                                    type="password" 
+                                    value={googleApiKey} 
+                                    onChange={(e) => setGoogleApiKey(e.target.value)} 
+                                    placeholder="sk-..."
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono"
+                                />
+                            </div>
+                            <p className="text-[10px] text-slate-500 text-right">Required for Sniper Scope & Quant Deck</p>
+                         </div>
+                    </div>
+                </div>
+
+                {/* PREFERENCES CARD */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800">
+                    <div className="px-6 py-4 bg-slate-900/50 border-b border-white/5">
+                        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                            <div className="p-1.5 bg-emerald-500/10 rounded-lg text-emerald-400"><Zap size={18}/></div>
+                            System Preferences
+                        </h2>
+                    </div>
+                    <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                         <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Data Refresh Rate</label>
+                            <div className="relative">
+                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                                    <Activity size={16} />
+                                </div>
+                                <select 
+                                    value={refreshInterval} 
+                                    onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none appearance-none cursor-pointer"
+                                >
+                                    {REFRESH_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                </select>
+                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
+                            </div>
+                         </div>
+
+                         <div className="flex items-center justify-between p-4 bg-slate-950/50 border border-white/5 rounded-xl">
+                            <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-lg ${bypassMarketHours ? 'bg-purple-500/20 text-purple-400' : 'bg-slate-800 text-slate-600'}`}>
+                                    <Clock size={20} />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-white">Dev Mode</h3>
+                                    <p className="text-xs text-slate-500">Bypass Market Hours Check</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setBypassMarketHours(!bypassMarketHours)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${bypassMarketHours ? 'bg-purple-600' : 'bg-slate-700'}`}>
+                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${bypassMarketHours ? 'translate-x-6' : 'translate-x-1'}`}/>
+                            </button>
+                         </div>
+                    </div>
+                </div>
             </div>
         )}
 
