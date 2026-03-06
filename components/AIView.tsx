@@ -1,8 +1,9 @@
 
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { FyersCredentials, EnrichedFyersQuote, MarketSnapshot } from '../types';
+import { callAI } from '../services/aiProvider';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob } from "@google/genai";
-import { EnrichedFyersQuote, MarketSnapshot } from '../types';
 import { Send, Mic, StopCircle, Bot, Sparkles, Loader2, Info, Search, Volume2, Globe, Trash2, ShieldAlert } from 'lucide-react';
 
 interface AIViewProps {
@@ -10,7 +11,7 @@ interface AIViewProps {
   niftyLtp: number | null;
   historyLog: MarketSnapshot[];
   optionQuotes: EnrichedFyersQuote[];
-  apiKey?: string;
+  credentials: FyersCredentials;
   aiEnabled?: boolean;
 }
 
@@ -115,7 +116,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
     return <div className="markdown-content text-sm leading-relaxed text-slate-300" dangerouslySetInnerHTML={{ __html: parseMarkdown(content) }} />;
 };
 
-export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, optionQuotes, apiKey, aiEnabled }) => {
+export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, optionQuotes, credentials, aiEnabled }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'live'>('chat');
   const [input, setInput] = useState('');
   
@@ -209,42 +210,46 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
     setIsProcessing(true);
 
     try {
-        const effectiveKey = apiKey || process.env.API_KEY;
-        if (!effectiveKey) throw new Error("Google Gemini API Key not configured. Please add it in Settings.");
-
-        const ai = new GoogleGenAI({ apiKey: effectiveKey });
         const context = getMarketContext();
         
         const systemInstruction = `You are a Nifty 50 Market Analyst. 
         Current Market Data: ${context}
-        Answer concisely using Markdown. Use bold for key numbers (e.g. **24,500**). Use lists for multiple points.
-        If the user asks about something outside this data (like news), use Google Search if enabled.`;
+        Answer concisely using Markdown. Use bold for key numbers (e.g. **24,500**). Use lists for multiple points.`;
 
-        const config: any = { systemInstruction };
-        if (useSearch) {
-            config.tools = [{ googleSearch: {} }];
-        }
-
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: userMsg,
-            config
-        });
-
-        const text = response.text || "I couldn't generate a response.";
+        // Check if Groq supports Google Search (it doesn't - only Gemini has this feature)
+        let responseText = '';
         
-        // Append Search Sources if any
-        let finalText = text;
-        const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-        if (chunks) {
-            const links = chunks
-                .map((c: any) => c.web?.uri ? `[${c.web.title}](${c.web.uri})` : null)
-                .filter(Boolean)
-                .join(', ');
-            if (links) finalText += `\n\n**Sources:** ${links}`;
+        if (credentials.aiProvider === 'groq' || !credentials.googleApiKey) {
+            // Use callAI utility (supports both Groq and Gemini)
+            responseText = await callAI(credentials, systemInstruction, userMsg);
+        } else {
+            // Use Gemini directly for Google Search capability
+            const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey });
+            const config: any = { systemInstruction };
+            if (useSearch) {
+                config.tools = [{ googleSearch: {} }];
+            }
+
+            const response = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: userMsg,
+                config
+            });
+
+            responseText = response.text || "I couldn't generate a response.";
+            
+            // Append Search Sources if any
+            const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+            if (chunks) {
+                const links = chunks
+                    .map((c: any) => c.web?.uri ? `[${c.web.title}](${c.web.uri})` : null)
+                    .filter(Boolean)
+                    .join(', ');
+                if (links) responseText += `\n\n**Sources:** ${links}`;
+            }
         }
 
-        setMessages(prev => [...prev, { role: 'model', text: finalText }]);
+        setMessages(prev => [...prev, { role: 'model', text: responseText }]);
 
     } catch (e: any) {
         setMessages(prev => [...prev, { role: 'model', text: `Error: ${e.message}`, isError: true }]);
@@ -253,16 +258,20 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
     }
   };
 
-  // --- Live API Handler ---
+  // --- Live API Handler (Gemini only - doesn't work with Groq) ---
   const connectLive = async () => {
       if (isLiveConnected || isLiveConnecting) return;
       setIsLiveConnecting(true);
 
       try {
-          const effectiveKey = apiKey || process.env.API_KEY;
-          if (!effectiveKey) throw new Error("Google Gemini API Key missing");
+          // Live API only works with Gemini, show warning if user selected Groq
+          if (credentials.aiProvider === 'groq') {
+              throw new Error("Live streaming not supported with Groq. Please switch to Gemini in Settings.");
+          }
+          
+          if (!credentials.googleApiKey) throw new Error("Google Gemini API Key missing");
 
-          const ai = new GoogleGenAI({ apiKey: effectiveKey });
+          const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey });
           
           // Audio Setup
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

@@ -573,8 +573,25 @@ const App: React.FC = () => {
   const runQuantAnalysis = useCallback(async () => {
     if (isQuantAnalyzing) return;
     
-    // Check local fallback condition
-    const useLocalEngine = !credentials.aiEnabled || !credentials.googleApiKey;
+    // Check local fallback condition - use provider-specific key check
+    const hasValidKey = credentials.aiProvider === 'groq' 
+      ? credentials.groqApiKey 
+      : credentials.googleApiKey;
+    const useLocalEngine = !credentials.aiEnabled || !hasValidKey;
+    
+    // DEBUG LOGS
+    const debugLog = {
+      timestamp: new Date().toISOString(),
+      aiEnabled: credentials.aiEnabled,
+      aiProvider: credentials.aiProvider || 'gemini (default)',
+      hasGroqKey: !!credentials.groqApiKey,
+      hasGeminiKey: !!credentials.googleApiKey,
+      hasValidKey,
+      useLocalEngine,
+      niftyLtp
+    };
+    console.log('%c🔍 QUANT ANALYSIS START', 'color: blue; font-weight: bold; font-size: 14px;');
+    console.table(debugLog);
     
     setIsQuantAnalyzing(true);
     setQuantError(null);
@@ -584,6 +601,13 @@ const App: React.FC = () => {
 
       if (useLocalEngine) {
           // --- LOCAL HEURISTIC ENGINE ---
+          console.log('%c📊 Using LOCAL HEURISTIC ENGINE', 'color: orange; font-weight: bold; font-size: 12px;');
+          console.log('Reason:', {
+            aiDisabled: !credentials.aiEnabled,
+            noApiKey: !hasValidKey,
+            provider: credentials.aiProvider
+          });
+          
           if (historyLog.length < 5 || !niftyLtp) {
               throw new Error("Insufficient data for Local Analysis. Need at least 5 mins of history.");
           }
@@ -645,8 +669,9 @@ const App: React.FC = () => {
           await new Promise(resolve => setTimeout(resolve, 800));
 
       } else {
-          // --- AI ENGINE (Gemini) ---
-          const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey! });
+          // --- AI ENGINE (Gemini or Groq) ---
+          const provider = credentials.aiProvider || 'gemini';
+          console.log(`%c🤖 Using ${provider.toUpperCase()} AI ENGINE`, `color: ${provider === 'groq' ? 'purple' : 'green'}; font-weight: bold; font-size: 12px;`);
           
           const last15Mins = historyLog.slice(-15);
           const latest = last15Mins[last15Mins.length - 1];
@@ -703,16 +728,88 @@ const App: React.FC = () => {
             }
           `;
 
-          const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: `Analyze this market data: ${dataContext}`,
-            config: { 
-                responseMimeType: "application/json",
-                systemInstruction 
-            }
-          });
+          if (credentials.aiProvider === 'groq') {
+              // --- GROQ AI ---
+              // Using latest active model - check https://console.groq.com/docs/models for current list
+              const model = 'llama-3.3-70b-versatile';
+              console.log(`%c📡 Sending request to Groq API (${model})`, 'color: purple; font-size: 11px;');
+              const startTime = performance.now();
+              
+              // Groq works better with simpler message format - combine system + user
+              const fullPrompt = `${systemInstruction}\n\nAnalyze this market data: ${dataContext}`;
+              
+              const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                      'Authorization': `Bearer ${credentials.groqApiKey}`,
+                      'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                      model: model,
+                      messages: [
+                          { role: 'user', content: fullPrompt }
+                      ],
+                      temperature: 0.3,
+                      max_tokens: 2048
+                  })
+              });
 
-          result = JSON.parse(response.text || "{}");
+              const endTime = performance.now();
+              const duration = (endTime - startTime).toFixed(2);
+              
+              console.log(`%c✅ Groq Response received in ${duration}ms (Status: ${groqResponse.status})`, 'color: purple; font-size: 11px;');
+
+              if (!groqResponse.ok) {
+                  const errorData = await groqResponse.json().catch(() => ({ error: 'Unknown error' }));
+                  console.error(`%c❌ Groq API Error: ${groqResponse.status} ${groqResponse.statusText}`, 'color: red; font-weight: bold;');
+                  console.error('Error details:', errorData);
+                  // If model is decommissioned, suggest fallback
+                  if (errorData.error?.code === 'model_decommissioned') {
+                      console.warn('%c⚠️  Model decommissioned. Try Gemini or use local engine instead.', 'color: orange; font-weight: bold;');
+                  }
+                  throw new Error(`Groq API error (${groqResponse.status}): ${JSON.stringify(errorData)}`);
+              }
+
+              const groqData = await groqResponse.json();
+              const responseText = groqData.choices?.[0]?.message?.content || '{}';
+              
+              // Try to extract JSON from response
+              try {
+                  // First try direct JSON parse
+                  result = JSON.parse(responseText);
+              } catch (e) {
+                  // If that fails, try to extract JSON from markdown code blocks
+                  const jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/) || responseText.match(/```\n?([\s\S]*?)\n?```/);
+                  if (jsonMatch) {
+                      result = JSON.parse(jsonMatch[1]);
+                  } else {
+                      throw new Error(`Could not parse Groq response as JSON: ${responseText.substring(0, 200)}`);
+                  }
+              }
+              console.log('%c📊 Groq Analysis Result:', 'color: purple; font-weight: bold;', result);
+          } else {
+              // --- GEMINI AI (Default) ---
+              console.log('%c📡 Sending request to Gemini API (gemini-2.5-flash)', 'color: green; font-size: 11px;');
+              const startTime = performance.now();
+              
+              const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey! });
+              
+              const response = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: `Analyze this market data: ${dataContext}`,
+                config: { 
+                    responseMimeType: "application/json",
+                    systemInstruction 
+                }
+              });
+
+              const endTime = performance.now();
+              const duration = (endTime - startTime).toFixed(2);
+              console.log(`%c✅ Gemini Response received in ${duration}ms`, 'color: green; font-size: 11px;');
+
+              result = JSON.parse(response.text || "{}");
+              console.log('%c📊 Gemini Analysis Result:', 'color: green; font-weight: bold;', result);
+          }
       }
       
       const newRecord: AnalysisRecord = {
@@ -725,18 +822,27 @@ const App: React.FC = () => {
 
       setQuantAnalysis(result);
       setQuantHistory(prev => [newRecord, ...prev]);
+      
+      console.log('%c✅ QUANT ANALYSIS COMPLETE', 'color: blue; font-weight: bold; font-size: 14px;');
+      console.log('%c📈 Signal:', `color: ${result.signal === 'LONG' ? 'green' : result.signal === 'SHORT' ? 'red' : 'orange'}; font-weight: bold;`, result.signal);
+      console.log('%c🎯 Confidence:', 'color: cyan;', `${result.confidence_score}%`);
+      console.log('%c💡 Reason:', 'color: yellow;', result.primary_reason);
 
     } catch (e: any) {
+        console.error('%c❌ QUANT ANALYSIS ERROR', 'color: red; font-weight: bold; font-size: 14px;', e.message);
         setQuantError(e.message);
     } finally {
         setIsQuantAnalyzing(false);
     }
-  }, [credentials.googleApiKey, credentials.aiEnabled, isQuantAnalyzing, historyLog, stocks, niftyLtp, pivots]);
+  }, [credentials.groqApiKey, credentials.googleApiKey, credentials.aiProvider, credentials.aiEnabled, isQuantAnalyzing, historyLog, stocks, niftyLtp, pivots]);
 
   // --- Auto-Run Quant Analysis (Every 5 Mins) ---
   useEffect(() => {
-      // Allow running if local mode (no key required if !aiEnabled) or if AI enabled with key
-      const canRun = (credentials.aiEnabled && credentials.googleApiKey) || (!credentials.aiEnabled);
+      // Check if correct API key is present for the selected provider
+      const hasValidKey = credentials.aiProvider === 'groq' 
+        ? credentials.groqApiKey 
+        : credentials.googleApiKey;
+      const canRun = (credentials.aiEnabled && hasValidKey) || (!credentials.aiEnabled);
       
       if (!canRun || historyLog.length === 0 || isQuantAnalyzing) return;
 
@@ -1002,7 +1108,7 @@ const App: React.FC = () => {
             <div className="flex flex-col h-full px-4 pb-4 relative">
                 <SentimentHistory 
                     history={historyLog} 
-                    apiKey={credentials.googleApiKey}
+                    credentials={credentials}
                     aiEnabled={credentials.aiEnabled}
                 />
             </div>
@@ -1017,7 +1123,7 @@ const App: React.FC = () => {
                    onRunAnalysis={runQuantAnalysis}
                    onClearHistory={handleClearQuantHistory}
                    onSelectAnalysis={setQuantAnalysis}
-                   apiKey={credentials.googleApiKey}
+                   credentials={credentials}
                    aiEnabled={credentials.aiEnabled}
                 />
             </div>
@@ -1029,7 +1135,7 @@ const App: React.FC = () => {
                     snapshot={historyLog[historyLog.length-1]}
                     niftyLtp={niftyLtp}
                     stocks={stocks}
-                    apiKey={credentials.googleApiKey}
+                    credentials={credentials}
                     pivots={pivots}
                     aiEnabled={credentials.aiEnabled}
                 />
@@ -1043,7 +1149,7 @@ const App: React.FC = () => {
                    niftyLtp={niftyLtp}
                    historyLog={historyLog}
                    optionQuotes={optionQuotes}
-                   apiKey={credentials.googleApiKey}
+                   credentials={credentials}
                    aiEnabled={credentials.aiEnabled}
                 />
             </div>

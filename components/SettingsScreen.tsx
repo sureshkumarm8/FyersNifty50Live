@@ -85,6 +85,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [appId, setAppId] = useState(currentCreds.appId);
   const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
+  const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
+  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq'>(currentCreds.aiProvider || 'gemini');
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
@@ -111,7 +113,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   }, [isEditingProtocol, protocolData]);
 
   const handleSave = () => {
-    onSave({ appId, accessToken, googleApiKey, bypassMarketHours, refreshInterval, aiEnabled });
+    onSave({ appId, accessToken, googleApiKey, groqApiKey, bypassMarketHours, refreshInterval, aiEnabled, aiProvider: selectedAiProvider });
     onBack();
   };
 
@@ -143,6 +145,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       appId: "XV1234567-100",
       accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE",
       googleApiKey: "YOUR_GEMINI_API_KEY_HERE",
+      groqApiKey: "YOUR_GROQ_API_KEY_HERE",
+      aiProvider: "gemini",
       bypassMarketHours: false,
       aiEnabled: true,
       refreshInterval: 60000
@@ -167,6 +171,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         if (json.appId) setAppId(json.appId);
         if (json.accessToken) setAccessToken(json.accessToken);
         if (json.googleApiKey) setGoogleApiKey(json.googleApiKey);
+        if (json.groqApiKey) setGroqApiKey(json.groqApiKey);
+        if (json.aiProvider) setSelectedAiProvider(json.aiProvider);
         if (json.bypassMarketHours !== undefined) setBypassMarketHours(json.bypassMarketHours);
         if (json.refreshInterval !== undefined) setRefreshInterval(json.refreshInterval);
         if (json.aiEnabled !== undefined) setAiEnabled(json.aiEnabled);
@@ -364,21 +370,62 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                          </div>
 
                          <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Gemini API Key</label>
-                            <div className="relative group">
-                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors">
-                                    <Lock size={16} />
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">AI Provider</label>
+                            <div className="relative">
+                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                    <Cpu size={16} />
                                 </div>
-                                <input 
-                                    type="password" 
-                                    value={googleApiKey} 
-                                    onChange={(e) => setGoogleApiKey(e.target.value)} 
-                                    placeholder="sk-..."
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono"
-                                />
+                                <select 
+                                    value={selectedAiProvider} 
+                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq')}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
+                                >
+                                    <option value="gemini">Gemini AI</option>
+                                    <option value="groq">Groq AI</option>
+                                </select>
+                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </div>
                             </div>
-                            <p className="text-[10px] text-slate-500 text-right">Required for Sniper Scope & Quant Deck</p>
                          </div>
+
+                         {selectedAiProvider === 'gemini' && (
+                            <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Gemini API Key</label>
+                               <div className="relative group">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors">
+                                       <Lock size={16} />
+                                   </div>
+                                   <input 
+                                       type="password" 
+                                       value={googleApiKey} 
+                                       onChange={(e) => setGoogleApiKey(e.target.value)} 
+                                       placeholder="sk-..."
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono"
+                                   />
+                               </div>
+                               <p className="text-[10px] text-slate-500 text-right">Get your key from console.ai.google.com</p>
+                            </div>
+                         )}
+
+                         {selectedAiProvider === 'groq' && (
+                            <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Groq API Key</label>
+                               <div className="relative group">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors">
+                                       <Lock size={16} />
+                                   </div>
+                                   <input 
+                                       type="password" 
+                                       value={groqApiKey} 
+                                       onChange={(e) => setGroqApiKey(e.target.value)} 
+                                       placeholder="gsk-..."
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono"
+                                   />
+                               </div>
+                               <p className="text-[10px] text-slate-500 text-right">Get your key from console.groq.com</p>
+                            </div>
+                         )}
                     </div>
                 </div>
 

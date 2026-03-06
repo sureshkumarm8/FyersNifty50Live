@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { StrategySignal, AnalysisRecord } from '../types';
+import { FyersCredentials, StrategySignal, AnalysisRecord } from '../types';
 import { 
   Crosshair, Zap, TrendingUp, TrendingDown, 
   AlertTriangle, RefreshCw, Shield, 
@@ -15,7 +15,7 @@ interface AIQuantDeckProps {
   onRunAnalysis: () => void;
   onClearHistory: () => void;
   onSelectAnalysis: (signal: StrategySignal) => void;
-  apiKey?: string;
+  credentials: FyersCredentials;
   aiEnabled?: boolean;
 }
 
@@ -26,14 +26,14 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
     onRunAnalysis, 
     onClearHistory,
     onSelectAnalysis,
-    apiKey,
+    credentials,
     aiEnabled
 }) => {
   
   // Logic determined by parent (App.tsx), here we just render based on props.
-  // If no API key and no AI Enabled, it will run in Local Heuristic Mode.
+  // Provider selection is handled by parent via credentials
   
-  const isLocalMode = !apiKey || aiEnabled === false;
+  const isLocalMode = !credentials.googleApiKey && !credentials.groqApiKey || aiEnabled === false;
 
   return (
     <div className="flex flex-col h-full overflow-hidden p-4 max-w-7xl mx-auto w-full gap-4">

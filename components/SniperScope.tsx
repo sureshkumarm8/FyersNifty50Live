@@ -1,14 +1,14 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI } from "@google/genai";
-import { MarketSnapshot, EnrichedFyersQuote, TradingSystemProtocol, SniperAnalysis, PivotPoints } from '../types';
+import { FyersCredentials, MarketSnapshot, EnrichedFyersQuote, TradingSystemProtocol, SniperAnalysis, PivotPoints } from '../types';
+import { callAI } from '../services/aiProvider';
 import { Crosshair, ShieldAlert, CheckCircle, XCircle, Search, Target, Zap, Activity, Play, Lock, AlertTriangle, Volume2, VolumeX, History, Clock, ChevronDown, StopCircle, PauseCircle, Trash2, Eye } from 'lucide-react';
 
 interface SniperScopeProps {
   snapshot: MarketSnapshot;
   niftyLtp: number | null;
-  stocks: EnrichedFyersQuote[]; // Passed for breadth/heavyweight context
-  apiKey?: string;
+  stocks: EnrichedFyersQuote[];
+  credentials: FyersCredentials;
   pivots: PivotPoints | null;
   aiEnabled?: boolean;
 }
@@ -183,8 +183,6 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
     setError(null);
 
     try {
-        const ai = new GoogleGenAI({ apiKey });
-        
         // Prepare Context
         const heavyweights = currentStocks
             .filter(s => ['HDFCBANK', 'RELIANCE', 'ICICIBANK', 'INFY', 'TCS'].some(k => s.symbol.includes(k)))
@@ -245,16 +243,9 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
             }
         `;
 
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: "Scan market for entry trigger.",
-            config: {
-                responseMimeType: "application/json",
-                systemInstruction
-            }
-        });
-
-        const result = JSON.parse(response.text || "{}");
+        const userContent = "Scan market for entry trigger.";
+        const responseText = await callAI(credentials, systemInstruction, userContent);
+        const result = JSON.parse(responseText || "{}");
         setAnalysis(result);
 
         // Add to History

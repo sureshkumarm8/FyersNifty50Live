@@ -1,14 +1,15 @@
 
 
 import React, { useState, useRef, useEffect } from 'react';
+import { FyersCredentials, MarketSnapshot } from '../types';
+import { callAI } from '../services/aiProvider';
 import { GoogleGenAI } from "@google/genai";
-import { MarketSnapshot } from '../types';
 import { Clock, Activity, Bot, Send, X, MessageSquare, Loader2, Sparkles, ChevronRight, ChevronLeft, Download, Trash2 } from 'lucide-react';
 import { downloadCSV } from '../services/csv';
 
 interface SentimentHistoryProps {
   history: MarketSnapshot[];
-  apiKey?: string;
+  credentials: FyersCredentials;
   aiEnabled?: boolean;
 }
 
@@ -76,7 +77,8 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
     return <div className="markdown-content text-sm leading-relaxed text-slate-300" dangerouslySetInnerHTML={{ __html: parseMarkdown(content) }} />;
 };
 
-export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, apiKey, aiEnabled }) => {
+
+export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, credentials, aiEnabled }) => {
   const [isAiOpen, setIsAiOpen] = useState(false);
   
   // Persistence for History Chat
@@ -130,10 +132,6 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, api
       setIsLoading(true);
 
       try {
-          const effectiveKey = apiKey || process.env.API_KEY;
-          if (!effectiveKey) throw new Error("API Key missing. Please configure in Settings.");
-
-          const ai = new GoogleGenAI({ apiKey: effectiveKey });
           const context = generateContext();
           
           const systemInstruction = `You are a Quantitative Analyst for Nifty 50.
@@ -146,14 +144,9 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, api
           Keep answers short, technical, and trading-focused.
           Use Markdown for formatting (bold numbers, lists for steps).`;
 
-          const response = await ai.models.generateContent({
-              model: "gemini-2.5-flash",
-              contents: userMsg,
-              config: { systemInstruction }
-          });
-          
-          const text = response.text || "No analysis generated.";
-          setMessages(prev => [...prev, { role: 'model', text }]);
+          const responseText = await callAI(credentials, systemInstruction, userMsg);
+          const text = JSON.parse(responseText) || "No analysis generated.";
+          setMessages(prev => [...prev, { role: 'model', text: typeof text === 'string' ? text : JSON.stringify(text) }]);
 
       } catch (e: any) {
           setMessages(prev => [...prev, { role: 'model', text: `Error: ${e.message}` }]);

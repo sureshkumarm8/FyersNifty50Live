@@ -8,7 +8,9 @@ export interface FyersCredentials {
   bypassMarketHours?: boolean; 
   refreshInterval?: number;
   googleApiKey?: string;
+  groqApiKey?: string;
   aiEnabled?: boolean;
+  aiProvider?: 'gemini' | 'groq';
 }
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
