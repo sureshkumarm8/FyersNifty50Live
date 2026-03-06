@@ -145,8 +145,8 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
           Use Markdown for formatting (bold numbers, lists for steps).`;
 
           const responseText = await callAI(credentials, systemInstruction, userMsg);
-          const text = JSON.parse(responseText) || "No analysis generated.";
-          setMessages(prev => [...prev, { role: 'model', text: typeof text === 'string' ? text : JSON.stringify(text) }]);
+          // Response is plain text/markdown, not JSON
+          setMessages(prev => [...prev, { role: 'model', text: responseText }]);
 
       } catch (e: any) {
           setMessages(prev => [...prev, { role: 'model', text: `Error: ${e.message}` }]);

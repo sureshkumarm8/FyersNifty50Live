@@ -4,15 +4,17 @@ import { FyersCredentials } from "../types";
 export async function callAI(
   credentials: FyersCredentials,
   systemInstruction: string,
-  userContent: string
+  userContent: string,
+  options?: { jsonMode?: boolean }
 ): Promise<string> {
   const provider = credentials.aiProvider || 'gemini';
+  const jsonMode = options?.jsonMode ?? false;
   
   // Check which provider to use
   if (provider === 'groq' && credentials.groqApiKey) {
-    return callGroqAI(credentials.groqApiKey, systemInstruction, userContent);
+    return callGroqAI(credentials.groqApiKey, systemInstruction, userContent, jsonMode);
   } else if (credentials.googleApiKey) {
-    return callGeminiAI(credentials.googleApiKey, systemInstruction, userContent);
+    return callGeminiAI(credentials.googleApiKey, systemInstruction, userContent, jsonMode);
   } else {
     throw new Error('No valid AI API key configured');
   }
@@ -21,19 +23,24 @@ export async function callAI(
 async function callGeminiAI(
   apiKey: string,
   systemInstruction: string,
-  userContent: string
+  userContent: string,
+  jsonMode: boolean = false
 ): Promise<string> {
   console.log('%c📡 Calling Gemini AI (gemini-2.5-flash)', 'color: green; font-size: 11px;');
   const startTime = performance.now();
   
   const ai = new GoogleGenAI({ apiKey });
+  const config: any = { systemInstruction };
+  
+  // Only force JSON mode if explicitly requested
+  if (jsonMode) {
+    config.responseMimeType = "application/json";
+  }
+  
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: userContent,
-    config: {
-      responseMimeType: "application/json",
-      systemInstruction
-    }
+    config
   });
   
   const duration = (performance.now() - startTime).toFixed(2);
@@ -45,7 +52,8 @@ async function callGeminiAI(
 async function callGroqAI(
   apiKey: string,
   systemInstruction: string,
-  userContent: string
+  userContent: string,
+  jsonMode: boolean = false
 ): Promise<string> {
   const model = 'llama-3.3-70b-versatile';
   console.log(`%c📡 Calling Groq AI (${model})`, 'color: purple; font-size: 11px;');
@@ -82,6 +90,11 @@ async function callGroqAI(
   
   const data = await response.json();
   const responseText = data.choices?.[0]?.message?.content || '{}';
+  
+  if (!jsonMode) {
+    // Return plain text response
+    return responseText;
+  }
   
   // Extract JSON if wrapped in code blocks
   try {

@@ -244,7 +244,7 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
         `;
 
         const userContent = "Scan market for entry trigger.";
-        const responseText = await callAI(credentials, systemInstruction, userContent);
+        const responseText = await callAI(credentials, systemInstruction, userContent, { jsonMode: true });
         const result = JSON.parse(responseText || "{}");
         setAnalysis(result);
 
