@@ -23,10 +23,12 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({ credential
     multiOI: null,
   });
 
+  const [pendingImages, setPendingImages] = useState<{ name: string; data: string }[]>([]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [expandedLive, setExpandedLive] = useState<Record<number, boolean>>({});
+  const [draggedImage, setDraggedImage] = useState<{ name: string; data: string } | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('preMarketData');
@@ -48,28 +50,47 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({ credential
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
 
-    const totalFiles = files.length;
     let processed = 0;
+    const totalFiles = files.length;
+    const newImages: { name: string; data: string }[] = [];
 
-    Array.from(files).forEach(file => {
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith('image/')) {
+        processed++;
+        return;
+      }
+
       const reader = new FileReader();
       reader.onload = (evt) => {
         const result = evt.target?.result as string;
-        const name = file.name.toLowerCase();
-        
-        let zone = 'intraday';
-        if (name.includes('oi') || name.includes('open')) zone = 'oi';
-        else if (name.includes('5day') || name.includes('5d')) zone = 'fiveDay';
-        else if (name.includes('multi')) zone = 'multiOI';
-
-        setUploadedImages(prev => ({ ...prev, [zone]: result }));
+        newImages.push({ name: file.name, data: result });
         processed++;
         setUploadProgress(Math.round((processed / totalFiles) * 100));
+
+        if (processed === totalFiles) {
+          setPendingImages(prev => [...prev, ...newImages]);
+          setTimeout(() => setUploadProgress(0), 500);
+        }
       };
+
+      reader.onerror = () => {
+        console.error(`Failed to read file: ${file.name}`);
+        processed++;
+      };
+
       reader.readAsDataURL(file);
     });
+  };
+
+  const assignImageToZone = (imageName: string, imageData: string, zoneId: string) => {
+    setUploadedImages(prev => ({ ...prev, [zoneId]: imageData }));
+    setPendingImages(prev => prev.filter(img => img.name !== imageName));
+  };
+
+  const removePendingImage = (imageName: string) => {
+    setPendingImages(prev => prev.filter(img => img.name !== imageName));
   };
 
   const analyzeTab = async () => {
@@ -192,8 +213,8 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({ credential
             {/* Upload */}
             <div className="bg-slate-800 p-4 rounded border border-slate-700">
               <label className="block w-full p-6 border-2 border-dashed border-blue-500/50 rounded cursor-pointer hover:border-blue-400 bg-blue-900/10 text-center">
-                <div className="text-slate-300 text-sm font-bold">📤 Click or drag images</div>
-                <div className="text-xs text-slate-400">Upload all 4 charts at once</div>
+                <div className="text-slate-300 text-sm font-bold">📤 Click or drag screenshots</div>
+                <div className="text-xs text-slate-400">All Mac screenshots accepted</div>
                 <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
               </label>
               {uploadProgress > 0 && uploadProgress < 100 && (
@@ -203,31 +224,81 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({ credential
               )}
             </div>
 
-            {/* Images Grid */}
-            <div className="grid grid-cols-2 gap-2">
-              {zones.map(zone => (
-                <div
-                  key={zone.id}
-                  className={`relative h-24 rounded border-2 overflow-hidden cursor-pointer transition ${
-                    uploadedImages[zone.id]
-                      ? 'border-green-500 bg-green-900/20'
-                      : 'border-slate-600 bg-slate-800'
-                  }`}
-                  onClick={() => uploadedImages[zone.id] && setPreviewImage(uploadedImages[zone.id])}
-                >
-                  {uploadedImages[zone.id] ? (
-                    <img
-                      src={uploadedImages[zone.id]!}
-                      alt={zone.label}
-                      className="w-full h-full object-cover hover:opacity-80"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-xs text-slate-500 text-center px-2">
-                      {zone.label}
+            {/* Pending Images - Drag to assign */}
+            {pendingImages.length > 0 && (
+              <div className="bg-slate-800 p-4 rounded border border-amber-500/50">
+                <div className="text-xs font-bold text-amber-300 mb-3">📸 Screenshots uploaded - Drag to assign to zones below</div>
+                <div className="flex gap-2 flex-wrap">
+                  {pendingImages.map(img => (
+                    <div
+                      key={img.name}
+                      draggable
+                      onDragStart={() => setDraggedImage(img)}
+                      className="relative group h-16 w-16 rounded border-2 border-amber-500 bg-amber-900/20 cursor-move overflow-hidden hover:border-amber-400"
+                      title={img.name}
+                    >
+                      <img src={img.data} alt={img.name} className="w-full h-full object-cover" />
+                      <button
+                        onClick={() => removePendingImage(img.name)}
+                        className="absolute top-0 right-0 bg-red-600 text-white p-0.5 rounded-bl text-xs opacity-0 group-hover:opacity-100"
+                      >
+                        ✕
+                      </button>
                     </div>
-                  )}
+                  ))}
                 </div>
-              ))}
+              </div>
+            )}
+
+            {/* Zone Grid - Drop to assign */}
+            <div className="bg-slate-800 p-4 rounded border border-slate-700">
+              <div className="text-xs font-bold text-slate-300 mb-3">🎯 Drag screenshots here to assign</div>
+              <div className="grid grid-cols-2 gap-2">
+                {zones.map(zone => (
+                  <div
+                    key={zone.id}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.classList.add('border-emerald-400', 'bg-emerald-900/30');
+                    }}
+                    onDragLeave={(e) => {
+                      e.currentTarget.classList.remove('border-emerald-400', 'bg-emerald-900/30');
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.classList.remove('border-emerald-400', 'bg-emerald-900/30');
+                      if (draggedImage) {
+                        assignImageToZone(draggedImage.name, draggedImage.data, zone.id);
+                        setDraggedImage(null);
+                      }
+                    }}
+                    className={`relative h-24 rounded border-2 overflow-hidden cursor-pointer transition ${
+                      uploadedImages[zone.id]
+                        ? 'border-green-500 bg-green-900/20'
+                        : 'border-slate-600 bg-slate-900 hover:border-emerald-400'
+                    }`}
+                    onClick={() => uploadedImages[zone.id] && setPreviewImage(uploadedImages[zone.id])}
+                  >
+                    {uploadedImages[zone.id] ? (
+                      <>
+                        <img
+                          src={uploadedImages[zone.id]!}
+                          alt={zone.label}
+                          className="w-full h-full object-cover hover:opacity-80"
+                        />
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 to-transparent p-1 text-xs font-bold text-emerald-300">
+                          {zone.label}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-xs text-slate-500 text-center px-2">
+                        <div>{zone.label}</div>
+                        <div className="text-[10px] mt-1">Drag here</div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Analysis */}
