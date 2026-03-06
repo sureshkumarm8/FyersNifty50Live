@@ -731,8 +731,7 @@ const App: React.FC = () => {
 
           if (credentials.aiProvider === 'groq') {
               // --- GROQ AI ---
-              // Using latest active model - check https://console.groq.com/docs/models for current list
-              const model = 'llama-3.3-70b-versatile';
+              const model = credentials.groqModel || 'llama-3.3-70b-versatile';
               console.log(`%c📡 Sending request to Groq API (${model})`, 'color: purple; font-size: 11px;');
               const startTime = performance.now();
               

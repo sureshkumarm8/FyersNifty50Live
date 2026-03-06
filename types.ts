@@ -12,7 +12,18 @@ export interface FyersCredentials {
   groqApiKey?: string;
   aiEnabled?: boolean;
   aiProvider?: 'gemini' | 'groq';
+  groqModel?: string;
 }
+
+// All available Groq models
+export const GROQ_MODELS = [
+  { id: 'mixtral-8x7b-32768', name: '🚀 Mixtral 8x7B (Fast)', tokenLimit: 100000 },
+  { id: 'llama-3.3-70b-versatile', name: '🦙 Llama 3.3 70B (Best)', tokenLimit: 100000 },
+  { id: 'llama-3.1-70b-versatile', name: '🦙 Llama 3.1 70B', tokenLimit: 100000 },
+  { id: 'llama-3.1-405b-reasoning', name: '🧠 Llama 3.1 405B (Reasoning)', tokenLimit: 50000 },
+  { id: 'gemma-7b-it', name: '💎 Gemma 7B', tokenLimit: 100000 },
+  { id: 'gemma2-9b-it', name: '💎 Gemma2 9B', tokenLimit: 100000 },
+];
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
 export interface FyersQuote {

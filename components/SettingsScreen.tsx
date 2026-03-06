@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FyersCredentials, TradingSystemProtocol } from '../types';
+import { FyersCredentials, TradingSystemProtocol, GROQ_MODELS } from '../types';
 import { 
   Save, ShieldCheck, Upload, Download, Trash2, 
   ArrowLeft, ToggleLeft, ToggleRight, 
@@ -8,7 +8,7 @@ import {
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
   ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair,
-  Volume2, Layers, Key, Lock, Cpu
+  Volume2, Layers, Key, Lock, Cpu, AlertCircle, TrendingDown
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
@@ -86,10 +86,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
+  const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'llama-3.3-70b-versatile');
   const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq'>(currentCreds.aiProvider || 'gemini');
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
+  const [rateLimitInfo, setRateLimitInfo] = useState<any>(null);
+  const [checkingRateLimit, setCheckingRateLimit] = useState(false);
   
   // Protocol State
   const [protocolData, setProtocolData] = useState<TradingSystemProtocol>(() => {
@@ -112,8 +115,45 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       }
   }, [isEditingProtocol, protocolData]);
 
+  const checkGroqRateLimit = async () => {
+    if (!groqApiKey) {
+      alert('❌ Please enter your Groq API key first');
+      return;
+    }
+    
+    setCheckingRateLimit(true);
+    try {
+      const resp = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: { 'Authorization': `Bearer ${groqApiKey}` }
+      });
+      
+      if (resp.ok) {
+        setRateLimitInfo({
+          status: 'active',
+          message: '✅ API Key Valid - Rate limits active',
+          checked: new Date().toLocaleTimeString()
+        });
+      } else {
+        const error = await resp.json();
+        setRateLimitInfo({
+          status: 'error',
+          message: `❌ API Error: ${error.error?.message || 'Unknown'}`,
+          checked: new Date().toLocaleTimeString()
+        });
+      }
+    } catch (e: any) {
+      setRateLimitInfo({
+        status: 'error',
+        message: `❌ Failed to check: ${e.message}`,
+        checked: new Date().toLocaleTimeString()
+      });
+    } finally {
+      setCheckingRateLimit(false);
+    }
+  };
+
   const handleSave = () => {
-    onSave({ appId, accessToken, googleApiKey, groqApiKey, bypassMarketHours, refreshInterval, aiEnabled, aiProvider: selectedAiProvider });
+    onSave({ appId, accessToken, googleApiKey, groqApiKey, groqModel, bypassMarketHours, refreshInterval, aiEnabled, aiProvider: selectedAiProvider });
     onBack();
   };
 
@@ -424,8 +464,67 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                    />
                                </div>
                                <p className="text-[10px] text-slate-500 text-right">Get your key from console.groq.com</p>
+
+                               {/* MODEL SELECTOR */}
+                               <div className="pt-2">
+                                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1 block mb-2">AI Model</label>
+                                   <div className="relative">
+                                       <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                                           <Bot size={16} />
+                                       </div>
+                                       <select 
+                                           value={groqModel}
+                                           onChange={(e) => setGroqModel(e.target.value)}
+                                           className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
+                                       >
+                                           {GROQ_MODELS.map(model => (
+                                               <option key={model.id} value={model.id}>{model.name}</option>
+                                           ))}
+                                       </select>
+                                       <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                       </div>
+                                   </div>
+                               </div>
+
+                               {/* RATE LIMIT CHECK */}
+                               <div className="pt-3 border-t border-slate-800">
+                                   <button
+                                       onClick={checkGroqRateLimit}
+                                       disabled={checkingRateLimit || !groqApiKey}
+                                       className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold text-white transition-all duration-300"
+                                   >
+                                       {checkingRateLimit ? (
+                                           <>
+                                               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                               Checking...
+                                           </>
+                                       ) : (
+                                           <>
+                                               <AlertCircle size={16} />
+                                               Check Rate Limits
+                                           </>
+                                       )}
+                                   </button>
+                                   
+                                   {rateLimitInfo && (
+                                       <div className={`mt-3 p-3 rounded-lg border text-sm ${
+                                           rateLimitInfo.status === 'active' 
+                                               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                                               : 'bg-red-500/10 border-red-500/30 text-red-300'
+                                       }`}>
+                                           <div className="font-semibold">{rateLimitInfo.message}</div>
+                                           <div className="text-xs opacity-70 mt-1">Checked: {rateLimitInfo.checked}</div>
+                                           {rateLimitInfo.status === 'error' && (
+                                               <a href="https://console.groq.com/settings/limits" target="_blank" rel="noopener noreferrer" className="text-xs underline mt-2 block hover:opacity-80">
+                                                   View all limits →
+                                               </a>
+                                           )}
+                                       </div>
+                                   )}
+                               </div>
                             </div>
-                         )}
+                        )}
                     </div>
                 </div>
 
