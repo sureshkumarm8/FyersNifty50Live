@@ -494,101 +494,87 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
               )}
             </div>
 
-            {/* Uploaded Images Preview */}
-            {Object.values(uploadedImages).some(img => img) && (
-              <div className="bg-slate-800 p-5 rounded-lg border border-emerald-500/30">
-                <h3 className="font-bold text-emerald-300 mb-3">✓ Uploaded Images - Click to preview, drag to reorder</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { id: 'intraday', label: '📊 Yesterday Intraday' },
-                    { id: 'oi', label: '📈 Yesterday OI' },
-                    { id: 'fiveDay', label: '📉 Last 5 Days' },
-                    { id: 'multiOI', label: '🎯 Multi OI' },
-                  ].map(zone => 
-                    uploadedImages[zone.id] ? (
-                      <div
-                        key={zone.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, zone.id)}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => handleDrop(e, zone.id)}
-                        className="relative group rounded-lg overflow-hidden border-2 border-emerald-500/50 bg-emerald-900/20 cursor-move h-40 transition-all hover:border-emerald-400"
-                      >
+            {/* Uploaded Images Preview - Always Show Grid */}
+            <div className="bg-slate-800 p-5 rounded-lg border border-emerald-500/30">
+              <h3 className="font-bold text-emerald-300 mb-3">✓ Uploaded Charts</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { id: 'intraday', label: '📊 Yesterday Intraday' },
+                  { id: 'oi', label: '📈 Yesterday OI' },
+                  { id: 'fiveDay', label: '📉 Last 5 Days' },
+                  { id: 'multiOI', label: '🎯 Multi OI' },
+                ].map(zone => (
+                  <div
+                    key={zone.id}
+                    className="relative rounded-lg overflow-hidden border-2 h-40 transition-all"
+                    style={{
+                      borderColor: uploadedImages[zone.id] ? '#10b981' : '#64748b',
+                      backgroundColor: uploadedImages[zone.id] ? 'rgba(5, 150, 105, 0.1)' : 'rgba(30, 41, 59, 0.3)',
+                    }}
+                  >
+                    {uploadedImages[zone.id] ? (
+                      <>
                         <img 
                           src={uploadedImages[zone.id]!} 
                           alt={zone.label} 
-                          className="w-full h-full object-cover opacity-75 group-hover:opacity-100 transition-opacity"
+                          className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
                           onClick={() => setPreviewImage(uploadedImages[zone.id])}
                         />
-                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Maximize2 size={28} className="text-white mb-2" />
-                          <span className="text-white text-xs font-bold">Click to preview</span>
-                        </div>
-                        <div className="absolute bottom-0 left-0 right-0 bg-slate-900/90 p-2 text-xs text-emerald-300 font-bold border-t border-emerald-500/30">
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 to-transparent p-2 text-xs font-bold text-emerald-300">
                           {zone.label}
                         </div>
-                      </div>
+                      </>
                     ) : (
-                      <div
-                        key={zone.id}
-                        className="relative rounded-lg border-2 border-dashed border-slate-600 bg-slate-900/30 h-40 flex items-center justify-center cursor-default"
-                      >
-                        <div className="text-center">
-                          <span className="text-slate-400 text-xs font-bold block">{zone.label}</span>
-                          <span className="text-slate-500 text-[10px] mt-1 block">Upload image</span>
-                        </div>
+                      <div className="w-full h-full flex flex-col items-center justify-center text-center">
+                        <span className="text-slate-400 text-xs font-bold">{zone.label}</span>
+                        <span className="text-slate-500 text-[10px] mt-1">No image</span>
                       </div>
-                    )
-                  )}
-                </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
 
             {/* Drag & Drop Zones - Optional Reordering */}
-            {Object.values(uploadedImages).some(img => img) && (
-              <div className="bg-slate-800 p-5 rounded-lg border border-slate-700">
-                <h3 className="font-bold text-slate-200 text-sm mb-3">📍 Drag images to reorder zones</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { id: 'intraday', label: '📊 Yesterday Intraday' },
-                    { id: 'oi', label: '📈 Yesterday OI' },
-                    { id: 'fiveDay', label: '📉 Last 5 Days' },
-                    { id: 'multiOI', label: '🎯 Multi OI' },
-                  ].map(zone => (
-                    <div
-                      key={zone.id}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        e.currentTarget.classList.add('border-indigo-400', 'bg-indigo-900/20');
-                      }}
-                      onDragLeave={(e) => {
-                        e.currentTarget.classList.remove('border-indigo-400', 'bg-indigo-900/20');
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        e.currentTarget.classList.remove('border-indigo-400', 'bg-indigo-900/20');
-                        handleDrop(e, zone.id);
-                      }}
-                      className={`relative flex flex-col items-center justify-center p-4 rounded-lg border-2 border-dashed transition-all min-h-24 cursor-default ${
-                        uploadedImages[zone.id] 
-                          ? 'border-emerald-500/50 bg-emerald-900/20' 
-                          : 'border-slate-600 bg-slate-900/30'
-                      }`}
-                    >
-                      <span className="text-sm font-bold text-slate-200">{zone.label}</span>
-                      {uploadedImages[zone.id] ? (
-                        <>
-                          <span className="text-[10px] text-emerald-400 mt-1 font-bold">✓ Assigned</span>
-                          <span className="text-[10px] text-slate-400 mt-2">Drag to swap</span>
-                        </>
-                      ) : (
-                        <span className="text-[10px] text-slate-400 mt-1">Drag image here</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
+            <div className="bg-slate-800 p-5 rounded-lg border border-slate-700">
+              <h3 className="font-bold text-slate-200 text-sm mb-3">📍 Drag to reorder (drag thumbnail to zone below)</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { id: 'intraday', label: '📊 Yesterday Intraday' },
+                  { id: 'oi', label: '📈 Yesterday OI' },
+                  { id: 'fiveDay', label: '📉 Last 5 Days' },
+                  { id: 'multiOI', label: '🎯 Multi OI' },
+                ].map(zone => (
+                  <div
+                    key={zone.id}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDrop(e, zone.id);
+                    }}
+                    className={`relative flex flex-col items-center justify-center p-4 rounded-lg border-2 border-dashed transition-all min-h-20 ${
+                      uploadedImages[zone.id] 
+                        ? 'border-emerald-500/50 bg-emerald-900/20' 
+                        : 'border-slate-600 hover:border-indigo-500 bg-slate-900/30'
+                    }`}
+                  >
+                    <span className="text-sm font-bold text-slate-200">{zone.label}</span>
+                    {uploadedImages[zone.id] ? (
+                      <>
+                        <span className="text-[10px] text-emerald-400 mt-1 font-bold">✓ Assigned</span>
+                        <span className="text-[10px] text-slate-400 mt-2">Drag to swap</span>
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 mt-1">Drop here</span>
+                    )}
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
 
             {/* System Plan Display */}
             {systemPlan && (
