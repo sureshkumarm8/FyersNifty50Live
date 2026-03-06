@@ -228,19 +228,37 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
 
   const handleDrop = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
-    const draggedData = e.dataTransfer.getData('text/plain');
+    e.stopPropagation();
+    
+    // Try to get dragged data from our custom data transfer
+    const draggedData = e.dataTransfer.getData('application/json');
     if (!draggedData) return;
 
     try {
-      const { id, data } = JSON.parse(draggedData);
-      setUploadedImages(prev => ({
-        ...prev,
-        [targetId]: data,
-        [id]: prev[targetId],
-      }));
+      const { sourceId, imageData } = JSON.parse(draggedData);
+      // Swap the images
+      setUploadedImages(prev => {
+        const temp = prev[targetId];
+        return {
+          ...prev,
+          [targetId]: prev[sourceId],
+          [sourceId]: temp,
+        };
+      });
     } catch (err) {
       console.error('Drag drop error:', err);
     }
+  };
+
+  const handleDragStart = (e: React.DragEvent, sourceId: string) => {
+    const imageData = uploadedImages[sourceId];
+    if (!imageData) return;
+    
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/json', JSON.stringify({ 
+      sourceId, 
+      imageData 
+    }));
   };
 
   const analyzeTab = async (tab: 'news' | 'premarket' | 'live' | 'post') => {
@@ -479,34 +497,49 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
             {/* Uploaded Images Preview */}
             {Object.values(uploadedImages).some(img => img) && (
               <div className="bg-slate-800 p-5 rounded-lg border border-emerald-500/30">
-                <h3 className="font-bold text-emerald-300 mb-3">✓ Uploaded Images</h3>
+                <h3 className="font-bold text-emerald-300 mb-3">✓ Uploaded Images - Click to preview, drag to reorder</h3>
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     { id: 'intraday', label: '📊 Yesterday Intraday' },
                     { id: 'oi', label: '📈 Yesterday OI' },
                     { id: 'fiveDay', label: '📉 Last 5 Days' },
                     { id: 'multiOI', label: '🎯 Multi OI' },
-                  ].map(zone => (
-                    uploadedImages[zone.id] && (
+                  ].map(zone => 
+                    uploadedImages[zone.id] ? (
                       <div
                         key={zone.id}
-                        className="relative group rounded-lg overflow-hidden border-2 border-emerald-500/50 bg-emerald-900/20 cursor-pointer h-32"
-                        onClick={() => setPreviewImage(uploadedImages[zone.id])}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, zone.id)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => handleDrop(e, zone.id)}
+                        className="relative group rounded-lg overflow-hidden border-2 border-emerald-500/50 bg-emerald-900/20 cursor-move h-40 transition-all hover:border-emerald-400"
                       >
                         <img 
                           src={uploadedImages[zone.id]!} 
                           alt={zone.label} 
-                          className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+                          className="w-full h-full object-cover opacity-75 group-hover:opacity-100 transition-opacity"
+                          onClick={() => setPreviewImage(uploadedImages[zone.id])}
                         />
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Maximize2 size={24} className="text-white" />
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Maximize2 size={28} className="text-white mb-2" />
+                          <span className="text-white text-xs font-bold">Click to preview</span>
                         </div>
-                        <div className="absolute bottom-0 left-0 right-0 bg-slate-900/80 p-1 text-xs text-emerald-300 font-bold">
+                        <div className="absolute bottom-0 left-0 right-0 bg-slate-900/90 p-2 text-xs text-emerald-300 font-bold border-t border-emerald-500/30">
                           {zone.label}
                         </div>
                       </div>
+                    ) : (
+                      <div
+                        key={zone.id}
+                        className="relative rounded-lg border-2 border-dashed border-slate-600 bg-slate-900/30 h-40 flex items-center justify-center cursor-default"
+                      >
+                        <div className="text-center">
+                          <span className="text-slate-400 text-xs font-bold block">{zone.label}</span>
+                          <span className="text-slate-500 text-[10px] mt-1 block">Upload image</span>
+                        </div>
+                      </div>
                     )
-                  ))}
+                  )}
                 </div>
               </div>
             )}
@@ -514,7 +547,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
             {/* Drag & Drop Zones - Optional Reordering */}
             {Object.values(uploadedImages).some(img => img) && (
               <div className="bg-slate-800 p-5 rounded-lg border border-slate-700">
-                <h3 className="font-bold text-slate-200 text-sm mb-3">📍 Drag to reorder (optional)</h3>
+                <h3 className="font-bold text-slate-200 text-sm mb-3">📍 Drag images to reorder zones</h3>
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     { id: 'intraday', label: '📊 Yesterday Intraday' },
@@ -524,19 +557,32 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
                   ].map(zone => (
                     <div
                       key={zone.id}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => handleDrop(e, zone.id)}
-                      className={`relative flex flex-col items-center justify-center p-3 rounded-lg border-2 border-dashed transition-all min-h-20 ${
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.add('border-indigo-400', 'bg-indigo-900/20');
+                      }}
+                      onDragLeave={(e) => {
+                        e.currentTarget.classList.remove('border-indigo-400', 'bg-indigo-900/20');
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.remove('border-indigo-400', 'bg-indigo-900/20');
+                        handleDrop(e, zone.id);
+                      }}
+                      className={`relative flex flex-col items-center justify-center p-4 rounded-lg border-2 border-dashed transition-all min-h-24 cursor-default ${
                         uploadedImages[zone.id] 
                           ? 'border-emerald-500/50 bg-emerald-900/20' 
-                          : 'border-slate-600 hover:border-indigo-500/50 bg-slate-900/30'
+                          : 'border-slate-600 bg-slate-900/30'
                       }`}
                     >
-                      <span className="text-xs font-bold text-slate-200">{zone.label}</span>
+                      <span className="text-sm font-bold text-slate-200">{zone.label}</span>
                       {uploadedImages[zone.id] ? (
-                        <span className="text-[10px] text-emerald-400 mt-1">✓ Set</span>
+                        <>
+                          <span className="text-[10px] text-emerald-400 mt-1 font-bold">✓ Assigned</span>
+                          <span className="text-[10px] text-slate-400 mt-2">Drag to swap</span>
+                        </>
                       ) : (
-                        <span className="text-[10px] text-slate-400 mt-1">Drag here</span>
+                        <span className="text-[10px] text-slate-400 mt-1">Drag image here</span>
                       )}
                     </div>
                   ))}
