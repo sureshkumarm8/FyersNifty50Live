@@ -3,7 +3,8 @@ import { FyersCredentials, MarketSnapshot } from '../types';
 import { callAI } from '../services/aiProvider';
 import { 
   Upload, X, Maximize2, Newspaper, TrendingUp, Activity, Clock, 
-  CheckCircle, AlertTriangle, Zap, Target, Loader2, ChevronDown, ChevronUp, GripHorizontal 
+  CheckCircle, AlertTriangle, Zap, Target, Loader2, ChevronDown, ChevronUp, GripHorizontal,
+  RotateCcw, TrendingUpIcon, Flame, Sparkles
 } from 'lucide-react';
 
 interface PreMarketAnalyzerProps {
@@ -19,94 +20,12 @@ interface TabData {
   postMarketAnalysis: string;
 }
 
-interface DragItem {
-  id: string;
-  type: string;
-  data: string | null;
+interface TradingSystemProtocol {
+  name: string;
+  description: string;
+  tags?: string[];
+  rules?: { rule: string; description: string }[];
 }
-
-const ImageCard = ({ 
-  id,
-  label, 
-  imageSrc, 
-  onDragStart,
-  onClick 
-}: { 
-  id: string;
-  label: string; 
-  imageSrc: string | null; 
-  onDragStart: (e: React.DragEvent, id: string) => void;
-  onClick: () => void;
-}) => (
-  <div
-    draggable
-    onDragStart={(e) => onDragStart(e, id)}
-    className={`relative flex flex-col items-center justify-center p-3 rounded-lg border-2 border-dashed transition-all h-28 group overflow-hidden cursor-move ${
-      imageSrc ? 'border-indigo-500/50 bg-indigo-900/20' : 'border-slate-700 hover:border-indigo-500/30 bg-slate-800'
-    }`}
-  >
-    {imageSrc && (
-      <div className="absolute inset-0 z-0">
-        <img src={imageSrc} alt={label} className="w-full h-full object-cover opacity-50 group-hover:opacity-30" />
-      </div>
-    )}
-    <div className="relative z-10 flex flex-col items-center text-center">
-      <GripHorizontal size={16} className={imageSrc ? 'text-indigo-400' : 'text-slate-500'} />
-      <span className={`text-xs font-bold mt-1 ${imageSrc ? 'text-indigo-300' : 'text-slate-400'}`}>{label}</span>
-      {imageSrc && <span className="text-[10px] text-emerald-400 mt-1">✓ Ready</span>}
-    </div>
-    {imageSrc && (
-      <button 
-        onClick={onClick} 
-        className="absolute top-1 right-1 p-1 bg-slate-900/70 rounded hover:bg-slate-700 text-white opacity-0 group-hover:opacity-100 transition-opacity z-20"
-        title="Preview"
-      >
-        <Maximize2 size={14} />
-      </button>
-    )}
-  </div>
-);
-
-const DragDropZone = ({ 
-  id,
-  label, 
-  onDrop,
-  imageSrc,
-  onClick 
-}: { 
-  id: string;
-  label: string; 
-  onDrop: (e: React.DragEvent, id: string) => void;
-  imageSrc: string | null;
-  onClick: () => void;
-}) => (
-  <div
-    onDragOver={(e) => e.preventDefault()}
-    onDrop={(e) => onDrop(e, id)}
-    className={`relative flex flex-col items-center justify-center p-3 rounded-lg border-2 border-dashed transition-all min-h-24 ${
-      imageSrc ? 'border-emerald-500/50 bg-emerald-900/20' : 'border-slate-700 hover:border-emerald-500/30 bg-slate-800'
-    }`}
-  >
-    {imageSrc && (
-      <div className="absolute inset-0 z-0">
-        <img src={imageSrc} alt={label} className="w-full h-full object-cover opacity-50" />
-      </div>
-    )}
-    <div className="relative z-10 flex flex-col items-center text-center">
-      <Upload size={20} className={imageSrc ? 'text-emerald-400' : 'text-slate-500'} />
-      <span className={`text-xs font-bold mt-1 ${imageSrc ? 'text-emerald-300' : 'text-slate-400'}`}>{label}</span>
-      {imageSrc && (
-        <button 
-          onClick={onClick} 
-          className="absolute top-1 right-1 p-1 bg-slate-900/70 rounded hover:bg-slate-700 text-white"
-          title="Preview"
-        >
-          <Maximize2 size={14} />
-        </button>
-      )}
-    </div>
-  </div>
-);
 
 const ImageModal = ({ src, onClose }: { src: string | null; onClose: () => void }) => {
   if (!src) return null;
@@ -138,18 +57,19 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
   const [activeTab, setActiveTab] = useState<'news' | 'premarket' | 'live' | 'post'>('news');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   
+  // Tab-specific data with persistence
+  const [tabData, setTabData] = useState<TabData>({
+    newsAnalysis: '',
+    preMarketAnalysis: '',
+    liveValidation: [],
+    postMarketAnalysis: '',
+  });
+
   const [uploadedImages, setUploadedImages] = useState<{ [key: string]: string | null }>({
     intraday: null,
     oi: null,
     fiveDay: null,
     multiOI: null,
-  });
-
-  const [analysisData, setAnalysisData] = useState<TabData>({
-    newsAnalysis: '',
-    preMarketAnalysis: '',
-    liveValidation: [],
-    postMarketAnalysis: '',
   });
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -160,23 +80,52 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
     post: true,
   });
 
-  const [systemPlan, setSystemPlan] = useState<string>('');
+  const [systemPlan, setSystemPlan] = useState<TradingSystemProtocol | null>(null);
   const [liveCharts, setLiveCharts] = useState<{ chart: string | null; oi: string | null }>({ chart: null, oi: null });
-  const [currentValidationNote, setCurrentValidationNote] = useState('');
   const [expandedValidations, setExpandedValidations] = useState<{ [key: string]: boolean }>({});
 
-  // Load system plan from localStorage
+  // Load from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem('tradingSystemProtocol');
-    if (saved) {
+    const savedData = localStorage.getItem('preMarketAnalyzerData');
+    const savedImages = localStorage.getItem('preMarketImages');
+    
+    if (savedData) {
       try {
-        const data = JSON.parse(saved);
-        setSystemPlan(data.description || 'No system plan saved');
+        setTabData(JSON.parse(savedData));
       } catch (e) {
-        setSystemPlan('Could not load system plan');
+        console.error('Failed to load tab data:', e);
+      }
+    }
+    
+    if (savedImages) {
+      try {
+        setUploadedImages(JSON.parse(savedImages));
+      } catch (e) {
+        console.error('Failed to load images:', e);
+      }
+    }
+
+    // Load system plan
+    const savedProtocol = localStorage.getItem('user_trading_protocol');
+    if (savedProtocol) {
+      try {
+        const protocol = JSON.parse(savedProtocol);
+        setSystemPlan(protocol);
+      } catch (e) {
+        console.error('Failed to load system plan:', e);
       }
     }
   }, []);
+
+  // Save to localStorage whenever tabData changes
+  useEffect(() => {
+    localStorage.setItem('preMarketAnalyzerData', JSON.stringify(tabData));
+  }, [tabData]);
+
+  // Save images to localStorage
+  useEffect(() => {
+    localStorage.setItem('preMarketImages', JSON.stringify(uploadedImages));
+  }, [uploadedImages]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -186,16 +135,15 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
       const reader = new FileReader();
       reader.onload = (event) => {
         const result = event.target?.result as string;
-        // Auto-assign based on filename or let user drag
-        setUploadedImages(prev => ({ ...prev, [file.name.split('.')[0]]: result }));
+        // Auto-assign based on filename or create new entry
+        const filename = file.name.split('.')[0].toLowerCase();
+        setUploadedImages(prev => ({ 
+          ...prev, 
+          [filename]: result 
+        }));
       };
       reader.readAsDataURL(file);
     });
-  };
-
-  const handleDragStart = (e: React.DragEvent, id: string) => {
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', JSON.stringify({ id, data: uploadedImages[id] }));
   };
 
   const handleDrop = (e: React.DragEvent, targetId: string) => {
@@ -223,35 +171,35 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
       let systemInstruction = '';
       let userContent = '';
 
+      const systemDesc = systemPlan ? `${systemPlan.name}: ${systemPlan.description}` : 'No system defined';
+
       switch (tab) {
         case 'news':
-          systemInstruction = `You are a financial news analyst for Indian markets. Analyze market sentiment relative to our trading system.
+          systemInstruction = `You are a financial news analyst for Indian markets. Analyze market sentiment relative to this trading system:
           
-          Our Trading System:
-          ${systemPlan}
+          ${systemDesc}
           
-          Analyze how current news aligns or conflicts with our system.`;
-          userContent = `Analyze current market news sentiment for Nifty 50. Consider: global cues, FII activity, sectors. How does this support/contradict our system plan?`;
+          Consider how current news aligns or conflicts with the system rules.`;
+          userContent = `Analyze current market news sentiment for Nifty 50. Consider: global cues, FII activity, sectors, macroeconomic data. Rate as Bullish/Bearish/Neutral and explain impact on our system.`;
           break;
 
         case 'premarket':
-          systemInstruction = `You are a technical analyst. Analyze charts to validate our trading system.
+          systemInstruction = `You are a technical analyst validating charts against this trading system:
           
-          Our System:
-          ${systemPlan}
+          ${systemDesc}
           
-          Analyze if today's setup aligns with our system rules.`;
-          userContent = `Analyze yesterday's trading and multi-timeframe setup. Key levels, opening bias, risk zones according to our system.`;
+          Verify if today's setup aligns with system rules and levels.`;
+          userContent = `Analyze yesterday's trading: intraday chart pattern, OI structure, 5-day trend, multi-strike levels. Provide entry bias, key S/R levels, and risk zones according to our system.`;
           break;
 
         case 'live':
-          systemInstruction = `Validate if market is playing out per our system plan.`;
-          userContent = `Market has opened. Is our planned setup working? Key levels holding? Adjustments needed per our system?`;
+          systemInstruction = `Validate if market is playing out per the system plan: ${systemDesc}`;
+          userContent = `Market is live. Is our setup working? Key levels holding? What adjustments per system? Any risk levels breached?`;
           break;
 
         case 'post':
-          systemInstruction = `Post-market review against our trading system.`;
-          userContent = `Did our system plan work today? Why/why not? Lessons? Tomorrow's setup?`;
+          systemInstruction = `Post-market analysis against the system: ${systemDesc}`;
+          userContent = `Did our system work today? Why/why not? Key learnings? Tomorrow's bias based on close?`;
           break;
       }
 
@@ -259,12 +207,12 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
       
       if (tab === 'live') {
         // Add to live validation history
-        setAnalysisData(prev => ({
+        setTabData(prev => ({
           ...prev,
           liveValidation: [
             ...prev.liveValidation,
             {
-              timestamp: new Date().toLocaleTimeString(),
+              timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
               analysis: responseText,
               chartFile: liveCharts.chart,
               oiFile: liveCharts.oi,
@@ -272,9 +220,8 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
           ]
         }));
         setLiveCharts({ chart: null, oi: null });
-        setCurrentValidationNote('');
       } else {
-        setAnalysisData(prev => ({
+        setTabData(prev => ({
           ...prev,
           [tab === 'news' ? 'newsAnalysis' : tab === 'premarket' ? 'preMarketAnalysis' : 'postMarketAnalysis']: responseText
         }));
@@ -294,6 +241,25 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
     setExpandedValidations(prev => ({ ...prev, [timestamp]: !prev[timestamp] }));
   };
 
+  const resetTab = () => {
+    switch (activeTab) {
+      case 'news':
+        setTabData(prev => ({ ...prev, newsAnalysis: '' }));
+        break;
+      case 'premarket':
+        setUploadedImages({ intraday: null, oi: null, fiveDay: null, multiOI: null });
+        setTabData(prev => ({ ...prev, preMarketAnalysis: '' }));
+        break;
+      case 'live':
+        setTabData(prev => ({ ...prev, liveValidation: [] }));
+        setLiveCharts({ chart: null, oi: null });
+        break;
+      case 'post':
+        setTabData(prev => ({ ...prev, postMarketAnalysis: '' }));
+        break;
+    }
+  };
+
   const tabs = [
     { id: 'news', label: 'News Analysis', icon: Newspaper },
     { id: 'premarket', label: 'Pre-Market', icon: TrendingUp },
@@ -304,24 +270,34 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
   return (
     <div className="flex flex-col h-full gap-4 p-4 overflow-hidden">
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-slate-700 overflow-x-auto">
-        {tabs.map(tab => {
-          const Icon = tab.icon;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-t-lg transition-all whitespace-nowrap ${
-                activeTab === tab.id
-                  ? 'bg-indigo-600 text-white shadow-lg'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Icon size={16} />
-              {tab.label}
-            </button>
-          );
-        })}
+      <div className="flex gap-2 border-b border-slate-700 overflow-x-auto items-end justify-between">
+        <div className="flex gap-2 overflow-x-auto">
+          {tabs.map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-t-lg transition-all whitespace-nowrap ${
+                  activeTab === tab.id
+                    ? 'bg-indigo-600 text-white shadow-lg'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Icon size={16} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+        
+        <button
+          onClick={resetTab}
+          className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-red-400 hover:text-red-300 transition-colors"
+          title="Clear this tab"
+        >
+          <RotateCcw size={14} /> Reset
+        </button>
       </div>
 
       {/* Content */}
@@ -329,6 +305,41 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
         {/* News Analysis Tab */}
         {activeTab === 'news' && (
           <div className="space-y-4">
+            {/* System Info Card - Beautiful UI */}
+            {systemPlan && (
+              <div className="bg-gradient-to-r from-amber-900/30 to-orange-900/30 p-5 rounded-lg border border-amber-500/30 backdrop-blur-sm">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-amber-500/20 rounded-lg">
+                    <Flame size={20} className="text-amber-400" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-bold text-amber-300 text-sm">{systemPlan.name}</h3>
+                    <p className="text-slate-300 text-xs mt-1 leading-relaxed">{systemPlan.description}</p>
+                    {systemPlan.tags && systemPlan.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {systemPlan.tags.map((tag, i) => (
+                          <span key={i} className="px-2 py-0.5 bg-amber-500/20 text-amber-300 text-[10px] font-bold rounded-full border border-amber-500/30">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Trending Sentiment */}
+                {tabData.newsAnalysis && (
+                  <div className="mt-4 pt-4 border-t border-amber-500/20 flex items-center gap-3">
+                    <div className="flex items-center gap-1">
+                      <TrendingUpIcon size={16} className="text-emerald-400" />
+                      <span className="text-xs font-bold text-emerald-400">Latest</span>
+                    </div>
+                    <p className="text-xs text-slate-300 line-clamp-2">{tabData.newsAnalysis}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
               <button
                 onClick={() => toggleSection('news')}
@@ -336,21 +347,16 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
               >
                 <div className="flex items-center gap-2">
                   <Newspaper size={18} className="text-amber-400" />
-                  <span className="font-bold text-slate-200">System-Aligned News Sentiment</span>
+                  <span className="font-bold text-slate-200">Market Sentiment Analysis</span>
                 </div>
                 {expandedSections.news ? <ChevronUp /> : <ChevronDown />}
               </button>
 
               {expandedSections.news && (
                 <div className="space-y-3">
-                  <div className="bg-slate-900 p-3 rounded text-xs text-slate-300">
-                    <strong>System Plan Summary:</strong>
-                    <p className="mt-1 italic truncate">{systemPlan}</p>
-                  </div>
-                  
-                  {analysisData.newsAnalysis && (
-                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                      {analysisData.newsAnalysis}
+                  {tabData.newsAnalysis && (
+                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto border border-slate-700">
+                      {tabData.newsAnalysis}
                     </div>
                   )}
                   <button
@@ -372,11 +378,14 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
           <div className="space-y-4">
             {/* Bulk Upload */}
             <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-              <h3 className="font-bold text-slate-200 mb-3">📤 Upload All Charts & Drag to Position</h3>
-              <label className="block w-full p-4 border-2 border-dashed border-slate-600 rounded-lg hover:border-slate-400 cursor-pointer transition">
+              <h3 className="font-bold text-slate-200 mb-3 flex items-center gap-2">
+                <Upload size={16} /> Upload All Charts
+              </h3>
+              <label className="block w-full p-6 border-2 border-dashed border-indigo-600/50 rounded-lg hover:border-indigo-400 cursor-pointer transition bg-indigo-900/10">
                 <div className="text-center">
-                  <Upload size={24} className="mx-auto mb-2 text-slate-400" />
-                  <span className="text-sm text-slate-300">Click to upload all chart images</span>
+                  <Sparkles size={28} className="mx-auto mb-2 text-indigo-400" />
+                  <span className="text-sm text-slate-300 font-bold">Click or drag files to upload</span>
+                  <span className="text-xs text-slate-400 block mt-1">Upload multiple chart images at once</span>
                 </div>
                 <input 
                   type="file" 
@@ -390,46 +399,73 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
 
             {/* Drag & Drop Zones */}
             <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 space-y-3">
-              <h3 className="font-bold text-slate-200">Drop images to correct position</h3>
+              <h3 className="font-bold text-slate-200 text-sm">📍 Drag images to correct zones</h3>
               <div className="grid grid-cols-2 gap-3">
-                <DragDropZone
-                  id="intraday"
-                  label="Yesterday Intraday"
-                  onDrop={handleDrop}
-                  imageSrc={uploadedImages.intraday}
-                  onClick={() => setPreviewImage(uploadedImages.intraday)}
-                />
-                <DragDropZone
-                  id="oi"
-                  label="Yesterday OI"
-                  onDrop={handleDrop}
-                  imageSrc={uploadedImages.oi}
-                  onClick={() => setPreviewImage(uploadedImages.oi)}
-                />
-                <DragDropZone
-                  id="fiveDay"
-                  label="Last 5 Days"
-                  onDrop={handleDrop}
-                  imageSrc={uploadedImages.fiveDay}
-                  onClick={() => setPreviewImage(uploadedImages.fiveDay)}
-                />
-                <DragDropZone
-                  id="multiOI"
-                  label="Multi OI"
-                  onDrop={handleDrop}
-                  imageSrc={uploadedImages.multiOI}
-                  onClick={() => setPreviewImage(uploadedImages.multiOI)}
-                />
+                {[
+                  { id: 'intraday', label: '📊 Yesterday Intraday' },
+                  { id: 'oi', label: '📈 Yesterday OI' },
+                  { id: 'fiveDay', label: '📉 Last 5 Days' },
+                  { id: 'multiOI', label: '🎯 Multi OI' },
+                ].map(zone => (
+                  <div
+                    key={zone.id}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => handleDrop(e, zone.id)}
+                    className={`relative flex flex-col items-center justify-center p-4 rounded-lg border-2 border-dashed transition-all min-h-32 cursor-pointer group ${
+                      uploadedImages[zone.id] 
+                        ? 'border-emerald-500/50 bg-emerald-900/20' 
+                        : 'border-slate-600 hover:border-indigo-500/50 bg-slate-900/30'
+                    }`}
+                  >
+                    {uploadedImages[zone.id] && (
+                      <div className="absolute inset-0 z-0">
+                        <img src={uploadedImages[zone.id]!} alt={zone.label} className="w-full h-full object-cover opacity-40 rounded-lg" />
+                      </div>
+                    )}
+                    <div className="relative z-10 flex flex-col items-center text-center">
+                      <span className="text-sm font-bold text-slate-200">{zone.label}</span>
+                      {uploadedImages[zone.id] ? (
+                        <span className="text-xs text-emerald-400 mt-1 font-bold">✓ Ready</span>
+                      ) : (
+                        <span className="text-xs text-slate-400 mt-1">Drop here</span>
+                      )}
+                    </div>
+                    {uploadedImages[zone.id] && (
+                      <button 
+                        onClick={() => setPreviewImage(uploadedImages[zone.id])}
+                        className="absolute top-1 right-1 p-1 bg-slate-900/70 rounded hover:bg-slate-700 text-white opacity-0 group-hover:opacity-100 transition-opacity z-20"
+                        title="Preview"
+                      >
+                        <Maximize2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
 
             {/* System Plan Display */}
-            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-              <h3 className="font-bold text-slate-200 mb-2">📋 Your Trading System</h3>
-              <div className="bg-slate-900 p-3 rounded text-sm text-slate-300 max-h-24 overflow-y-auto italic">
-                {systemPlan || 'No system plan configured in Settings > My System'}
+            {systemPlan && (
+              <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 p-4 rounded-lg border border-blue-500/30 backdrop-blur-sm">
+                <h3 className="font-bold text-blue-300 mb-2 flex items-center gap-2">
+                  <Sparkles size={16} /> Your System Rules
+                </h3>
+                <p className="text-slate-300 text-sm mb-3 italic">{systemPlan.description}</p>
+                {systemPlan.rules && systemPlan.rules.length > 0 && (
+                  <div className="space-y-2">
+                    {systemPlan.rules.slice(0, 3).map((rule, i) => (
+                      <div key={i} className="flex gap-2 text-xs">
+                        <span className="text-blue-400 font-bold">•</span>
+                        <span className="text-slate-300">{rule.rule}</span>
+                      </div>
+                    ))}
+                    {systemPlan.rules.length > 3 && (
+                      <span className="text-xs text-slate-400">+{systemPlan.rules.length - 3} more rules</span>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
+            )}
 
             {/* Analysis */}
             <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
@@ -446,9 +482,9 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
 
               {expandedSections.premarket && (
                 <div className="space-y-3">
-                  {analysisData.preMarketAnalysis && (
-                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                      {analysisData.preMarketAnalysis}
+                  {tabData.preMarketAnalysis && (
+                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto border border-slate-700">
+                      {tabData.preMarketAnalysis}
                     </div>
                   )}
                   <button
@@ -474,10 +510,10 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
               
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">Nifty 1-min Chart</label>
-                  <label className="block w-full p-2 border-2 border-dashed border-slate-600 rounded-lg hover:border-slate-400 cursor-pointer transition text-center">
-                    <Upload size={16} className="mx-auto mb-1 text-slate-400" />
-                    <span className="text-xs text-slate-300">Upload 1-min</span>
+                  <label className="block text-xs font-bold text-slate-300 mb-2">Nifty 1-min Chart</label>
+                  <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-green-500/50 cursor-pointer transition text-center bg-slate-900/30">
+                    <Upload size={18} className="mx-auto mb-1 text-slate-400" />
+                    <span className="text-xs text-slate-300">Upload</span>
                     <input 
                       type="file" 
                       accept="image/*" 
@@ -492,12 +528,13 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
                       className="hidden" 
                     />
                   </label>
+                  {liveCharts.chart && <span className="text-xs text-emerald-400 mt-1 block">✓ Ready</span>}
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">Sensibull OI</label>
-                  <label className="block w-full p-2 border-2 border-dashed border-slate-600 rounded-lg hover:border-slate-400 cursor-pointer transition text-center">
-                    <Upload size={16} className="mx-auto mb-1 text-slate-400" />
-                    <span className="text-xs text-slate-300">Upload OI</span>
+                  <label className="block text-xs font-bold text-slate-300 mb-2">Sensibull OI</label>
+                  <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-green-500/50 cursor-pointer transition text-center bg-slate-900/30">
+                    <Upload size={18} className="mx-auto mb-1 text-slate-400" />
+                    <span className="text-xs text-slate-300">Upload</span>
                     <input 
                       type="file" 
                       accept="image/*" 
@@ -512,15 +549,9 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
                       className="hidden" 
                     />
                   </label>
+                  {liveCharts.oi && <span className="text-xs text-emerald-400 mt-1 block">✓ Ready</span>}
                 </div>
               </div>
-
-              <textarea
-                value={currentValidationNote}
-                onChange={(e) => setCurrentValidationNote(e.target.value)}
-                placeholder="Add notes about market conditions (optional)"
-                className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-sm text-slate-200 h-16"
-              />
 
               <button
                 onClick={() => analyzeTab('live')}
@@ -533,34 +564,46 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
             </div>
 
             {/* Validation History */}
-            {analysisData.liveValidation.length > 0 && (
+            {tabData.liveValidation.length > 0 && (
               <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-                <h3 className="font-bold text-slate-200 mb-3">📋 Validation History</h3>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {analysisData.liveValidation.map((validation, idx) => (
-                    <div key={idx} className="bg-slate-900 p-3 rounded border border-slate-700">
+                <h3 className="font-bold text-slate-200 mb-3 flex items-center gap-2">
+                  <Activity size={16} /> Validation Checks ({tabData.liveValidation.length})
+                </h3>
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {tabData.liveValidation.map((validation, idx) => (
+                    <div key={idx} className="bg-slate-900 p-3 rounded border border-slate-700 hover:border-slate-600 transition">
                       <button
                         onClick={() => toggleValidation(validation.timestamp)}
                         className="flex items-center justify-between w-full"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono text-slate-500">{validation.timestamp}</span>
-                          <span className="text-xs text-emerald-400">✓ Validation</span>
+                          <span className="text-xs font-mono text-slate-500 bg-slate-800 px-2 py-1 rounded">{validation.timestamp}</span>
+                          <span className="text-xs text-emerald-400 font-bold">✓ Check #{idx + 1}</span>
                         </div>
                         {expandedValidations[validation.timestamp] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </button>
                       
                       {expandedValidations[validation.timestamp] && (
-                        <div className="mt-2 space-y-2 text-xs text-slate-300">
-                          <p className="whitespace-pre-wrap">{validation.analysis}</p>
-                          {validation.chartFile && (
-                            <button
-                              onClick={() => setPreviewImage(validation.chartFile)}
-                              className="text-blue-400 hover:text-blue-300"
-                            >
-                              View 1-min Chart
-                            </button>
-                          )}
+                        <div className="mt-3 space-y-2 text-xs text-slate-300 pt-3 border-t border-slate-700">
+                          <p className="whitespace-pre-wrap line-clamp-4">{validation.analysis}</p>
+                          <div className="flex gap-2 pt-2">
+                            {validation.chartFile && (
+                              <button
+                                onClick={() => setPreviewImage(validation.chartFile)}
+                                className="px-2 py-1 text-blue-400 hover:text-blue-300 bg-slate-800 rounded text-xs"
+                              >
+                                View 1-min Chart
+                              </button>
+                            )}
+                            {validation.oiFile && (
+                              <button
+                                onClick={() => setPreviewImage(validation.oiFile)}
+                                className="px-2 py-1 text-blue-400 hover:text-blue-300 bg-slate-800 rounded text-xs"
+                              >
+                                View OI
+                              </button>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -588,9 +631,9 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
 
               {expandedSections.post && (
                 <div className="space-y-3">
-                  {analysisData.postMarketAnalysis && (
-                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                      {analysisData.postMarketAnalysis}
+                  {tabData.postMarketAnalysis && (
+                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto border border-slate-700">
+                      {tabData.postMarketAnalysis}
                     </div>
                   )}
                   <button
