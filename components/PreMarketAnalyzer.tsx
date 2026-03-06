@@ -28,10 +28,21 @@ interface TradingSystemProtocol {
 }
 
 const SentimentParser = ({ text }: { text: string }) => {
-  // Parse sentiment into sections
-  const lines = text.split('\n').filter(line => line.trim());
-  
+  // Clean text by removing markdown and unwanted symbols
+  const cleanText = text
+    .replace(/<[^>]*>/g, '') // Remove HTML tags
+    .replace(/<current_datetime>[^<]*<\/current_datetime>/g, '') // Remove datetime tags
+    .replace(/#{1,6}\s+/g, '') // Remove markdown headers
+    .replace(/\*\*/g, '') // Remove bold markers
+    .replace(/\*\*/g, '') // Remove bold markers
+    .replace(/^\s*[-•*]\s+/gm, '• ') // Normalize bullet points
+    .replace(/\n\n+/g, '\n') // Remove excessive newlines
+    .split('\n')
+    .filter(line => line.trim() && !line.includes('current_datetime'))
+    .map(line => line.trim());
+
   const sentiments = ['Bullish', 'Bearish', 'Neutral'];
+  
   const getSentimentColor = (text: string) => {
     if (text.includes('Bullish')) return 'bg-emerald-900/30 border-emerald-500/50 text-emerald-300';
     if (text.includes('Bearish')) return 'bg-red-900/30 border-red-500/50 text-red-300';
@@ -47,24 +58,32 @@ const SentimentParser = ({ text }: { text: string }) => {
 
   return (
     <div className="space-y-3">
-      {lines.map((line, idx) => {
-        const isSentiment = sentiments.some(s => line.includes(s));
-        const isHeader = line.match(/^[A-Z\d]+:/) || line.match(/^[•\-\*]/);
+      {cleanText.map((line, idx) => {
+        if (!line.trim()) return null;
+        
+        const isSentiment = sentiments.some(s => line.includes(s)) && (line.includes('Bullish') || line.includes('Bearish') || line.includes('Neutral'));
+        const isBullet = line.startsWith('•');
+        const isRating = line.includes('Rating:') || line.includes('/10');
         
         return (
           <div key={idx}>
-            {isSentiment ? (
-              <div className={`flex items-center gap-3 p-3 rounded-lg border ${getSentimentColor(line)}`}>
-                {getSentimentIcon(line)}
-                <span className="font-bold text-sm">{line}</span>
+            {isRating ? (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-900/20 border border-amber-500/30 mt-3">
+                <Flame size={16} className="text-amber-400" />
+                <span className="text-sm text-amber-300 font-bold">{line}</span>
               </div>
-            ) : isHeader ? (
-              <div className="flex items-center gap-2 mt-4 mb-2">
-                <Flame size={14} className="text-amber-400" />
-                <span className="font-bold text-slate-300 text-sm">{line}</span>
+            ) : isSentiment ? (
+              <div className={`flex items-center gap-3 p-3 rounded-lg border font-bold ${getSentimentColor(line)}`}>
+                {getSentimentIcon(line)}
+                <span className="text-sm">{line}</span>
+              </div>
+            ) : isBullet ? (
+              <div className="flex items-start gap-2 text-slate-300 text-sm ml-2">
+                <span className="text-slate-500 font-bold">•</span>
+                <span className="leading-relaxed">{line.substring(2)}</span>
               </div>
             ) : (
-              <p className="text-slate-300 text-sm leading-relaxed pl-4 border-l-2 border-slate-600">{line}</p>
+              <p className="text-slate-300 text-sm leading-relaxed pl-2">{line}</p>
             )}
           </div>
         );
