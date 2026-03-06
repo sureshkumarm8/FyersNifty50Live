@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, Crosshair } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, Crosshair, TrendingUp } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
@@ -11,6 +11,7 @@ import { SettingsScreen } from './components/SettingsScreen';
 import { AIView } from './components/AIView';
 import { AIQuantDeck } from './components/AIQuantDeck';
 import { SniperScope } from './components/SniperScope';
+import { PreMarketAnalyzer } from './components/PreMarketAnalyzer';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
@@ -951,6 +952,9 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('sniper')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'sniper' ? 'bg-red-600 text-white shadow-md animate-pulse' : 'text-slate-400 hover:text-white'}`}>
                    <Crosshair size={14} /> Scope
                </button>
+               <button onClick={() => handleSetViewMode('premarket')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'premarket' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <TrendingUp size={14} /> Pre-Market
+               </button>
                <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Bot size={14} /> Chat
                </button>
@@ -1138,6 +1142,16 @@ const App: React.FC = () => {
                     credentials={credentials}
                     pivots={pivots}
                     aiEnabled={credentials.aiEnabled}
+                />
+            </div>
+        )}
+
+        {viewMode === 'premarket' && (
+            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
+                <PreMarketAnalyzer
+                   credentials={credentials}
+                   aiEnabled={credentials.aiEnabled}
+                   historyLog={historyLog}
                 />
             </div>
         )}
