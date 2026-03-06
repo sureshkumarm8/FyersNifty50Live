@@ -3,8 +3,8 @@ import { FyersCredentials, MarketSnapshot } from '../types';
 import { callAI } from '../services/aiProvider';
 import { 
   Upload, X, Maximize2, Newspaper, TrendingUp, Activity, Clock, 
-  CheckCircle, AlertTriangle, Zap, Target, Loader2, ChevronDown, ChevronUp, GripHorizontal,
-  RotateCcw, TrendingUpIcon, Flame, Sparkles
+  CheckCircle, AlertTriangle, Zap, Target, Loader2, ChevronDown, ChevronUp,
+  RotateCcw, TrendingUpIcon, Flame, Sparkles, ArrowUp, ArrowDown, Minus
 } from 'lucide-react';
 
 interface PreMarketAnalyzerProps {
@@ -26,6 +26,52 @@ interface TradingSystemProtocol {
   tags?: string[];
   rules?: { rule: string; description: string }[];
 }
+
+const SentimentParser = ({ text }: { text: string }) => {
+  // Parse sentiment into sections
+  const lines = text.split('\n').filter(line => line.trim());
+  
+  const sentiments = ['Bullish', 'Bearish', 'Neutral'];
+  const getSentimentColor = (text: string) => {
+    if (text.includes('Bullish')) return 'bg-emerald-900/30 border-emerald-500/50 text-emerald-300';
+    if (text.includes('Bearish')) return 'bg-red-900/30 border-red-500/50 text-red-300';
+    if (text.includes('Neutral')) return 'bg-amber-900/30 border-amber-500/50 text-amber-300';
+    return 'bg-slate-900/30 border-slate-500/50 text-slate-300';
+  };
+
+  const getSentimentIcon = (text: string) => {
+    if (text.includes('Bullish')) return <ArrowUp className="text-emerald-400" size={18} />;
+    if (text.includes('Bearish')) return <ArrowDown className="text-red-400" size={18} />;
+    return <Minus className="text-amber-400" size={18} />;
+  };
+
+  return (
+    <div className="space-y-3">
+      {lines.map((line, idx) => {
+        const isSentiment = sentiments.some(s => line.includes(s));
+        const isHeader = line.match(/^[A-Z\d]+:/) || line.match(/^[•\-\*]/);
+        
+        return (
+          <div key={idx}>
+            {isSentiment ? (
+              <div className={`flex items-center gap-3 p-3 rounded-lg border ${getSentimentColor(line)}`}>
+                {getSentimentIcon(line)}
+                <span className="font-bold text-sm">{line}</span>
+              </div>
+            ) : isHeader ? (
+              <div className="flex items-center gap-2 mt-4 mb-2">
+                <Flame size={14} className="text-amber-400" />
+                <span className="font-bold text-slate-300 text-sm">{line}</span>
+              </div>
+            ) : (
+              <p className="text-slate-300 text-sm leading-relaxed pl-4 border-l-2 border-slate-600">{line}</p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 const ImageModal = ({ src, onClose }: { src: string | null; onClose: () => void }) => {
   if (!src) return null;
@@ -57,7 +103,6 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
   const [activeTab, setActiveTab] = useState<'news' | 'premarket' | 'live' | 'post'>('news');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   
-  // Tab-specific data with persistence
   const [tabData, setTabData] = useState<TabData>({
     newsAnalysis: '',
     preMarketAnalysis: '',
@@ -83,6 +128,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
   const [systemPlan, setSystemPlan] = useState<TradingSystemProtocol | null>(null);
   const [liveCharts, setLiveCharts] = useState<{ chart: string | null; oi: string | null }>({ chart: null, oi: null });
   const [expandedValidations, setExpandedValidations] = useState<{ [key: string]: boolean }>({});
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -117,12 +163,10 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
     }
   }, []);
 
-  // Save to localStorage whenever tabData changes
   useEffect(() => {
     localStorage.setItem('preMarketAnalyzerData', JSON.stringify(tabData));
   }, [tabData]);
 
-  // Save images to localStorage
   useEffect(() => {
     localStorage.setItem('preMarketImages', JSON.stringify(uploadedImages));
   }, [uploadedImages]);
@@ -131,16 +175,33 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
     const files = e.target.files;
     if (!files) return;
 
+    const totalFiles = files.length;
+    let processed = 0;
+
     Array.from(files).forEach((file) => {
       const reader = new FileReader();
       reader.onload = (event) => {
         const result = event.target?.result as string;
-        // Auto-assign based on filename or create new entry
         const filename = file.name.split('.')[0].toLowerCase();
+        
+        // Map common filenames to zones
+        let zone = filename;
+        if (filename.includes('intraday') || filename.includes('1h') || filename.includes('hourly')) zone = 'intraday';
+        else if (filename.includes('oi') || filename.includes('open')) zone = 'oi';
+        else if (filename.includes('5day') || filename.includes('5d') || filename.includes('week')) zone = 'fiveDay';
+        else if (filename.includes('multi') || filename.includes('oi')) zone = 'multiOI';
+        
         setUploadedImages(prev => ({ 
           ...prev, 
-          [filename]: result 
+          [zone]: result 
         }));
+        
+        processed++;
+        setUploadProgress((processed / totalFiles) * 100);
+        
+        if (processed === totalFiles) {
+          setTimeout(() => setUploadProgress(0), 1000);
+        }
       };
       reader.readAsDataURL(file);
     });
@@ -179,22 +240,20 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
           
           ${systemDesc}
           
-          Consider how current news aligns or conflicts with the system rules.`;
-          userContent = `Analyze current market news sentiment for Nifty 50. Consider: global cues, FII activity, sectors, macroeconomic data. Rate as Bullish/Bearish/Neutral and explain impact on our system.`;
+          Provide a concise, structured analysis. Format with clear sections and sentiment indicators.`;
+          userContent = `Analyze current market news sentiment for Nifty 50. Consider: global cues, FII activity, sectors, macroeconomic data. Rate as Bullish/Bearish/Neutral and explain impact on our system. Keep it short and actionable.`;
           break;
 
         case 'premarket':
           systemInstruction = `You are a technical analyst validating charts against this trading system:
           
-          ${systemDesc}
-          
-          Verify if today's setup aligns with system rules and levels.`;
-          userContent = `Analyze yesterday's trading: intraday chart pattern, OI structure, 5-day trend, multi-strike levels. Provide entry bias, key S/R levels, and risk zones according to our system.`;
+          ${systemDesc}`;
+          userContent = `Analyze yesterday's trading: intraday chart pattern, OI structure, 5-day trend, multi-strike levels. Provide entry bias, key S/R levels, risk zones according to our system.`;
           break;
 
         case 'live':
           systemInstruction = `Validate if market is playing out per the system plan: ${systemDesc}`;
-          userContent = `Market is live. Is our setup working? Key levels holding? What adjustments per system? Any risk levels breached?`;
+          userContent = `Market is live. Is our setup working? Key levels holding? Adjustments needed? Format with clear sections.`;
           break;
 
         case 'post':
@@ -206,7 +265,6 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
       const responseText = await callAI(credentials, systemInstruction, userContent);
       
       if (tab === 'live') {
-        // Add to live validation history
         setTabData(prev => ({
           ...prev,
           liveValidation: [
@@ -305,7 +363,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
         {/* News Analysis Tab */}
         {activeTab === 'news' && (
           <div className="space-y-4">
-            {/* System Info Card - Beautiful UI */}
+            {/* System Info Card */}
             {systemPlan && (
               <div className="bg-gradient-to-r from-amber-900/30 to-orange-900/30 p-5 rounded-lg border border-amber-500/30 backdrop-blur-sm">
                 <div className="flex items-start gap-3">
@@ -326,37 +384,28 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
                     )}
                   </div>
                 </div>
-                
-                {/* Trending Sentiment */}
-                {tabData.newsAnalysis && (
-                  <div className="mt-4 pt-4 border-t border-amber-500/20 flex items-center gap-3">
-                    <div className="flex items-center gap-1">
-                      <TrendingUpIcon size={16} className="text-emerald-400" />
-                      <span className="text-xs font-bold text-emerald-400">Latest</span>
-                    </div>
-                    <p className="text-xs text-slate-300 line-clamp-2">{tabData.newsAnalysis}</p>
-                  </div>
-                )}
               </div>
             )}
 
-            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-              <button
-                onClick={() => toggleSection('news')}
-                className="flex items-center justify-between w-full mb-3"
-              >
+            {/* Main Analysis Card - Full Width */}
+            <div className="bg-slate-800 p-5 rounded-lg border border-slate-700 flex-1">
+              <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <Newspaper size={18} className="text-amber-400" />
                   <span className="font-bold text-slate-200">Market Sentiment Analysis</span>
                 </div>
                 {expandedSections.news ? <ChevronUp /> : <ChevronDown />}
-              </button>
+              </div>
 
               {expandedSections.news && (
-                <div className="space-y-3">
-                  {tabData.newsAnalysis && (
-                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto border border-slate-700">
-                      {tabData.newsAnalysis}
+                <div className="space-y-4">
+                  {tabData.newsAnalysis ? (
+                    <div className="bg-slate-900/50 p-4 rounded-lg border border-slate-700 max-h-96 overflow-y-auto">
+                      <SentimentParser text={tabData.newsAnalysis} />
+                    </div>
+                  ) : (
+                    <div className="text-slate-400 text-sm text-center py-8">
+                      Click "Analyze News" to generate sentiment analysis
                     </div>
                   )}
                   <button
@@ -377,15 +426,15 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
         {activeTab === 'premarket' && (
           <div className="space-y-4">
             {/* Bulk Upload */}
-            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+            <div className="bg-slate-800 p-5 rounded-lg border border-slate-700">
               <h3 className="font-bold text-slate-200 mb-3 flex items-center gap-2">
                 <Upload size={16} /> Upload All Charts
               </h3>
-              <label className="block w-full p-6 border-2 border-dashed border-indigo-600/50 rounded-lg hover:border-indigo-400 cursor-pointer transition bg-indigo-900/10">
+              <label className="block w-full p-8 border-2 border-dashed border-indigo-600/50 rounded-lg hover:border-indigo-400 cursor-pointer transition bg-indigo-900/10">
                 <div className="text-center">
-                  <Sparkles size={28} className="mx-auto mb-2 text-indigo-400" />
-                  <span className="text-sm text-slate-300 font-bold">Click or drag files to upload</span>
-                  <span className="text-xs text-slate-400 block mt-1">Upload multiple chart images at once</span>
+                  <Sparkles size={32} className="mx-auto mb-3 text-indigo-400" />
+                  <span className="text-sm text-slate-300 font-bold block">Click or drag files to upload</span>
+                  <span className="text-xs text-slate-400 block mt-2">Upload multiple chart images at once</span>
                 </div>
                 <input 
                   type="file" 
@@ -395,62 +444,94 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
                   className="hidden" 
                 />
               </label>
+              {uploadProgress > 0 && uploadProgress < 100 && (
+                <div className="mt-3 bg-slate-900 rounded-full h-2">
+                  <div 
+                    className="bg-indigo-500 h-2 rounded-full transition-all"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              )}
+              {uploadProgress === 100 && (
+                <div className="mt-3 text-xs text-emerald-400 font-bold">✓ Images uploaded successfully</div>
+              )}
             </div>
 
-            {/* Drag & Drop Zones */}
-            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 space-y-3">
-              <h3 className="font-bold text-slate-200 text-sm">📍 Drag images to correct zones</h3>
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { id: 'intraday', label: '📊 Yesterday Intraday' },
-                  { id: 'oi', label: '📈 Yesterday OI' },
-                  { id: 'fiveDay', label: '📉 Last 5 Days' },
-                  { id: 'multiOI', label: '🎯 Multi OI' },
-                ].map(zone => (
-                  <div
-                    key={zone.id}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => handleDrop(e, zone.id)}
-                    className={`relative flex flex-col items-center justify-center p-4 rounded-lg border-2 border-dashed transition-all min-h-32 cursor-pointer group ${
-                      uploadedImages[zone.id] 
-                        ? 'border-emerald-500/50 bg-emerald-900/20' 
-                        : 'border-slate-600 hover:border-indigo-500/50 bg-slate-900/30'
-                    }`}
-                  >
-                    {uploadedImages[zone.id] && (
-                      <div className="absolute inset-0 z-0">
-                        <img src={uploadedImages[zone.id]!} alt={zone.label} className="w-full h-full object-cover opacity-40 rounded-lg" />
+            {/* Uploaded Images Preview */}
+            {Object.values(uploadedImages).some(img => img) && (
+              <div className="bg-slate-800 p-5 rounded-lg border border-emerald-500/30">
+                <h3 className="font-bold text-emerald-300 mb-3">✓ Uploaded Images</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { id: 'intraday', label: '📊 Yesterday Intraday' },
+                    { id: 'oi', label: '📈 Yesterday OI' },
+                    { id: 'fiveDay', label: '📉 Last 5 Days' },
+                    { id: 'multiOI', label: '🎯 Multi OI' },
+                  ].map(zone => (
+                    uploadedImages[zone.id] && (
+                      <div
+                        key={zone.id}
+                        className="relative group rounded-lg overflow-hidden border-2 border-emerald-500/50 bg-emerald-900/20 cursor-pointer h-32"
+                        onClick={() => setPreviewImage(uploadedImages[zone.id])}
+                      >
+                        <img 
+                          src={uploadedImages[zone.id]!} 
+                          alt={zone.label} 
+                          className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Maximize2 size={24} className="text-white" />
+                        </div>
+                        <div className="absolute bottom-0 left-0 right-0 bg-slate-900/80 p-1 text-xs text-emerald-300 font-bold">
+                          {zone.label}
+                        </div>
                       </div>
-                    )}
-                    <div className="relative z-10 flex flex-col items-center text-center">
-                      <span className="text-sm font-bold text-slate-200">{zone.label}</span>
+                    )
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Drag & Drop Zones - Optional Reordering */}
+            {Object.values(uploadedImages).some(img => img) && (
+              <div className="bg-slate-800 p-5 rounded-lg border border-slate-700">
+                <h3 className="font-bold text-slate-200 text-sm mb-3">📍 Drag to reorder (optional)</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { id: 'intraday', label: '📊 Yesterday Intraday' },
+                    { id: 'oi', label: '📈 Yesterday OI' },
+                    { id: 'fiveDay', label: '📉 Last 5 Days' },
+                    { id: 'multiOI', label: '🎯 Multi OI' },
+                  ].map(zone => (
+                    <div
+                      key={zone.id}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => handleDrop(e, zone.id)}
+                      className={`relative flex flex-col items-center justify-center p-3 rounded-lg border-2 border-dashed transition-all min-h-20 ${
+                        uploadedImages[zone.id] 
+                          ? 'border-emerald-500/50 bg-emerald-900/20' 
+                          : 'border-slate-600 hover:border-indigo-500/50 bg-slate-900/30'
+                      }`}
+                    >
+                      <span className="text-xs font-bold text-slate-200">{zone.label}</span>
                       {uploadedImages[zone.id] ? (
-                        <span className="text-xs text-emerald-400 mt-1 font-bold">✓ Ready</span>
+                        <span className="text-[10px] text-emerald-400 mt-1">✓ Set</span>
                       ) : (
-                        <span className="text-xs text-slate-400 mt-1">Drop here</span>
+                        <span className="text-[10px] text-slate-400 mt-1">Drag here</span>
                       )}
                     </div>
-                    {uploadedImages[zone.id] && (
-                      <button 
-                        onClick={() => setPreviewImage(uploadedImages[zone.id])}
-                        className="absolute top-1 right-1 p-1 bg-slate-900/70 rounded hover:bg-slate-700 text-white opacity-0 group-hover:opacity-100 transition-opacity z-20"
-                        title="Preview"
-                      >
-                        <Maximize2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* System Plan Display */}
             {systemPlan && (
-              <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 p-4 rounded-lg border border-blue-500/30 backdrop-blur-sm">
+              <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 p-5 rounded-lg border border-blue-500/30 backdrop-blur-sm">
                 <h3 className="font-bold text-blue-300 mb-2 flex items-center gap-2">
                   <Sparkles size={16} /> Your System Rules
                 </h3>
-                <p className="text-slate-300 text-sm mb-3 italic">{systemPlan.description}</p>
+                <p className="text-slate-300 text-xs mb-3 italic">{systemPlan.description}</p>
                 {systemPlan.rules && systemPlan.rules.length > 0 && (
                   <div className="space-y-2">
                     {systemPlan.rules.slice(0, 3).map((rule, i) => (
@@ -468,7 +549,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
             )}
 
             {/* Analysis */}
-            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+            <div className="bg-slate-800 p-5 rounded-lg border border-slate-700">
               <button
                 onClick={() => toggleSection('premarket')}
                 className="flex items-center justify-between w-full mb-3"
@@ -483,7 +564,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
               {expandedSections.premarket && (
                 <div className="space-y-3">
                   {tabData.preMarketAnalysis && (
-                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto border border-slate-700">
+                    <div className="bg-slate-900 p-4 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-64 overflow-y-auto border border-slate-700">
                       {tabData.preMarketAnalysis}
                     </div>
                   )}
@@ -505,14 +586,14 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
         {activeTab === 'live' && (
           <div className="space-y-4">
             {/* Chart Upload for Validation */}
-            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 space-y-3">
+            <div className="bg-slate-800 p-5 rounded-lg border border-slate-700 space-y-3">
               <h3 className="font-bold text-slate-200 mb-2">📊 Upload Live Charts for Validation</h3>
               
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-2">Nifty 1-min Chart</label>
-                  <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-green-500/50 cursor-pointer transition text-center bg-slate-900/30">
-                    <Upload size={18} className="mx-auto mb-1 text-slate-400" />
+                  <label className="block w-full p-4 border-2 border-dashed border-slate-600 rounded-lg hover:border-green-500/50 cursor-pointer transition text-center bg-slate-900/30">
+                    <Upload size={20} className="mx-auto mb-1 text-slate-400" />
                     <span className="text-xs text-slate-300">Upload</span>
                     <input 
                       type="file" 
@@ -528,12 +609,12 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
                       className="hidden" 
                     />
                   </label>
-                  {liveCharts.chart && <span className="text-xs text-emerald-400 mt-1 block">✓ Ready</span>}
+                  {liveCharts.chart && <span className="text-xs text-emerald-400 mt-1 block font-bold">✓ Ready</span>}
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-2">Sensibull OI</label>
-                  <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-green-500/50 cursor-pointer transition text-center bg-slate-900/30">
-                    <Upload size={18} className="mx-auto mb-1 text-slate-400" />
+                  <label className="block w-full p-4 border-2 border-dashed border-slate-600 rounded-lg hover:border-green-500/50 cursor-pointer transition text-center bg-slate-900/30">
+                    <Upload size={20} className="mx-auto mb-1 text-slate-400" />
                     <span className="text-xs text-slate-300">Upload</span>
                     <input 
                       type="file" 
@@ -549,7 +630,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
                       className="hidden" 
                     />
                   </label>
-                  {liveCharts.oi && <span className="text-xs text-emerald-400 mt-1 block">✓ Ready</span>}
+                  {liveCharts.oi && <span className="text-xs text-emerald-400 mt-1 block font-bold">✓ Ready</span>}
                 </div>
               </div>
 
@@ -565,7 +646,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
 
             {/* Validation History */}
             {tabData.liveValidation.length > 0 && (
-              <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+              <div className="bg-slate-800 p-5 rounded-lg border border-slate-700">
                 <h3 className="font-bold text-slate-200 mb-3 flex items-center gap-2">
                   <Activity size={16} /> Validation Checks ({tabData.liveValidation.length})
                 </h3>
@@ -585,7 +666,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
                       
                       {expandedValidations[validation.timestamp] && (
                         <div className="mt-3 space-y-2 text-xs text-slate-300 pt-3 border-t border-slate-700">
-                          <p className="whitespace-pre-wrap line-clamp-4">{validation.analysis}</p>
+                          <p className="whitespace-pre-wrap">{validation.analysis}</p>
                           <div className="flex gap-2 pt-2">
                             {validation.chartFile && (
                               <button
@@ -617,7 +698,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
         {/* Post-Market Tab */}
         {activeTab === 'post' && (
           <div className="space-y-4">
-            <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+            <div className="bg-slate-800 p-5 rounded-lg border border-slate-700">
               <button
                 onClick={() => toggleSection('post')}
                 className="flex items-center justify-between w-full mb-3"
@@ -632,7 +713,7 @@ export const PreMarketAnalyzer: React.FC<PreMarketAnalyzerProps> = ({
               {expandedSections.post && (
                 <div className="space-y-3">
                   {tabData.postMarketAnalysis && (
-                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-48 overflow-y-auto border border-slate-700">
+                    <div className="bg-slate-900 p-4 rounded text-sm text-slate-200 whitespace-pre-wrap max-h-64 overflow-y-auto border border-slate-700">
                       {tabData.postMarketAnalysis}
                     </div>
                   )}
