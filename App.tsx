@@ -13,6 +13,7 @@ import { AIQuantDeck } from './components/AIQuantDeck';
 import { SniperScope } from './components/SniperScope';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
+import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP } from './services/paytmService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
 import { dbService } from './services/db';
 import { downloadCSV } from './services/csv';
@@ -21,11 +22,23 @@ const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     try {
       const saved = localStorage.getItem('fyers_creds');
-      const parsed = saved ? JSON.parse(saved) : { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value };
+      const parsed = saved ? JSON.parse(saved) : { 
+        appId: '', 
+        accessToken: '', 
+        refreshInterval: REFRESH_OPTIONS[3].value,
+        dataProvider: 'paytm'
+      };
       if (parsed.aiEnabled === undefined) parsed.aiEnabled = true;
+      if (parsed.dataProvider === undefined) parsed.dataProvider = 'paytm';
       return parsed;
     } catch (e) {
-      return { appId: '', accessToken: '', refreshInterval: REFRESH_OPTIONS[3].value, aiEnabled: true };
+      return { 
+        appId: '', 
+        accessToken: '', 
+        refreshInterval: REFRESH_OPTIONS[3].value, 
+        aiEnabled: true,
+        dataProvider: 'paytm'
+      };
     }
   });
 
@@ -117,7 +130,8 @@ const App: React.FC = () => {
   // --- 1.2 Pivot Calculation (One-time) ---
   useEffect(() => {
      const initPivots = async () => {
-        if (!credentials.appId || !credentials.accessToken || didFetchPivots.current) return;
+        // Only works with Fyers (has history API)
+        if (credentials.dataProvider === 'paytm' || !credentials.appId || !credentials.accessToken || didFetchPivots.current) return;
         didFetchPivots.current = true;
         
         try {
@@ -401,7 +415,12 @@ const App: React.FC = () => {
   }, []);
 
   const refreshData = useCallback(async () => {
-    if (!credentials.appId || !credentials.accessToken || !isDbLoaded) return;
+    // Check credentials based on provider
+    const hasValidCredentials = credentials.dataProvider === 'paytm' 
+      ? credentials.paytmAccessToken 
+      : (credentials.appId && credentials.accessToken);
+      
+    if (!hasValidCredentials || !isDbLoaded) return;
 
     setIsLoading(true);
 
@@ -428,11 +447,27 @@ const App: React.FC = () => {
     }
 
     try {
-      const stockData = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
-      if (stockData.length === 0) return;
-
-      const indexQuote = await fetchQuotes([NIFTY_INDEX_SYMBOL], credentials);
-      const niftyLtpVal = indexQuote.length > 0 ? indexQuote[0].lp : 0;
+      // Use PayTM or Fyers based on dataProvider setting
+      let stockData: FyersQuote[];
+      let niftyLtpVal = 0;
+      
+      if (credentials.dataProvider === 'paytm') {
+        console.log('[App] Using PayTM Money API');
+        stockData = await fetchPayTMStocks(credentials);
+        niftyLtpVal = await fetchNiftyIndexLTP(credentials);
+      } else {
+        console.log('[App] Using Fyers API');
+        stockData = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
+        
+        if (stockData.length === 0) {
+          setIsLoading(false);
+          return;
+        }
+        
+        const indexQuote = await fetchQuotes([NIFTY_INDEX_SYMBOL], credentials);
+        niftyLtpVal = indexQuote.length > 0 ? indexQuote[0].lp : 0;
+      }
+      
       setNiftyLtp(niftyLtpVal);
 
       const enrichedStocks = enrichData(stockData, prevStocksRef, initialStocksRef, true);
@@ -448,8 +483,15 @@ const App: React.FC = () => {
 
       // --- Option Chain Logic ---
       if (niftyLtpVal > 0) {
-          const optionSymbols = getNiftyOptionSymbols(niftyLtpVal);
-          const rawOptions = await fetchQuotes(optionSymbols, credentials);
+          let rawOptions: FyersQuote[];
+          
+          if (credentials.dataProvider === 'paytm') {
+            rawOptions = await fetchPayTMOptions(niftyLtpVal, credentials);
+          } else {
+            const optionSymbols = getNiftyOptionSymbols(niftyLtpVal);
+            rawOptions = await fetchQuotes(optionSymbols, credentials);
+          }
+          
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
           setOptionQuotes(enrichedOptions);
           updateSessionHistory(enrichedOptions);
@@ -556,7 +598,11 @@ const App: React.FC = () => {
   }, [refreshData]);
 
   useEffect(() => {
-    if (isDbLoaded && credentials.appId && credentials.accessToken && !isPaused) {
+    const hasValidCreds = credentials.dataProvider === 'paytm' 
+      ? credentials.paytmAccessToken 
+      : (credentials.appId && credentials.accessToken);
+      
+    if (isDbLoaded && hasValidCreds && !isPaused) {
       refreshDataRef.current();
       
       const intervalId = setInterval(() => {
@@ -567,7 +613,7 @@ const App: React.FC = () => {
       
       return () => clearInterval(intervalId);
     }
-  }, [isDbLoaded, credentials.appId, credentials.accessToken, isPaused, credentials.refreshInterval]);
+  }, [isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval]);
 
   // --- Hybrid Quant Logic (AI + Local Heuristic) ---
   const runQuantAnalysis = useCallback(async () => {
@@ -902,7 +948,12 @@ const App: React.FC = () => {
       );
   }
 
-  if (!credentials.appId && viewMode !== 'settings') {
+  // Check if user has configured credentials based on provider
+  const hasCredentials = credentials.dataProvider === 'paytm' 
+    ? credentials.paytmAccessToken 
+    : credentials.appId;
+    
+  if (!hasCredentials && viewMode !== 'settings') {
      return (
         <SettingsScreen 
            onBack={() => {}} 

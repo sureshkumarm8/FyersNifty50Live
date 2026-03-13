@@ -11,6 +11,10 @@ export interface FyersCredentials {
   groqApiKey?: string;
   aiEnabled?: boolean;
   aiProvider?: 'gemini' | 'groq';
+  
+  // PayTM Money Integration
+  dataProvider?: 'fyers' | 'paytm';
+  paytmAccessToken?: string;
 }
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
