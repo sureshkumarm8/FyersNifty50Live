@@ -1,9 +1,21 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { copyFileSync } from 'fs'
+import { resolve } from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'copy-files',
+      closeBundle() {
+        // Copy service worker and manifest to dist
+        copyFileSync('sw.js', 'dist/sw.js')
+        copyFileSync('manifest.json', 'dist/manifest.json')
+      }
+    }
+  ],
   define: {
     'process.env': {} 
   },

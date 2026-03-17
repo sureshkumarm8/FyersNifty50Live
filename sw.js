@@ -33,10 +33,18 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   // 1. API Requests: Network Only (Never cache live stock data)
   if (event.request.url.includes('/api/')) {
+    event.respondWith(fetch(event.request));
     return; 
   }
 
-  // 2. Static Assets: Stale-While-Revalidate
+  // 2. Skip caching for JS/CSS assets in production (let Vercel handle them)
+  const url = new URL(event.request.url);
+  if (url.pathname.includes('/assets/') || url.pathname.match(/\.(js|css|map)$/)) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  // 3. Static Assets: Stale-While-Revalidate (only for HTML and images)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request).then((networkResponse) => {
