@@ -399,17 +399,6 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
 
 
   if (data.length === 0) {
-      if (marketStatus) {
-          return (
-              <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6 animate-in fade-in zoom-in duration-500 p-4">
-                  <Moon size={64} className="text-slate-500" />
-                  <div>
-                      <h2 className="text-2xl font-bold text-white mb-2">Market is Closed</h2>
-                      <p className="text-sm text-slate-400">{marketStatus}</p>
-                  </div>
-              </div>
-          );
-      }
       return (
           <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6 p-4">
               <Loader2 size={48} className="text-blue-400 animate-spin" />
@@ -430,6 +419,14 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
 
   return (
     <div className="flex flex-col gap-4 sm:gap-6 p-2 sm:p-4 max-w-7xl mx-auto w-full pb-20 sm:pb-4">
+       
+       {/* Market Status Banner */}
+       {marketStatus && (
+           <div className="bg-amber-900/40 border border-amber-600/60 rounded-lg p-3 flex items-center gap-2 text-amber-200 animate-pulse">
+               <Moon size={18} />
+               <span className="text-sm font-semibold">{marketStatus}</span>
+           </div>
+       )}
        
        {/* Top Dashboard Row: Decision Engine + AI Insight */}
        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

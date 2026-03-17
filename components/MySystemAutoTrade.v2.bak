@@ -1,0 +1,714 @@
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import {
+  TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, Target, Shield,
+  Play, Pause, BarChart3, Crosshair, ArrowUp, ArrowDown, X, RefreshCw, Zap,
+  Flame, Wind, Brain, Lightbulb, BarChart2, Activity
+} from 'lucide-react';
+import { FyersCredentials, EnrichedFyersQuote, MarketSnapshot, PivotPoints } from '../types';
+
+interface SupportResistance {
+  support: number;
+  resistance: number;
+  midpoint: number;
+  zone: string;
+  strength: number;
+  bounces: number;
+}
+
+interface ConfluenceFactors {
+  priceAtZone: boolean;
+  volatilityOptimal: boolean;
+  trendAligned: boolean;
+  timeOptimal: boolean;
+  overallScore: number;
+}
+
+interface MySystemTradeSetup {
+  signal: 'LONG' | 'SHORT' | 'NONE';
+  strikePrice: number;
+  optionType: 'CE' | 'PE';
+  entryLevel: number;
+  targetPrice: number;
+  stopLossPrice: number;
+  confidence: number;
+  reasoning: string;
+  zoneType: 'SUPPORT' | 'RESISTANCE' | 'NONE';
+  confluence: ConfluenceFactors;
+}
+
+interface MySystemExecution {
+  setup: MySystemTradeSetup;
+  entryPrice: number;
+  executedAt: number;
+  exitPrice?: number;
+  exitedAt?: number;
+  pnl?: number;
+  pnlPercent?: number;
+  exitReason?: 'TARGET' | 'STOPLOSS' | 'HARD_STOP' | 'MANUAL';
+  duration?: number;
+}
+
+interface MySystemState {
+  status: 'idle' | 'download' | 'entry_window' | 'in_trade' | 'closed';
+  tradeActive: boolean;
+  dailyTradeExecuted: boolean;
+}
+
+interface MySystemProps {
+  credentials: FyersCredentials;
+  stocks: EnrichedFyersQuote[];
+  niftyLtp: number | null;
+  historyLog: MarketSnapshot[];
+  pivots: PivotPoints | null;
+  aiEnabled: boolean;
+}
+
+const MySystemAutoTrade: React.FC<MySystemProps> = ({
+  credentials,
+  stocks,
+  niftyLtp,
+  historyLog,
+  pivots,
+  aiEnabled
+}) => {
+  const [systemState, setSystemState] = useState<MySystemState>({
+    status: 'idle',
+    tradeActive: false,
+    dailyTradeExecuted: false
+  });
+
+  const [tradeSetup, setTradeSetup] = useState<MySystemTradeSetup | null>(null);
+  const [execution, setExecution] = useState<MySystemExecution | null>(null);
+  const [isMonitoring, setIsMonitoring] = useState(false);
+  const [analysisLog, setAnalysisLog] = useState<string[]>([]);
+  const [currentLtp, setCurrentLtp] = useState<number>(niftyLtp || 0);
+  const [supportResistance, setSupportResistance] = useState<SupportResistance>({
+    support: 0,
+    resistance: 0,
+    midpoint: 0,
+    zone: 'NEUTRAL',
+    strength: 0,
+    bounces: 0
+  });
+  const [tradeMetrics, setTradeMetrics] = useState({
+    maxGain: 0,
+    maxLoss: 0,
+    entryPrice: 0,
+    duration: 0
+  });
+  const [sessionStats, setSessionStats] = useState({ totalCalls: 0, setupsGenerated: 0, tradesExecuted: 0 });
+
+  const monitoringRef = useRef(isMonitoring);
+  const tradeSetupRef = useRef(tradeSetup);
+  const executionRef = useRef(execution);
+  const systemStateRef = useRef(systemState);
+  const startTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    monitoringRef.current = isMonitoring;
+    tradeSetupRef.current = tradeSetup;
+    executionRef.current = execution;
+    systemStateRef.current = systemState;
+  }, [isMonitoring, tradeSetup, execution, systemState]);
+
+  const addLog = useCallback((message: string) => {
+    const timestamp = new Date().toLocaleTimeString('en-IN', { hour12: false });
+    setAnalysisLog(prev => [`[${timestamp}] ${message}`, ...prev.slice(0, 99)]);
+  }, []);
+
+  const getCurrentTime = useCallback(() => new Date(), []);
+
+  const isDownloadPhase = useCallback(() => {
+    const now = getCurrentTime();
+    const totalMinutes = now.getHours() * 60 + now.getMinutes();
+    return totalMinutes >= 555 && totalMinutes < 565; // 09:15-09:25
+  }, [getCurrentTime]);
+
+  const isWithinTradingWindow = useCallback(() => {
+    const now = getCurrentTime();
+    const totalMinutes = now.getHours() * 60 + now.getMinutes();
+    return totalMinutes >= 565 && totalMinutes <= 615; // 09:25-10:15
+  }, [getCurrentTime]);
+
+  const isHardStopReached = useCallback(() => {
+    const now = getCurrentTime();
+    return now.getHours() >= 10 && now.getMinutes() >= 15;
+  }, [getCurrentTime]);
+
+  // Smart S/R with bounce detection and multi-touch validation
+  const identifySRZones = useCallback(() => {
+    if (historyLog.length < 10) {
+      return { support: 0, resistance: 0, midpoint: currentLtp, zone: 'NEUTRAL', strength: 0, bounces: 0 };
+    }
+
+    const last20 = historyLog.slice(-20);
+    const prices = last20.map(h => h.close || currentLtp);
+
+    const sorted = [...prices].sort((a, b) => a - b);
+    const lowCluster = sorted.slice(0, 5);
+    const highCluster = sorted.slice(-5);
+
+    const support = lowCluster.reduce((a, b) => a + b, 0) / lowCluster.length;
+    const resistance = highCluster.reduce((a, b) => a + b, 0) / highCluster.length;
+    const midpoint = (support + resistance) / 2;
+
+    const supportBounces = prices.filter(p => Math.abs(p - support) < 25).length;
+    const resistanceBounces = prices.filter(p => Math.abs(p - resistance) < 25).length;
+
+    const strength = Math.max(supportBounces, resistanceBounces) / prices.length;
+
+    let zone = 'NEUTRAL';
+    if (currentLtp <= midpoint - 50) zone = 'NEAR_SUPPORT';
+    else if (currentLtp >= midpoint + 50) zone = 'NEAR_RESISTANCE';
+    else zone = 'MIDPOINT';
+
+    return {
+      support: Math.round(support),
+      resistance: Math.round(resistance),
+      midpoint: Math.round(midpoint),
+      zone,
+      strength,
+      bounces: Math.max(supportBounces, resistanceBounces)
+    };
+  }, [historyLog, currentLtp]);
+
+  // Multi-factor confluence analysis
+  const calculateConfluence = useCallback((signal: 'LONG' | 'SHORT', sr: any): ConfluenceFactors => {
+    const timeMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+
+    const priceAtZone = signal === 'LONG'
+      ? Math.abs(currentLtp - sr.support) < 20
+      : Math.abs(currentLtp - sr.resistance) < 20;
+
+    const volatilityOptimal = sr.strength > 0.3 && sr.bounces >= 2;
+
+    const trend = signal === 'LONG' ? currentLtp - sr.midpoint : sr.midpoint - currentLtp;
+    const trendAligned = Math.abs(trend) > 25;
+
+    const timeOptimal = timeMinutes >= 570 && timeMinutes <= 610; // 09:30-10:10
+
+    const scores = [
+      priceAtZone ? 25 : 0,
+      volatilityOptimal ? 25 : 0,
+      trendAligned ? 25 : 0,
+      timeOptimal ? 25 : 0
+    ];
+
+    return {
+      priceAtZone,
+      volatilityOptimal,
+      trendAligned,
+      timeOptimal,
+      overallScore: scores.reduce((a, b) => a + b, 0)
+    };
+  }, [currentLtp]);
+
+  // Intelligent setup generation
+  const generateSetup = useCallback((
+    signal: 'LONG' | 'SHORT',
+    entryLevel: number,
+    zoneType: 'SUPPORT' | 'RESISTANCE',
+    sr: any
+  ): MySystemTradeSetup | null => {
+    const confluence = calculateConfluence(signal, sr);
+
+    if (confluence.overallScore < 50) return null;
+
+    const itmOffset = 200;
+    const targetDistance = 30;
+    const slDistance = 30;
+
+    let strikePrice: number;
+    let optionType: 'CE' | 'PE';
+
+    if (signal === 'LONG') {
+      strikePrice = Math.floor((currentLtp - itmOffset) / 100) * 100;
+      optionType = 'CE';
+    } else {
+      strikePrice = Math.ceil((currentLtp + itmOffset) / 100) * 100;
+      optionType = 'PE';
+    }
+
+    const confidence = 60 + (confluence.overallScore / 100) * 35;
+    const reasons = [];
+
+    if (confluence.priceAtZone) reasons.push('Zone Hit');
+    if (confluence.volatilityOptimal) reasons.push('Vol ✓');
+    if (confluence.trendAligned) reasons.push('Trend ✓');
+    if (confluence.timeOptimal) reasons.push('Time ✓');
+
+    return {
+      signal,
+      strikePrice,
+      optionType,
+      entryLevel,
+      targetPrice: signal === 'LONG' ? currentLtp + targetDistance : currentLtp - targetDistance,
+      stopLossPrice: signal === 'LONG' ? currentLtp - slDistance : currentLtp + slDistance,
+      confidence: Math.round(confidence),
+      reasoning: reasons.join(' • '),
+      zoneType,
+      confluence
+    };
+  }, [currentLtp, calculateConfluence]);
+
+  // Main monitoring loop
+  useEffect(() => {
+    if (!isMonitoring) return;
+
+    const interval = setInterval(() => {
+      if (niftyLtp) setCurrentLtp(niftyLtp);
+
+      setSessionStats(prev => ({ ...prev, totalCalls: prev.totalCalls + 1 }));
+
+      // DOWNLOAD PHASE
+      if (isDownloadPhase()) {
+        if (systemStateRef.current.status !== 'download') {
+          setSystemState(prev => ({ ...prev, status: 'download' }));
+          addLog('📊 DOWNLOAD: Analyzing market structure');
+          startTimeRef.current = Date.now();
+        }
+
+        const sr = identifySRZones();
+        setSupportResistance(sr);
+        addLog(`📍 S: ${sr.support} | R: ${sr.resistance} | Strength: ${Math.round(sr.strength * 100)}%`);
+      }
+
+      // ENTRY WINDOW
+      else if (isWithinTradingWindow() && !executionRef.current) {
+        if (systemStateRef.current.status === 'download') {
+          setSystemState(prev => ({ ...prev, status: 'entry_window' }));
+          addLog('🚀 ENTRY WINDOW: 09:25-10:15 | Waiting for confluence');
+        }
+
+        const sr = identifySRZones();
+        setSupportResistance(sr);
+
+        if ((sr.zone === 'NEAR_SUPPORT' || sr.zone === 'NEAR_RESISTANCE') && !tradeSetupRef.current) {
+          const signal = sr.zone === 'NEAR_SUPPORT' ? 'LONG' : 'SHORT';
+          const entryLevel = sr.zone === 'NEAR_SUPPORT' ? sr.support : sr.resistance;
+          const zoneType = sr.zone === 'NEAR_SUPPORT' ? 'SUPPORT' : 'RESISTANCE';
+
+          const setup = generateSetup(signal, entryLevel, zoneType, sr);
+
+          if (setup) {
+            setTradeSetup(setup);
+            setSessionStats(prev => ({ ...prev, setupsGenerated: prev.setupsGenerated + 1 }));
+            addLog(`✅ SETUP [${setup.confluence.overallScore}%]: ${setup.signal} | ${setup.reasoning} | Conf: ${setup.confidence}%`);
+          }
+        }
+      }
+
+      // IN_TRADE
+      if (executionRef.current && systemStateRef.current.tradeActive) {
+        const entry = executionRef.current.entryPrice;
+        const diff = currentLtp - entry;
+
+        const maxGain = Math.max(tradeMetrics.maxGain, diff);
+        const maxLoss = Math.min(tradeMetrics.maxLoss, diff);
+        const duration = Math.round((Date.now() - executionRef.current.executedAt) / 1000);
+
+        setTradeMetrics(prev => ({
+          ...prev,
+          maxGain,
+          maxLoss,
+          entryPrice: entry,
+          duration
+        }));
+
+        if (diff >= 30) {
+          addLog(`🎯 TARGET HIT! Exit: ${currentLtp} | P&L: +30pts`);
+          handleExit('TARGET', currentLtp);
+        } else if (diff <= -30) {
+          addLog(`🛑 STOP LOSS HIT! Exit: ${currentLtp} | P&L: -30pts`);
+          handleExit('STOPLOSS', currentLtp);
+        }
+      }
+
+      // HARD STOP
+      if (isHardStopReached() && executionRef.current && systemStateRef.current.tradeActive) {
+        addLog(`⏰ HARD STOP @ 10:15 AM | Force exit at ${currentLtp}`);
+        handleExit('HARD_STOP', currentLtp);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [isMonitoring, niftyLtp, isDownloadPhase, isWithinTradingWindow, isHardStopReached, identifySRZones, generateSetup, addLog]);
+
+  const handleExecuteTrade = useCallback(() => {
+    if (!tradeSetup) return;
+
+    const now = Date.now();
+    setExecution({
+      setup: tradeSetup,
+      entryPrice: currentLtp,
+      executedAt: now
+    });
+
+    setSystemState(prev => ({
+      ...prev,
+      status: 'in_trade',
+      tradeActive: true
+    }));
+
+    setSessionStats(prev => ({ ...prev, tradesExecuted: prev.tradesExecuted + 1 }));
+    setTradeMetrics({ maxGain: 0, maxLoss: 0, entryPrice: currentLtp, duration: 0 });
+    addLog(`🚀 TRADE EXECUTED: ${tradeSetup.signal} @ ${currentLtp} | Target: ${tradeSetup.targetPrice} | SL: ${tradeSetup.stopLossPrice}`);
+  }, [tradeSetup, currentLtp, addLog]);
+
+  const handleExit = useCallback((reason: 'TARGET' | 'STOPLOSS' | 'HARD_STOP' | 'MANUAL', exitPrice: number) => {
+    if (!execution) return;
+
+    const pnl = exitPrice - execution.entryPrice;
+    const pnlPercent = (pnl / execution.entryPrice) * 100;
+
+    setExecution(prev => prev ? {
+      ...prev,
+      exitPrice,
+      exitedAt: Date.now(),
+      pnl,
+      pnlPercent,
+      exitReason: reason
+    } : null);
+
+    setSystemState(prev => ({
+      ...prev,
+      status: 'closed',
+      tradeActive: false,
+      dailyTradeExecuted: true
+    }));
+
+    addLog(`✅ EXIT [${reason}] | P&L: ${pnl > 0 ? '+' : ''}${pnl.toFixed(0)} (${pnlPercent.toFixed(1)}%)`);
+  }, [execution, addLog]);
+
+  const handleReset = useCallback(() => {
+    setSystemState({ status: 'idle', tradeActive: false, dailyTradeExecuted: false });
+    setTradeSetup(null);
+    setExecution(null);
+    setAnalysisLog([]);
+    setTradeMetrics({ maxGain: 0, maxLoss: 0, entryPrice: 0, duration: 0 });
+    setSupportResistance({ support: 0, resistance: 0, midpoint: 0, zone: 'NEUTRAL', strength: 0, bounces: 0 });
+    setSessionStats({ totalCalls: 0, setupsGenerated: 0, tradesExecuted: 0 });
+    addLog('🔄 Reset complete. Ready for next session.');
+  }, [addLog]);
+
+  const getStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+      idle: 'bg-gray-600',
+      download: 'bg-yellow-500',
+      entry_window: 'bg-blue-500',
+      in_trade: 'bg-green-500',
+      closed: 'bg-purple-500'
+    };
+    return colors[status] || 'bg-gray-600';
+  };
+
+  // Render
+  return (
+    <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-black text-white p-6 rounded-xl space-y-4 h-full overflow-y-auto">
+      {/* Intelligent Header */}
+      <div className="bg-gradient-to-r from-slate-800 to-slate-700 rounded-lg p-5 border border-blue-500/30">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-blue-500/20 rounded-lg">
+              <Brain className="w-6 h-6 text-blue-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">MySystem AutoTrade</h1>
+              <p className="text-xs text-gray-400">Nifty Sniper: Office Protocol | Intelligent Execution</p>
+            </div>
+          </div>
+          <div className={`${getStatusColor(systemState.status)} px-4 py-2 rounded-full font-bold text-sm animate-pulse`}>
+            {systemState.status.toUpperCase().replace('_', ' ')}
+          </div>
+        </div>
+
+        {/* Session Stats Bar */}
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <div className="bg-slate-700/50 rounded p-2">
+            <span className="text-gray-400">Analysis Cycles:</span> <span className="font-bold text-blue-400">{sessionStats.totalCalls}</span>
+          </div>
+          <div className="bg-slate-700/50 rounded p-2">
+            <span className="text-gray-400">Setups Generated:</span> <span className="font-bold text-yellow-400">{sessionStats.setupsGenerated}</span>
+          </div>
+          <div className="bg-slate-700/50 rounded p-2">
+            <span className="text-gray-400">Trades Executed:</span> <span className="font-bold text-green-400">{sessionStats.tradesExecuted}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Control Panel */}
+      <div className="flex gap-2 flex-wrap">
+        <button
+          onClick={() => setIsMonitoring(!isMonitoring)}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-semibold transition ${
+            isMonitoring ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+          }`}
+        >
+          {isMonitoring ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+          <span>{isMonitoring ? 'Monitoring' : 'Paused'}</span>
+        </button>
+
+        {systemState.dailyTradeExecuted && (
+          <button
+            onClick={handleReset}
+            className="flex items-center space-x-2 px-4 py-2 rounded-lg font-semibold bg-gray-700 hover:bg-gray-600 transition"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Reset</span>
+          </button>
+        )}
+
+        {execution && systemState.tradeActive && (
+          <button
+            onClick={() => handleExit('MANUAL', currentLtp)}
+            className="flex items-center space-x-2 px-4 py-2 rounded-lg font-semibold bg-red-600 hover:bg-red-700 transition ml-auto"
+          >
+            <X className="w-4 h-4" />
+            <span>Manual Exit</span>
+          </button>
+        )}
+      </div>
+
+      {/* Main Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Left: Analysis Feed */}
+        <div className="lg:col-span-1 bg-slate-800/50 rounded-lg p-4 border border-slate-700 max-h-96 overflow-y-auto">
+          <h3 className="font-bold text-blue-400 mb-3 flex items-center space-x-2">
+            <Activity className="w-4 h-4" />
+            <span>Live Feed</span>
+          </h3>
+          <div className="space-y-1 text-xs font-mono">
+            {analysisLog.length === 0 ? (
+              <p className="text-gray-500">Waiting for market...</p>
+            ) : (
+              analysisLog.map((log, i) => (
+                <div key={i} className="text-gray-300 hover:text-gray-100 transition">{log}</div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Middle: Smart Analysis */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* S/R Panel */}
+          <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+            <h3 className="font-bold text-cyan-400 mb-3 flex items-center space-x-2">
+              <BarChart2 className="w-4 h-4" />
+              <span>Market Structure</span>
+            </h3>
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-green-900/20 border border-green-500/30 rounded p-3">
+                <p className="text-xs text-gray-400">Support</p>
+                <p className="text-lg font-bold text-green-400">{supportResistance.support}</p>
+                <p className="text-xs text-gray-500">+{supportResistance.bounces} bounces</p>
+              </div>
+              <div className="bg-blue-900/20 border border-blue-500/30 rounded p-3">
+                <p className="text-xs text-gray-400">Midpoint</p>
+                <p className="text-lg font-bold text-blue-400">{supportResistance.midpoint}</p>
+                <p className="text-xs text-gray-500">LTP: {currentLtp}</p>
+              </div>
+              <div className="bg-red-900/20 border border-red-500/30 rounded p-3">
+                <p className="text-xs text-gray-400">Resistance</p>
+                <p className="text-lg font-bold text-red-400">{supportResistance.resistance}</p>
+                <p className="text-xs text-gray-500">Strength: {Math.round(supportResistance.strength * 100)}%</p>
+              </div>
+              <div className={`${supportResistance.zone === 'NEAR_SUPPORT' ? 'bg-green-900/20 border-green-500/30' : supportResistance.zone === 'NEAR_RESISTANCE' ? 'bg-red-900/20 border-red-500/30' : 'bg-yellow-900/20 border-yellow-500/30'} border rounded p-3`}>
+                <p className="text-xs text-gray-400">Zone</p>
+                <p className="text-lg font-bold">{supportResistance.zone === 'NEAR_SUPPORT' ? '📍 SUPPORT' : supportResistance.zone === 'NEAR_RESISTANCE' ? '📍 RESIST' : '⚪ MIDPOINT'}</p>
+                <p className="text-xs text-gray-500">Status</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Setup Card */}
+          {tradeSetup && !execution && (
+            <div className="bg-gradient-to-br from-blue-900/40 to-blue-800/20 rounded-lg p-5 border-2 border-blue-400/50 shadow-lg shadow-blue-500/20">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 className="text-xl font-bold flex items-center space-x-2">
+                    <Lightbulb className="w-5 h-5 text-yellow-400" />
+                    <span>Setup Ready</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-1">Confluence: {tradeSetup.confluence.overallScore}% | Confidence: {tradeSetup.confidence}%</p>
+                </div>
+                <span className={`font-bold px-3 py-1 rounded text-sm ${tradeSetup.signal === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>
+                  {tradeSetup.signal === 'LONG' ? '📈 LONG' : '📉 SHORT'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-slate-700/50 rounded p-3">
+                  <p className="text-xs text-gray-400">Strike</p>
+                  <p className="text-lg font-bold">{tradeSetup.strikePrice} {tradeSetup.optionType}</p>
+                </div>
+                <div className="bg-slate-700/50 rounded p-3">
+                  <p className="text-xs text-gray-400">Entry Zone</p>
+                  <p className="text-lg font-bold">{tradeSetup.entryLevel}</p>
+                </div>
+                <div className="bg-green-900/30 rounded p-3">
+                  <p className="text-xs text-gray-400">Target</p>
+                  <p className="text-lg font-bold text-green-400">+{Math.abs(tradeSetup.targetPrice - currentLtp)}</p>
+                </div>
+                <div className="bg-red-900/30 rounded p-3">
+                  <p className="text-xs text-gray-400">Stop Loss</p>
+                  <p className="text-lg font-bold text-red-400">-{Math.abs(tradeSetup.stopLossPrice - currentLtp)}</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-700/50 rounded p-3 mb-4">
+                <p className="text-sm text-gray-200">{tradeSetup.reasoning}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs mb-4">
+                <div className={`p-2 rounded ${tradeSetup.confluence.priceAtZone ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                  {tradeSetup.confluence.priceAtZone ? '✅' : '❌'} Price at Zone
+                </div>
+                <div className={`p-2 rounded ${tradeSetup.confluence.volatilityOptimal ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                  {tradeSetup.confluence.volatilityOptimal ? '✅' : '❌'} Vol Optimal
+                </div>
+                <div className={`p-2 rounded ${tradeSetup.confluence.trendAligned ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                  {tradeSetup.confluence.trendAligned ? '✅' : '❌'} Trend Aligned
+                </div>
+                <div className={`p-2 rounded ${tradeSetup.confluence.timeOptimal ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                  {tradeSetup.confluence.timeOptimal ? '✅' : '❌'} Time Optimal
+                </div>
+              </div>
+
+              <button
+                onClick={handleExecuteTrade}
+                className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 font-bold py-3 rounded-lg transition text-lg"
+              >
+                Execute Trade Now
+              </button>
+            </div>
+          )}
+
+          {/* Trade Active */}
+          {execution && systemState.tradeActive && (
+            <div className="bg-gradient-to-br from-green-900/40 to-green-800/20 rounded-lg p-5 border-2 border-green-400/50 shadow-lg shadow-green-500/20">
+              <h3 className="text-xl font-bold mb-4 flex items-center space-x-2">
+                <Flame className="w-5 h-5 text-yellow-400 animate-pulse" />
+                <span>Trade Active</span>
+              </h3>
+
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                <div className="bg-slate-700/50 rounded p-2">
+                  <p className="text-xs text-gray-400">Entry</p>
+                  <p className="font-bold">{execution.entryPrice}</p>
+                </div>
+                <div className="bg-blue-900/30 rounded p-2">
+                  <p className="text-xs text-gray-400">Current</p>
+                  <p className="font-bold text-blue-400">{currentLtp}</p>
+                </div>
+                <div className="bg-green-900/30 rounded p-2">
+                  <p className="text-xs text-gray-400">Max Gain</p>
+                  <p className="font-bold text-green-400">+{tradeMetrics.maxGain}</p>
+                </div>
+                <div className="bg-red-900/30 rounded p-2">
+                  <p className="text-xs text-gray-400">Max Loss</p>
+                  <p className="font-bold text-red-400">{tradeMetrics.maxLoss}</p>
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <div className="flex justify-between mb-2 text-xs">
+                  <span>Progress to Target</span>
+                  <span className="font-bold">{Math.round(Math.min((tradeMetrics.maxGain / 30) * 100, 100))}%</span>
+                </div>
+                <div className="w-full bg-slate-700 rounded-full h-3">
+                  <div
+                    className="h-3 rounded-full bg-gradient-to-r from-yellow-400 to-green-400 transition-all"
+                    style={{ width: `${Math.min((tradeMetrics.maxGain / 30) * 100, 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="text-xs text-gray-400">Duration: {tradeMetrics.duration}s</div>
+            </div>
+          )}
+
+          {/* Closed Trade */}
+          {execution && !systemState.tradeActive && (
+            <div className={`rounded-lg p-5 border-2 ${execution.pnl! > 0 ? 'bg-green-900/40 border-green-400/50' : 'bg-red-900/40 border-red-400/50'}`}>
+              <h3 className="text-lg font-bold mb-3 flex items-center space-x-2">
+                {execution.pnl! > 0 ? <CheckCircle className="w-5 h-5 text-green-400" /> : <AlertCircle className="w-5 h-5 text-red-400" />}
+                <span>{execution.exitReason} | Trade Closed</span>
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-gray-400">Entry</p>
+                  <p className="font-bold">{execution.entryPrice}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Exit</p>
+                  <p className="font-bold">{execution.exitPrice}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-xs text-gray-400">P&L</p>
+                  <p className={`text-2xl font-bold ${execution.pnl! > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {execution.pnl! > 0 ? '+' : ''}{execution.pnl!.toFixed(0)} ({execution.pnlPercent!.toFixed(1)}%)
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Metrics */}
+        <div className="lg:col-span-1 space-y-3">
+          <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+            <h3 className="font-bold text-yellow-400 mb-3">Quick Stats</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Status:</span>
+                <span className="font-bold">{systemState.status.toUpperCase()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Zone:</span>
+                <span className="font-bold">{supportResistance.zone}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">LTP:</span>
+                <span className="font-bold text-blue-400">{currentLtp}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Trade:</span>
+                <span className={`font-bold ${systemState.tradeActive ? 'text-green-400' : 'text-gray-400'}`}>
+                  {systemState.tradeActive ? 'ACTIVE' : 'IDLE'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+            <h3 className="font-bold text-purple-400 mb-3">Today</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Cycles:</span>
+                <span className="font-bold">{sessionStats.totalCalls}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Setups:</span>
+                <span className="font-bold text-yellow-400">{sessionStats.setupsGenerated}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Trades:</span>
+                <span className="font-bold text-green-400">{sessionStats.tradesExecuted}</span>
+              </div>
+              {execution && !systemState.tradeActive && (
+                <div className="flex justify-between pt-2 border-t border-slate-700">
+                  <span className="text-gray-400">Final P&L:</span>
+                  <span className={`font-bold ${execution.pnl! > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {execution.pnl! > 0 ? '+' : ''}{execution.pnl!}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default MySystemAutoTrade;

@@ -1,6 +1,7 @@
 
 
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant' | 'sniper';
+
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant' | 'sniper' | 'premarket' | 'autotrade' | 'mysystem';
 
 export interface FyersCredentials {
   appId: string;
@@ -11,11 +12,45 @@ export interface FyersCredentials {
   groqApiKey?: string;
   aiEnabled?: boolean;
   aiProvider?: 'gemini' | 'groq';
+  groqModel?: string;
   
   // PayTM Money Integration
   dataProvider?: 'fyers' | 'paytm';
   paytmAccessToken?: string;
 }
+
+// All available Groq models (Updated as of March 2026)
+// IMPORTANT: These are the latest active models. Decommissioned models:
+// - mixtral-8x7b-32768 (deprecated)
+// - llama-3.1-70b-versatile (deprecated)
+export const GROQ_MODELS = [
+  // Recommended models (with highest daily token limits - 500K tokens/day)
+  { id: 'llama-3.1-8b-instant', name: '🦙 Llama 3.1 8B Instant (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
+  { id: 'qwen/qwen3-32b', name: '🔷 Qwen 3 32B (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
+  { id: 'meta-llama/llama-4-scout-17b-16e-instruct', name: '🦙 Llama 4 Scout 17B (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
+  { id: 'meta-llama/llama-4-maverick-17b-128e-instruct', name: '🦙 Llama 4 Maverick 17B (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
+  
+  // High token limit models (300K tokens/day)
+  { id: 'moonshotai/kimi-k2-instruct', name: '🌙 Kimi K2 (300K/day)', tokenLimit: 300000, dailyLimit: 300000 },
+  { id: 'moonshotai/kimi-k2-instruct-0905', name: '🌙 Kimi K2 0905 (300K/day)', tokenLimit: 300000, dailyLimit: 300000 },
+  
+  // GPT OSS models (200K tokens/day)
+  { id: 'openai/gpt-oss-120b', name: '🤖 GPT OSS 120B (200K/day)', tokenLimit: 200000, dailyLimit: 200000 },
+  { id: 'openai/gpt-oss-20b', name: '🤖 GPT OSS 20B (200K/day)', tokenLimit: 200000, dailyLimit: 200000 },
+  
+  // Guard and Safeguard models (500K tokens/day)
+  { id: 'meta-llama/llama-guard-4-12b', name: '🛡️ Llama Guard 4 12B (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
+  { id: 'meta-llama/llama-prompt-guard-2-22m', name: '🛡️ Prompt Guard 2-22M (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
+  { id: 'meta-llama/llama-prompt-guard-2-86m', name: '🛡️ Prompt Guard 2-86M (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
+  
+  // Compound models (70K tokens/day)
+  { id: 'groq/compound', name: '🚀 Compound (70K/day)', tokenLimit: 70000, dailyLimit: 70000 },
+  { id: 'groq/compound-mini', name: '⚡ Compound Mini (70K/day)', tokenLimit: 70000, dailyLimit: 70000 },
+  
+  // Legacy/Other models
+  { id: 'allam-2-7b', name: '🦙 Allam 2 7B (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
+  { id: 'llama-3.3-70b-versatile', name: '🦙 Llama 3.3 70B Versatile (100K/day)', tokenLimit: 100000, dailyLimit: 100000 },
+];
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
 export interface FyersQuote {

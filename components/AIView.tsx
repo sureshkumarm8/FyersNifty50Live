@@ -415,7 +415,12 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
           <div className="flex-1 glass-panel rounded-2xl flex flex-col overflow-hidden relative">
               
               {/* Toolbar */}
-              <div className="absolute top-4 right-4 z-10">
+              <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+                  {/* AI Provider Status */}
+                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${credentials.aiProvider === 'groq' ? 'bg-purple-500/20 text-purple-300' : 'bg-green-500/20 text-green-300'}`}>
+                      <div className={`w-2 h-2 rounded-full ${credentials.aiProvider === 'groq' ? 'bg-purple-400 animate-pulse' : 'bg-green-400 animate-pulse'}`}></div>
+                      {credentials.aiProvider === 'groq' ? '🟣 Groq' : '🟢 Gemini'}
+                  </div>
                   <button onClick={clearHistory} className="p-2 rounded-lg bg-slate-800/50 text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors" title="Clear Chat History">
                       <Trash2 size={14} />
                   </button>
@@ -426,7 +431,7 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
                       <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[85%] rounded-2xl p-4 ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-800/80 rounded-bl-none border border-white/5'} ${m.isError ? 'bg-red-900/50 border-red-500' : ''}`}>
                               <div className="mb-2 flex items-center gap-2 opacity-60 text-[10px] font-bold uppercase tracking-wider">
-                                  {m.role === 'user' ? 'You' : <><Bot size={12}/> Gemini Analyst</>}
+                                  {m.role === 'user' ? 'You' : <><Bot size={12}/> {credentials.aiProvider === 'groq' ? '🟣 Groq Analyst' : '🟢 Gemini Analyst'}</>}
                               </div>
                               {m.role === 'user' ? (
                                   <div className="text-sm leading-relaxed">{m.text}</div>

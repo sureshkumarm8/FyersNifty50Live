@@ -28,8 +28,10 @@ export default async function handler(request, response) {
 
   try {
     const encodedSymbol = encodeURIComponent(symbol);
-    // resolution=1 (1 minute), date_format=1 (epoch)
-    const fyersUrl = `https://api.fyers.in/data-rest/v3/history?symbol=${encodedSymbol}&resolution=${resVal}&date_format=1&range_from=${range_from}&range_to=${range_to}&cont_flag=1`;
+    // Try /data/candles endpoint (similar pattern to /data/depth that works)
+    const fyersUrl = `https://api-t1.fyers.in/data/candles?symbol=${encodedSymbol}&resolution=${resVal}&date_format=1&range_from=${range_from}&range_to=${range_to}&cont_flag=1`;
+    
+    console.log(`[History] Request: ${symbol} from ${range_from} to ${range_to} (resolution: ${resVal})`);
     
     const fetchResponse = await fetch(fyersUrl, {
       method: 'GET',
@@ -43,11 +45,14 @@ export default async function handler(request, response) {
     });
 
     const text = await fetchResponse.text();
+    console.log(`[History] Upstream Status: ${fetchResponse.status}`);
+    
     let data;
     
     try {
         data = text ? JSON.parse(text) : {};
     } catch (e) {
+        console.error('[History] Parse error:', text.substring(0, 200));
         return response.status(502).json({ 
             error: "Upstream API returned invalid response",
             upstreamStatus: fetchResponse.status,
@@ -58,7 +63,7 @@ export default async function handler(request, response) {
     return response.status(fetchResponse.status).json(data);
 
   } catch (error) {
-    console.error('API Proxy Error');
+    console.error('[History] API Proxy Error:', error.message);
     return response.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
 }

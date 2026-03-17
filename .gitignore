@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# API Keys and Credentials
+*_config.json
+!fyers_config_template.json
+*.key
+*.secret

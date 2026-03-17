@@ -67,7 +67,8 @@ const fetchSymbolsInternal = async (
   const token = credentials.accessToken.trim();
 
   // Encode symbols to ensure special characters like ':' are handled correctly
-  // Sending all symbols in one request (up to 50 supported) to minimize request count
+  // NOTE: Using quotes API instead of depth API to avoid rate limits
+  // Quotes API supports multiple symbols but doesn't include depth data
   const symbolsParam = encodeURIComponent(symbols.join(','));
   const targetUrl = `${PROXY_QUOTES_URL}?symbols=${symbolsParam}`;
 
@@ -172,6 +173,7 @@ export const fetchStockHistory = async (
    const range_from = Math.floor(startOfDay.getTime() / 1000);
    const range_to = Math.floor(now.getTime() / 1000);
 
+   // Note: Using v2 API as v3 may return "invalid method" error
    const targetUrl = `${PROXY_HISTORY_URL}?symbol=${encodeURIComponent(symbol)}&range_from=${range_from}&range_to=${range_to}`;
    
    const response = await fetch(targetUrl, {
@@ -216,7 +218,7 @@ export const fetchYesterdayOHLC = async (
   if (!credentials.appId || !credentials.accessToken) return null;
 
   const now = new Date();
-  const past = new Date();
+  const past = new Date(now);
   past.setDate(now.getDate() - 5);
   past.setHours(0,0,0,0);
   
@@ -224,7 +226,7 @@ export const fetchYesterdayOHLC = async (
   const range_from = Math.floor(past.getTime() / 1000);
   const range_to = Math.floor(now.getTime() / 1000);
   
-  // Use 1D for daily resolution
+  // Use 1D for daily resolution - trying /data/candles endpoint
   const targetUrl = `${PROXY_HISTORY_URL}?symbol=${encodeURIComponent(symbol)}&range_from=${range_from}&range_to=${range_to}&resolution=1D`;
   
   try {
@@ -232,6 +234,12 @@ export const fetchYesterdayOHLC = async (
           method: 'GET',
           headers: { 'Authorization': `${credentials.appId.trim()}:${credentials.accessToken.trim()}` }
       });
+      
+      // Check if response is OK before parsing
+      if (!response.ok) {
+          console.warn(`History API returned ${response.status} for daily OHLC`);
+          return null;
+      }
       
       const text = await response.text();
       let json;

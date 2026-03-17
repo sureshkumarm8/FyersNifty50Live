@@ -12,7 +12,8 @@ export async function callAI(
   
   // Check which provider to use
   if (provider === 'groq' && credentials.groqApiKey) {
-    return callGroqAI(credentials.groqApiKey, systemInstruction, userContent, jsonMode);
+    const model = credentials.groqModel || 'llama-3.3-70b-versatile';
+    return callGroqAI(credentials.groqApiKey, systemInstruction, userContent, jsonMode, model);
   } else if (credentials.googleApiKey) {
     return callGeminiAI(credentials.googleApiKey, systemInstruction, userContent, jsonMode);
   } else {
@@ -53,9 +54,9 @@ async function callGroqAI(
   apiKey: string,
   systemInstruction: string,
   userContent: string,
-  jsonMode: boolean = false
+  jsonMode: boolean = false,
+  model: string = 'llama-3.3-70b-versatile'
 ): Promise<string> {
-  const model = 'llama-3.3-70b-versatile';
   console.log(`%c📡 Calling Groq AI (${model})`, 'color: purple; font-size: 11px;');
   const startTime = performance.now();
   
