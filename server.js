@@ -6,7 +6,7 @@ const PORT = 5001;
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
 
   if (req.method === 'OPTIONS') {
@@ -109,6 +109,80 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500);
         res.end(JSON.stringify({ error: err.message }));
      }
+  }
+  // --- PAYTM QUOTES ROUTE ---
+  else if (reqUrl.pathname === '/api/paytm/quotes' && req.method === 'POST') {
+     let body = '';
+     req.on('data', chunk => { body += chunk.toString(); });
+     req.on('end', async () => {
+        try {
+           console.log(`[Proxy] PayTM POST body received: ${body.substring(0, 100)}...`);
+           
+           const parsed = JSON.parse(body);
+           const { security_ids, scrip_type } = parsed;
+           
+           console.log(`[Proxy] Parsed security_ids:`, security_ids ? `${security_ids.length} items` : 'undefined');
+           console.log(`[Proxy] Scrip type: ${scrip_type}`);
+           
+           if (!security_ids || !Array.isArray(security_ids)) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ 
+                 error: 'Missing or invalid security_ids array',
+                 received: typeof security_ids,
+                 body: body.substring(0, 200)
+              }));
+              return;
+           }
+           
+           console.log(`[Proxy] PayTM Request for ${security_ids.length} securities`);
+           
+           // PayTM Money Live Price API
+           // Format: Exchange:ScripId:ScripType (e.g., NSE:11536:EQUITY)
+           const type = scrip_type || 'EQUITY';
+           const preferences = security_ids.map(id => `NSE:${id}:${type}`).join(',');
+           const paytmUrl = `https://developer.paytmmoney.com/data/v1/price/live?mode=FULL&pref=${encodeURIComponent(preferences)}`;
+           
+           console.log(`[Proxy] PayTM URL: ${paytmUrl.substring(0, 150)}...`);
+           
+           const paytmResponse = await fetch(paytmUrl, {
+              method: 'GET',
+              headers: {
+                 'x-jwt-token': authHeader.replace('Bearer ', ''),
+                 'Accept': 'application/json'
+              }
+           });
+           
+           const text = await paytmResponse.text();
+           console.log(`[Proxy] PayTM Status: ${paytmResponse.status}`);
+           console.log(`[Proxy] PayTM Response sample: ${text.substring(0, 300)}...`);
+           
+           if (!paytmResponse.ok) {
+              console.error(`[Proxy] PayTM Error Response: ${text.substring(0, 200)}`);
+           }
+           
+           let data;
+           try {
+              data = text ? JSON.parse(text) : {};
+           } catch (e) {
+              console.error("[Proxy] PayTM returned non-JSON:", text.substring(0, 200));
+              res.writeHead(502, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ 
+                 error: 'PayTM API returned invalid response',
+                 details: text.substring(0, 200)
+              }));
+              return;
+           }
+           
+           console.log(`[Proxy] PayTM data structure:`, JSON.stringify(data).substring(0, 300));
+           
+           res.writeHead(paytmResponse.status, { 'Content-Type': 'application/json' });
+           res.end(JSON.stringify(data));
+        } catch(err) {
+           console.error("[Proxy] PayTM Error:", err.message);
+           res.writeHead(500);
+           res.end(JSON.stringify({ error: err.message }));
+        }
+     });
   }
   else {
     res.writeHead(404, { 'Content-Type': 'application/json' });

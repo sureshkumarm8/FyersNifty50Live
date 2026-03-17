@@ -91,6 +91,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
   
+  // PayTM Integration
+  const [dataProvider, setDataProvider] = useState<'fyers' | 'paytm'>(currentCreds.dataProvider || 'fyers');
+  const [paytmAccessToken, setPaytmAccessToken] = useState(currentCreds.paytmAccessToken || '');
+  
   // Protocol State
   const [protocolData, setProtocolData] = useState<TradingSystemProtocol>(() => {
       try {
@@ -113,7 +117,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   }, [isEditingProtocol, protocolData]);
 
   const handleSave = () => {
-    onSave({ appId, accessToken, googleApiKey, groqApiKey, bypassMarketHours, refreshInterval, aiEnabled, aiProvider: selectedAiProvider });
+    onSave({ 
+      appId, 
+      accessToken, 
+      googleApiKey, 
+      groqApiKey, 
+      bypassMarketHours, 
+      refreshInterval, 
+      aiEnabled, 
+      aiProvider: selectedAiProvider,
+      dataProvider,
+      paytmAccessToken
+    });
     onBack();
   };
 
@@ -309,39 +324,79 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Fyers App ID</label>
-                                <div className="relative group">
-                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-400 transition-colors">
-                                        <SettingsIcon size={16} />
-                                    </div>
-                                    <input 
-                                        type="text" 
-                                        value={appId} 
-                                        onChange={(e) => setAppId(e.target.value)} 
-                                        placeholder="e.g. XV12345-100"
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono"
-                                    />
+                        {/* Data Provider Selection */}
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Data Provider</label>
+                            <div className="relative">
+                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                    <Layers size={16} />
                                 </div>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Access Token</label>
-                                <div className="relative group h-full">
-                                     <div className="absolute left-3 top-3 text-slate-500 group-focus-within:text-blue-400 transition-colors">
-                                        <Key size={16} />
-                                    </div>
-                                    <textarea 
-                                        value={accessToken} 
-                                        onChange={(e) => setAccessToken(e.target.value)} 
-                                        placeholder="Paste token here..."
-                                        rows={1}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono resize-none min-h-[46px] overflow-hidden"
-                                        style={{ minHeight: '46px' }}
-                                    />
-                                </div>
+                                <select 
+                                    value={dataProvider} 
+                                    onChange={(e) => setDataProvider(e.target.value as 'fyers' | 'paytm')}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none appearance-none cursor-pointer"
+                                >
+                                    <option value="fyers">Fyers API (Legacy)</option>
+                                    <option value="paytm">PayTM Money</option>
+                                </select>
                             </div>
                         </div>
+
+                        {/* Conditional Rendering based on Provider */}
+                        {dataProvider === 'fyers' ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Fyers App ID</label>
+                                    <div className="relative group">
+                                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-400 transition-colors">
+                                            <SettingsIcon size={16} />
+                                        </div>
+                                        <input 
+                                            type="text" 
+                                            value={appId} 
+                                            onChange={(e) => setAppId(e.target.value)} 
+                                            placeholder="e.g. XV12345-100"
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Access Token</label>
+                                    <div className="relative group h-full">
+                                         <div className="absolute left-3 top-3 text-slate-500 group-focus-within:text-blue-400 transition-colors">
+                                            <Key size={16} />
+                                        </div>
+                                        <textarea 
+                                            value={accessToken} 
+                                            onChange={(e) => setAccessToken(e.target.value)} 
+                                            placeholder="Paste token here..."
+                                            rows={1}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono resize-none min-h-[46px] overflow-hidden"
+                                            style={{ minHeight: '46px' }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">PayTM Access Token</label>
+                                <div className="relative group">
+                                    <div className="absolute left-3 top-3 text-slate-500 group-focus-within:text-blue-400 transition-colors">
+                                        <Lock size={16} />
+                                    </div>
+                                    <textarea 
+                                        value={paytmAccessToken} 
+                                        onChange={(e) => setPaytmAccessToken(e.target.value)} 
+                                        placeholder="Paste your PayTM Money access token here..."
+                                        rows={2}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono resize-none"
+                                    />
+                                </div>
+                                <p className="text-xs text-slate-500 ml-1 mt-2">
+                                    Get your access token from <a href="https://developer.paytmmoney.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">PayTM Money Developer Portal</a>
+                                </p>
+                            </div>
+                        )}
                     </div>
                 </div>
 

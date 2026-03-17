@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node server.js"
+    "server": "node server.js",
+    "generate:paytm": "node scripts/generatePaytmMappings.cjs"
   },
   "dependencies": {
     "@google/genai": "*",
