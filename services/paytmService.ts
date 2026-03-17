@@ -45,9 +45,9 @@ export const getNifty50SecurityIds = (): string[] => {
   return getStaticNifty50Ids();
 };
 
-// Nifty 50 Index security ID
-// Common IDs: 26000 (Nifty 50), 26009 (Nifty Bank)
-const NIFTY_INDEX_SECURITY_ID = '13'; // NSE:13:INDEX (Nifty 50)
+// Nifty 50 Index security ID (from index_security_master.csv)
+// Security ID 13 = NIFTY, 25 = BANKNIFTY, 27 = FINNIFTY
+const NIFTY_INDEX_SECURITY_ID = '13';
 
 export const getNiftyIndexSecurityId = (): string => {
   return NIFTY_INDEX_SECURITY_ID;

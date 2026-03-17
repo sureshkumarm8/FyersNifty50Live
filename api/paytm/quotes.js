@@ -22,18 +22,19 @@ export default async function handler(request, response) {
     return response.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
 
-  const { security_ids } = request.body;
+  const { security_ids, scrip_type } = request.body;
 
   if (!security_ids || !Array.isArray(security_ids) || security_ids.length === 0) {
     return response.status(400).json({ error: 'Missing or invalid security_ids array' });
   }
 
   try {
-    // PayTM Money Live Price API
-    const preferences = security_ids.join(',');
+    // PayTM Money Live Price API - Format: EXCHANGE:SECURITY_ID:SCRIP_TYPE
+    const scripTypeValue = scrip_type || 'EQUITY';
+    const preferences = security_ids.map(id => `NSE:${id}:${scripTypeValue}`).join(',');
     const paytmUrl = `https://developer.paytmmoney.com/data/v1/price/live?mode=full&pref=${preferences}`;
     
-    console.log(`[PayTM Proxy] Fetching ${security_ids.length} securities`);
+    console.log(`[PayTM Proxy] Fetching ${security_ids.length} securities (${scripTypeValue})`);
 
     const fetchResponse = await fetch(paytmUrl, {
       method: 'GET',
