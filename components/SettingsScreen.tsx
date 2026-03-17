@@ -162,6 +162,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       googleApiKey: "YOUR_GEMINI_API_KEY_HERE",
       groqApiKey: "YOUR_GROQ_API_KEY_HERE",
       aiProvider: "gemini",
+      dataProvider: "paytm",
+      paytmAccessToken: "YOUR_PAYTM_ACCESS_TOKEN_HERE",
       bypassMarketHours: false,
       aiEnabled: true,
       refreshInterval: 60000
@@ -191,6 +193,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         if (json.bypassMarketHours !== undefined) setBypassMarketHours(json.bypassMarketHours);
         if (json.refreshInterval !== undefined) setRefreshInterval(json.refreshInterval);
         if (json.aiEnabled !== undefined) setAiEnabled(json.aiEnabled);
+        if (json.dataProvider) setDataProvider(json.dataProvider);
+        if (json.paytmAccessToken) setPaytmAccessToken(json.paytmAccessToken);
         alert("Configuration imported successfully!");
       } catch (err) {
         alert("Error parsing JSON file.");
