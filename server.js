@@ -27,7 +27,7 @@ const server = http.createServer(async (req, res) => {
      return;
   }
 
-  // --- QUOTES ROUTE (Now Proxies to Depth) ---
+  // --- QUOTES ROUTE (Using Quotes API - supports multiple symbols) ---
   if (reqUrl.pathname === '/api/quotes' && req.method === 'GET') {
     const symbols = reqUrl.searchParams.get('symbols');
     if (!symbols) {
@@ -37,12 +37,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const encodedSymbols = encodeURIComponent(symbols);
-      // Using Depth Endpoint
-      const fyersUrl = `https://api-t1.fyers.in/data/depth?symbol=${encodedSymbols}&ohlcv_flag=1`;
+      // Use quotes API instead of depth to avoid rate limits
+      // Quotes API supports multiple symbols in one request
+      const fyersUrl = `https://api-t1.fyers.in/data/quotes?symbols=${symbols}`;
       
-      // Log generic info without tokens
-      console.log(`[Proxy] Depth Request for: ${symbols.substring(0, 50)}...`);
+      console.log(`[Proxy] Quotes Request for: ${symbols.substring(0, 50)}...`);
 
       const fyersResponse = await fetch(fyersUrl, {
         method: 'GET',
@@ -54,10 +53,13 @@ const server = http.createServer(async (req, res) => {
           'Origin': 'https://trade.fyers.in'
         }
       });
-      
+
       const text = await fyersResponse.text();
-      // Only log status code, no body content that might contain sensitive data
-      console.log(`[Proxy] Upstream Status: ${fyersResponse.status}`);
+      console.log(`[Proxy] Quotes Upstream Status: ${fyersResponse.status}`);
+      
+      if (fyersResponse.status !== 200) {
+        console.log(`[Proxy] Error Response: ${text.substring(0, 200)}`);
+      }
 
       let data = text ? JSON.parse(text) : {};
       
@@ -65,7 +67,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(data));
     } catch (err) {
       console.error("[Proxy] Error:", err.message);
-      res.writeHead(500);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
   } 
@@ -83,10 +85,11 @@ const server = http.createServer(async (req, res) => {
      }
 
      try {
-       const encodedSymbol = encodeURIComponent(symbol);
-       const fyersUrl = `https://api.fyers.in/data-rest/v3/history?symbol=${encodedSymbol}&resolution=${resolution}&date_format=1&range_from=${range_from}&range_to=${range_to}&cont_flag=1`;
+       // Try newer candles endpoint instead of history
+       // Based on Fyers API v3 pattern: using /data instead of /data-rest
+       const fyersUrl = `https://api-t1.fyers.in/data/candles?symbol=${symbol}&resolution=${resolution}&date_format=1&range_from=${range_from}&range_to=${range_to}&cont_flag=1`;
        
-       console.log(`[Proxy] History Request: ${symbol} (${resolution})`);
+       console.log(`[Proxy] History/Candles Request: ${symbol} (${resolution}) from ${range_from} to ${range_to}`);
 
        const fyersResponse = await fetch(fyersUrl, {
          method: 'GET',
@@ -100,13 +103,19 @@ const server = http.createServer(async (req, res) => {
        });
 
        const text = await fyersResponse.text();
+       console.log(`[Proxy] History Upstream Status: ${fyersResponse.status}`);
+       
+       if (fyersResponse.status !== 200) {
+         console.log(`[Proxy] History Error Response: ${text.substring(0, 300)}`);
+       }
+       
        let data = text ? JSON.parse(text) : {};
        
        res.writeHead(fyersResponse.status, { 'Content-Type': 'application/json' });
        res.end(JSON.stringify(data));
      } catch(err) {
         console.error("[Proxy] History Error:", err.message);
-        res.writeHead(500);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
      }
   }

@@ -125,7 +125,7 @@ const convertPayTMToFyersQuote = (
 export const fetchPayTMQuotes = async (
   securityIds: string[],
   credentials: FyersCredentials,
-  scripType: 'EQUITY' | 'OPTION' = 'EQUITY'
+  scripType: 'EQUITY' | 'OPTION' | 'INDEX' = 'EQUITY'
 ): Promise<FyersQuote[]> => {
   if (!credentials.paytmAccessToken) {
     throw new Error('PayTM Access Token is missing');

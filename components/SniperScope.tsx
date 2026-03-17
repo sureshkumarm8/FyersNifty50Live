@@ -70,7 +70,7 @@ const INTERVAL_OPTIONS = [
     { label: '2 Minutes', value: 120000 },
 ];
 
-export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, stocks, apiKey, pivots, aiEnabled }) => {
+export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, stocks, credentials, pivots, aiEnabled }) => {
   // --- State Initialization with Persistence ---
   
   const [protocol, setProtocol] = useState<TradingSystemProtocol>(() => {
@@ -159,6 +159,8 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
   };
 
   const runSniperScan = async () => {
+    const apiKey = credentials.aiProvider === 'groq' ? credentials.groqApiKey : credentials.googleApiKey;
+    
     if (!apiKey || aiEnabled === false) {
         setError(!apiKey ? "API Key missing. Please add it in Settings." : "AI Features Disabled");
         setIsLooping(false);

@@ -1,0 +1,12 @@
+{
+  "appId": "TONVE-100",
+  "accessToken": "XDzgwg",
+  "googleApiKey": "AIzaSc0vXlM",
+  "groqApiKey": "gsk_BPVhHdK9HyIy",
+  "paytmApiKey": "eyJ0eXAisP4uUX9Po",
+  "paytmApiSecret": "ebb896ce28",
+  "paytmMerchantId": "OPTIONAL",
+  "preferredBroker": "paytm",
+  "bypassMarketHours": false,
+  "refreshInterval": 60000
+}

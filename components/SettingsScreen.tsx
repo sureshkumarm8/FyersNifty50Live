@@ -87,6 +87,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
   const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq'>(currentCreds.aiProvider || 'gemini');
+  const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'llama-3.3-70b-versatile');
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
@@ -121,7 +122,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       appId, 
       accessToken, 
       googleApiKey, 
-      groqApiKey, 
+      groqApiKey,
+      groqModel,
       bypassMarketHours, 
       refreshInterval, 
       aiEnabled, 
@@ -161,6 +163,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE",
       googleApiKey: "YOUR_GEMINI_API_KEY_HERE",
       groqApiKey: "YOUR_GROQ_API_KEY_HERE",
+      groqModel: "llama-3.3-70b-versatile",
       aiProvider: "gemini",
       dataProvider: "paytm",
       paytmAccessToken: "YOUR_PAYTM_ACCESS_TOKEN_HERE",
@@ -189,6 +192,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         if (json.accessToken) setAccessToken(json.accessToken);
         if (json.googleApiKey) setGoogleApiKey(json.googleApiKey);
         if (json.groqApiKey) setGroqApiKey(json.groqApiKey);
+        if (json.groqModel) setGroqModel(json.groqModel);
         if (json.aiProvider) setSelectedAiProvider(json.aiProvider);
         if (json.bypassMarketHours !== undefined) setBypassMarketHours(json.bypassMarketHours);
         if (json.refreshInterval !== undefined) setRefreshInterval(json.refreshInterval);
@@ -468,7 +472,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                          )}
 
                          {selectedAiProvider === 'groq' && (
-                            <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                            <>
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Groq API Key</label>
                                <div className="relative group">
                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors">
@@ -483,7 +488,65 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                    />
                                </div>
                                <p className="text-[10px] text-slate-500 text-right">Get your key from console.groq.com</p>
-                            </div>
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Groq Model</label>
+                               <div className="relative">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                       <BrainCircuit size={16} />
+                                   </div>
+                                   <select 
+                                       value={groqModel} 
+                                       onChange={(e) => setGroqModel(e.target.value)}
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
+                                   >
+                                       <optgroup label="🚀 Recommended (High Performance)">
+                                           <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile - Best Overall</option>
+                                           <option value="meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout 17B - Latest</option>
+                                           <option value="llama-3.1-8b-instant">Llama 3.1 8B Instant - Fastest</option>
+                                       </optgroup>
+                                       <optgroup label="🌟 Meta Llama Family">
+                                           <option value="llama-3.1-70b-versatile">Llama 3.1 70B Versatile</option>
+                                           <option value="meta-llama/llama-prompt-guard-2-86m">Llama Prompt Guard 2 (86M)</option>
+                                           <option value="meta-llama/llama-prompt-guard-2-22m">Llama Prompt Guard 2 (22M)</option>
+                                       </optgroup>
+                                       <optgroup label="🌙 Moonshot AI Kimi">
+                                           <option value="moonshotai/kimi-k2-instruct">Kimi K2 Instruct</option>
+                                           <option value="moonshotai/kimi-k2-instruct-0905">Kimi K2 Instruct (v0905)</option>
+                                       </optgroup>
+                                       <optgroup label="🔓 OpenAI Open Source">
+                                           <option value="openai/gpt-oss-120b">GPT OSS 120B</option>
+                                           <option value="openai/gpt-oss-20b">GPT OSS 20B</option>
+                                           <option value="openai/gpt-oss-safeguard-20b">GPT OSS Safeguard 20B</option>
+                                       </optgroup>
+                                       <optgroup label="🧠 Groq Compound">
+                                           <option value="groq/compound">Groq Compound</option>
+                                           <option value="groq/compound-mini">Groq Compound Mini</option>
+                                       </optgroup>
+                                       <optgroup label="🌏 International Models">
+                                           <option value="qwen/qwen3-32b">Qwen 3 32B (Chinese)</option>
+                                           <option value="allam-2-7b">Allam 2 7B (Arabic)</option>
+                                           <option value="canopylabs/orpheus-arabic-saudi">Orpheus Arabic Saudi</option>
+                                           <option value="canopylabs/orpheus-v1-english">Orpheus v1 English</option>
+                                       </optgroup>
+                                       <optgroup label="🎙️ Audio Models (Whisper)">
+                                           <option value="whisper-large-v3">Whisper Large v3</option>
+                                           <option value="whisper-large-v3-turbo">Whisper Large v3 Turbo</option>
+                                       </optgroup>
+                                   </select>
+                                   <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                   </div>
+                               </div>
+                               <p className="text-[10px] text-slate-500">
+                                   <span className="text-purple-400 font-bold">Llama 3.3 70B</span> = Best overall | 
+                                   <span className="text-blue-400 font-bold ml-1">Llama 4 Scout</span> = Latest |
+                                   <span className="text-green-400 font-bold ml-1">8B Instant</span> = Fastest |
+                                   <span className="text-yellow-400 font-bold ml-1">25+ models</span> available
+                               </p>
+                              </div>
+                            </>
                          )}
                     </div>
                 </div>

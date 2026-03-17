@@ -1,0 +1,64 @@
+{
+  "name": "Nifty Sniper: The Office Protocol",
+  "description": "A precision system designed to capture 30 points between 09:25 AM and 10:15 AM. We exploit the initial market waves (Support/Resistance interactions) and exit before the mid-morning chop to focus on office work.",
+  "tags": [
+    "Time: 9:25-10:15",
+    "Target: 30 Pts",
+    "Zone Play"
+  ],
+  "steps": [
+    {
+      "title": "09:15 - 09:25 (The Download)",
+      "items": [
+        "DO NOT TRADE. Watch the Open.",
+        "Mark the 5-min High & Low.",
+        "Identify immediate Support/Resistance zones.",
+        "Assess Open Type: Gap Up (Profit Booking?) or Flat?",
+        "NO SETUP = NO TRADE. Do not force it."
+      ]
+    },
+    {
+      "title": "09:25 - 09:45 (The Entry Window)",
+      "items": [
+        "Market participation increases. Look for the setup.",
+        "Buy at Support (Call) or Sell at Resistance (Put).",
+        "Wait for a candle close confirmation.",
+        "Entry must align with the immediate trend."
+      ]
+    },
+    {
+      "title": "10:15 AM (The Hard Stop)",
+      "items": [
+        "Target is 30 points. SL is 30 points. Exit which hits first",
+        "If target or SL is not hit by 10:15 AM, EXIT the market whatever the P/L",
+        "Close terminal. Shift focus to Office Work."
+      ]
+    }
+  ],
+  "links": [
+    {
+      "label": "Sensibull OI",
+      "url": "https://web.sensibull.com/open-interest",
+      "description": "Check 22000/22500 levels"
+    },
+    {
+      "label": "Nifty Spot Chart",
+      "url": "https://kite.zerodha.com",
+      "description": "5 Minute Timeframe"
+    }
+  ],
+  "rules": [
+    {
+      "title": "OFFICE HARD STOP",
+      "description": "At 10:15 AM, the trading day ends. Win, Loss, or Breakeven. My job is priority #1 after this time."
+    },
+    {
+      "title": "30 POINTS OR NOTHING",
+      "description": "The goal is precise. Don't be greedy for 100 points. Get the chunk and get out. 30 Points rule is invalid if exit time is beyond 10:00AM"
+    },
+    {
+      "title": "NO SETUP = NO TRADE",
+      "description": "If the market is choppy or confusing by 09:45, simply close the laptop. Preserving capital is a win."
+    }
+  ]
+}
