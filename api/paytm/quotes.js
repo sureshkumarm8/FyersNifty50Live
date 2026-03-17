@@ -22,10 +22,18 @@ export default async function handler(request, response) {
     return response.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
 
-  const { security_ids, scrip_type } = request.body;
+  // Log request body for debugging
+  console.log('[PayTM Proxy] Request body type:', typeof request.body);
+  console.log('[PayTM Proxy] Request body:', JSON.stringify(request.body));
+
+  const { security_ids, scrip_type } = request.body || {};
 
   if (!security_ids || !Array.isArray(security_ids) || security_ids.length === 0) {
-    return response.status(400).json({ error: 'Missing or invalid security_ids array' });
+    return response.status(400).json({ 
+      error: 'Missing or invalid security_ids array',
+      received: { security_ids, scrip_type, bodyType: typeof request.body },
+      bodyKeys: request.body ? Object.keys(request.body) : []
+    });
   }
 
   try {
