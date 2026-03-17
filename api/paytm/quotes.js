@@ -1,3 +1,9 @@
+export const config = {
+  api: {
+    bodyParser: true,
+  },
+};
+
 export default async function handler(request, response) {
   // CORS configuration
   response.setHeader('Access-Control-Allow-Credentials', true);
@@ -22,31 +28,19 @@ export default async function handler(request, response) {
     return response.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
 
-  // Parse body if it's a string (Vercel edge functions)
-  let body = request.body;
-  if (typeof body === 'string') {
-    try {
-      body = JSON.parse(body);
-    } catch (e) {
-      return response.status(400).json({ 
-        error: 'Invalid JSON body',
-        details: e.message
-      });
-    }
-  }
-
-  // Log request body for debugging
-  console.log('[PayTM Proxy] Request body type:', typeof body);
-  console.log('[PayTM Proxy] Request body:', JSON.stringify(body));
-
-  const { security_ids, scrip_type } = body || {};
+  // Vercel automatically parses JSON body when bodyParser is enabled
+  const { security_ids, scrip_type } = request.body || {};
 
   if (!security_ids || !Array.isArray(security_ids) || security_ids.length === 0) {
     return response.status(400).json({ 
       error: 'Missing or invalid security_ids array',
-      received: { security_ids, scrip_type, bodyType: typeof body },
-      bodyKeys: body ? Object.keys(body) : [],
-      rawBody: typeof request.body === 'string' ? request.body.substring(0, 100) : 'not a string'
+      received: { 
+        security_ids, 
+        scrip_type, 
+        bodyType: typeof request.body,
+        bodyKeys: request.body ? Object.keys(request.body) : [],
+        bodyContent: request.body
+      }
     });
   }
 
