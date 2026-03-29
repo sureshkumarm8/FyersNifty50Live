@@ -188,20 +188,105 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     reader.onload = (e) => {
       try {
         const json = JSON.parse(e.target?.result as string);
-        if (json.appId) setAppId(json.appId);
-        if (json.accessToken) setAccessToken(json.accessToken);
-        if (json.googleApiKey) setGoogleApiKey(json.googleApiKey);
-        if (json.groqApiKey) setGroqApiKey(json.groqApiKey);
-        if (json.groqModel) setGroqModel(json.groqModel);
-        if (json.aiProvider) setSelectedAiProvider(json.aiProvider);
-        if (json.bypassMarketHours !== undefined) setBypassMarketHours(json.bypassMarketHours);
-        if (json.refreshInterval !== undefined) setRefreshInterval(json.refreshInterval);
-        if (json.aiEnabled !== undefined) setAiEnabled(json.aiEnabled);
-        if (json.dataProvider) setDataProvider(json.dataProvider);
-        if (json.paytmAccessToken) setPaytmAccessToken(json.paytmAccessToken);
-        alert("Configuration imported successfully!");
+        let imported = false;
+        
+        // Handle nested structure (paytm, fyers, google, groq, config)
+        if (json.fyers) {
+          if (json.fyers.clientId) {
+            setAppId(json.fyers.clientId);
+            imported = true;
+          }
+          if (json.fyers.accessToken) {
+            setAccessToken(json.fyers.accessToken);
+            imported = true;
+          }
+        }
+        
+        if (json.paytm) {
+          if (json.paytm.accessToken) {
+            setPaytmAccessToken(json.paytm.accessToken);
+            imported = true;
+          }
+        }
+        
+        if (json.google) {
+          if (json.google.apiKey) {
+            setGoogleApiKey(json.google.apiKey);
+            imported = true;
+          }
+        }
+        
+        if (json.groq) {
+          if (json.groq.apiKey) {
+            setGroqApiKey(json.groq.apiKey);
+            imported = true;
+          }
+        }
+        
+        if (json.config) {
+          if (json.config.bypassMarketHours !== undefined) {
+            setBypassMarketHours(json.config.bypassMarketHours);
+            imported = true;
+          }
+          if (json.config.refreshInterval !== undefined) {
+            setRefreshInterval(json.config.refreshInterval);
+            imported = true;
+          }
+        }
+        
+        // Handle flat structure (legacy format)
+        if (json.appId) {
+          setAppId(json.appId);
+          imported = true;
+        }
+        if (json.accessToken) {
+          setAccessToken(json.accessToken);
+          imported = true;
+        }
+        if (json.googleApiKey) {
+          setGoogleApiKey(json.googleApiKey);
+          imported = true;
+        }
+        if (json.groqApiKey) {
+          setGroqApiKey(json.groqApiKey);
+          imported = true;
+        }
+        if (json.groqModel) {
+          setGroqModel(json.groqModel);
+          imported = true;
+        }
+        if (json.aiProvider) {
+          setSelectedAiProvider(json.aiProvider);
+          imported = true;
+        }
+        if (json.bypassMarketHours !== undefined) {
+          setBypassMarketHours(json.bypassMarketHours);
+          imported = true;
+        }
+        if (json.refreshInterval !== undefined) {
+          setRefreshInterval(json.refreshInterval);
+          imported = true;
+        }
+        if (json.aiEnabled !== undefined) {
+          setAiEnabled(json.aiEnabled);
+          imported = true;
+        }
+        if (json.dataProvider) {
+          setDataProvider(json.dataProvider);
+          imported = true;
+        }
+        if (json.paytmAccessToken) {
+          setPaytmAccessToken(json.paytmAccessToken);
+          imported = true;
+        }
+        
+        if (imported) {
+          alert("Configuration imported successfully!");
+        } else {
+          alert("No valid configuration found in JSON file.");
+        }
       } catch (err) {
-        alert("Error parsing JSON file.");
+        alert("Error parsing JSON file. Please ensure it is valid JSON.");
       }
     };
     reader.readAsText(file);

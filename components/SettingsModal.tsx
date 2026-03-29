@@ -69,6 +69,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         const json = JSON.parse(e.target?.result as string);
         let loaded = false;
         
+        // Handle nested structure (fyers.clientId, fyers.accessToken, config.*)
+        if (json.fyers) {
+          if (json.fyers.clientId) {
+            setAppId(json.fyers.clientId);
+            loaded = true;
+          }
+          if (json.fyers.accessToken) {
+            setAccessToken(json.fyers.accessToken);
+            loaded = true;
+          }
+        }
+        
+        if (json.config) {
+          if (json.config.bypassMarketHours !== undefined) {
+            setBypassMarketHours(json.config.bypassMarketHours);
+          }
+          if (json.config.aiEnabled !== undefined) {
+            setAiEnabled(json.config.aiEnabled);
+          }
+        }
+        
+        // Handle flat structure (legacy format)
         if (json.appId) {
           setAppId(json.appId);
           loaded = true;
@@ -78,14 +100,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           loaded = true;
         }
         if (json.bypassMarketHours !== undefined) {
-            setBypassMarketHours(json.bypassMarketHours);
+          setBypassMarketHours(json.bypassMarketHours);
         }
         if (json.aiEnabled !== undefined) {
-            setAiEnabled(json.aiEnabled);
+          setAiEnabled(json.aiEnabled);
         }
 
         if (!loaded) {
-          alert("Invalid JSON format. File must contain 'appId' or 'accessToken' fields.");
+          alert("Invalid JSON format. File must contain valid credentials (fyers.clientId/appId or fyers.accessToken/accessToken).");
+        } else {
+          alert("Configuration imported successfully!");
         }
       } catch (err) {
         alert("Error parsing JSON file. Please ensure it is a valid JSON.");
