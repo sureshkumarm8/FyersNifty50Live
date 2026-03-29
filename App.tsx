@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
@@ -12,6 +12,7 @@ import { AIView } from './components/AIView';
 import { AIQuantDeck } from './components/AIQuantDeck';
 import { PreMarketAnalyzer } from './components/PreMarketAnalyzer';
 import UnifiedAutoTrade from './components/UnifiedAutoTrade';
+import PatternDashboard from './components/PatternDashboard';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP } from './services/paytmService';
