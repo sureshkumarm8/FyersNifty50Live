@@ -525,7 +525,7 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950 overflow-hidden flex flex-col">
+    <div className="h-full bg-slate-950 overflow-hidden flex flex-col">
       {/* Header */}
       <div className="flex-none glass-header border-b border-white/10 p-4">
         <div className="flex items-center justify-between">
