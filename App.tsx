@@ -17,6 +17,7 @@ import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './servic
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP } from './services/paytmService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
 import { dbService } from './services/db';
+import { lifecycleManager } from './services/lifecycleManager';
 import { downloadCSV } from './services/csv';
 
 const App: React.FC = () => {
@@ -82,32 +83,60 @@ const App: React.FC = () => {
   const didFetchPivots = useRef(false);
 
   // --- 1. Database Hydration (On Mount) ---
+  // --- 1. Database Hydration & Lifecycle (On Mount) ---
   useEffect(() => {
     const initData = async () => {
         try {
             await dbService.init();
             
-            const today = new Date().toDateString();
-            const savedDate = await dbService.getLastDate();
-
-            if (savedDate === today) {
-                // Same day: Restore state
-                const snaps = await dbService.getSnapshots();
-                const sessions = await dbService.getAllSessionData();
+            // Check if new trading day
+            const isNewDay = await lifecycleManager.isNewTradingDay();
+            
+            if (isNewDay) {
+                // NEW DAY: Run morning setup
+                console.log('🌅 New trading day detected');
+                const setupResult = await lifecycleManager.morningSetup();
+                
+                console.log('Morning Setup:', setupResult);
+                
+                // Show notification
+                if (setupResult.archivedDate) {
+                    setMarketStatusMsg(
+                        `🌅 Good Morning! Archived ${setupResult.archivedDate} (${setupResult.snapshotCount} snapshots)`
+                    );
+                    setTimeout(() => setMarketStatusMsg(null), 5000);
+                }
+                
+                // Start fresh
+                setHistoryLog([]);
+                setSessionHistory({});
+            } else {
+                // SAME DAY: Restore state (page refresh)
+                console.log('📂 Same trading day - Restoring session');
+                const snaps = await dbService.getTodaySnapshots();
+                const sessions = await dbService.getTodaySession();
                 setHistoryLog(snaps);
                 setSessionHistory(sessions);
-            } else {
-                // New day: Clear DB
-                await dbService.clearAll();
-                await dbService.setLastDate(today);
+                
+                console.log(`Restored ${snaps.length} snapshots`);
             }
+            
+            // Setup auto-archive (runs at 3:45 PM)
+            lifecycleManager.setupAutoArchive();
+            
         } catch (e) {
             console.error("DB Init Failed", e);
+            setError("Database initialization failed");
         } finally {
             setIsDbLoaded(true);
         }
     };
     initData();
+    
+    // Cleanup on unmount
+    return () => {
+        lifecycleManager.stopAutoArchive();
+    };
   }, []);
 
   // --- 1.1 Quant History Hydration ---

@@ -250,6 +250,68 @@ export interface SessionCandle {
   day_net_strength: number;
 }
 
+// Daily Archive Types (for multi-day pattern recognition)
+export interface DailyArchive {
+  date: string; // "2026-03-29"
+  snapshots: MarketSnapshot[];
+  sessionData: SessionHistoryMap;
+  summary: DailySummary;
+  metadata: DailyMetadata;
+}
+
+export interface DailySummary {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  totalVolume: number;
+  dominantSentiment: number;
+  avgPCR: number;
+  topPerformer: string;
+  worstPerformer: string;
+  range: number;
+  volatility: number;
+}
+
+export interface DailyMetadata {
+  totalTrades: number;
+  pnl: number;
+  winRate: number;
+  patterns: string[]; // Pattern IDs that occurred
+  notes?: string;
+}
+
+// Pattern Recognition Types
+export interface Pattern {
+  id: string;
+  name: string;
+  description: string;
+  timestamps: number[]; // When it occurred historically
+  conditions: PatternConditions;
+  outcome: PatternOutcome;
+  confidence: number; // 0-100
+  lastSeen: string; // Date string
+  occurrences: number;
+}
+
+export interface PatternConditions {
+  timeWindow?: string; // e.g., "09:30-10:30"
+  niftyMoveRange?: { min: number; max: number };
+  sentimentShift?: number;
+  pcrRange?: [number, number];
+  sectorLeader?: string;
+  volumeProfile?: 'HIGH' | 'LOW' | 'NORMAL';
+}
+
+export interface PatternOutcome {
+  nextHourMove: number; // Average points
+  reliability: number; // 0-100%
+  sampleSize: number;
+  avgDuration: number; // Minutes
+  bestTime?: string;
+}
+}
+
 export interface SessionHistoryMap {
   [symbol: string]: SessionCandle[];
 }
