@@ -225,11 +225,11 @@ const AutoTrade: React.FC<AutoTradeProps> = ({
       return;
     }
 
-    // Run analysis every 30 seconds
+    // Run analysis every minute (aligned with data refresh)
     monitorIntervalRef.current = setInterval(() => {
       analyzeMarket();
       monitorPositions();
-    }, 30000);
+    }, 60000); // Every 1 minute to match app data collection
 
     // Initial run
     analyzeMarket();
@@ -325,6 +325,57 @@ const AutoTrade: React.FC<AutoTradeProps> = ({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        
+        {/* Real-Time Market Metrics Dashboard */}
+        {currentSignal && (
+          <div className="glass-panel p-4 rounded-xl">
+            <h3 className="text-sm font-bold text-slate-400 mb-3 flex items-center gap-2">
+              <Activity size={16} />
+              Live Market Metrics (Analyzed Every Minute)
+            </h3>
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+              <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                <div className="text-xs text-slate-500">Mom 1m</div>
+                <div className={`text-sm font-bold ${currentSignal.metrics.momentum_1m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {currentSignal.metrics.momentum_1m.toFixed(2)}%
+                </div>
+              </div>
+              <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                <div className="text-xs text-slate-500">Mom 5m</div>
+                <div className={`text-sm font-bold ${currentSignal.metrics.momentum_5m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {currentSignal.metrics.momentum_5m.toFixed(2)}%
+                </div>
+              </div>
+              <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                <div className="text-xs text-slate-500">Volatility</div>
+                <div className="text-sm font-bold text-yellow-400">
+                  {currentSignal.metrics.volatility.toFixed(1)}%
+                </div>
+              </div>
+              <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                <div className="text-xs text-slate-500">Vol Ratio</div>
+                <div className="text-sm font-bold text-blue-400">
+                  {currentSignal.metrics.volumeRatio.toFixed(2)}x
+                </div>
+              </div>
+              <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                <div className="text-xs text-slate-500">Order Flow</div>
+                <div className={`text-sm font-bold ${currentSignal.metrics.orderFlowImbalance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {currentSignal.metrics.orderFlowImbalance.toFixed(1)}%
+                </div>
+              </div>
+              <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                <div className="text-xs text-slate-500">Opt Sent</div>
+                <div className={`text-sm font-bold ${(currentSignal.metrics.optionsSentiment || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {(currentSignal.metrics.optionsSentiment || 0).toFixed(1)}%
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 text-xs text-slate-500 text-center">
+              Using {historyLog.length} data points collected every minute
+            </div>
+          </div>
+        )}
         
         {/* Account Status */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

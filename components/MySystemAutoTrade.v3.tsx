@@ -156,17 +156,20 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
 
     addLog('📊 DOWNLOAD PHASE: Analyzing market structure...');
 
-    // Get first 5-minute high/low
-    const recent5Min = historyLog.slice(-5);
-    const fiveMinHigh = Math.max(...recent5Min.map(s => s.niftyLtp));
-    const fiveMinLow = Math.min(...recent5Min.map(s => s.niftyLtp));
+    // Get first 5-10 minute data
+    const recent10Min = historyLog.slice(-10);
+    const fiveMinHigh = Math.max(...recent10Min.map(s => s.niftyLtp));
+    const fiveMinLow = Math.min(...recent10Min.map(s => s.niftyLtp));
+
+    // Get latest snapshot for real-time sentiment
+    const latest = recent10Min[recent10Min.length - 1];
 
     // Determine support/resistance (50-point buffers)
     const support = Math.round((fiveMinLow - 50) / 50) * 50;
     const resistance = Math.round((fiveMinHigh + 50) / 50) * 50;
 
     // Determine open type
-    const openPrice = recent5Min[0].niftyLtp;
+    const openPrice = recent10Min[0].niftyLtp;
     let openType: 'GAP_UP' | 'GAP_DOWN' | 'FLAT' = 'FLAT';
     
     if (pivots) {
@@ -189,8 +192,13 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
       currentZone
     });
 
-    addLog(`📍 Zones: Support=${support}, Resistance=${resistance}`);
-    addLog(`📈 Open Type: ${openType}, Current Zone: ${currentZone}`);
+    // Log rich market insights
+    addLog(`📍 Zones: Support=${support}, Resistance=${resistance}, Range=${resistance - support}pts`);
+    addLog(`📈 Open: ${openType} | Zone: ${currentZone} | LTP: ${niftyLtp.toFixed(0)}`);
+    addLog(`📊 Market: ADV=${latest.adv} DEC=${latest.dec} | Breadth=${latest.overallSent.toFixed(1)}%`);
+    addLog(`📉 Options: PCR=${latest.pcr.toFixed(2)} | Sent=${latest.optionsSent.toFixed(1)}%`);
+    addLog(`💹 Calls: Buy=${(latest.callsBuyQty / 1000000).toFixed(1)}M Sell=${(latest.callsSellQty / 1000000).toFixed(1)}M`);
+    addLog(`💹 Puts: Buy=${(latest.putsBuyQty / 1000000).toFixed(1)}M Sell=${(latest.putsSellQty / 1000000).toFixed(1)}M`);
     addLog(`✅ Download complete. Waiting for entry window (09:25)...`);
   }, [niftyLtp, historyLog, pivots, addLog]);
 
@@ -460,6 +468,7 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
     const phase = determinePhase();
     setSystemState(prev => ({ ...prev, phase }));
 
+    // Run analysis every minute (aligned with data refresh)
     monitorIntervalRef.current = setInterval(() => {
       const currentPhase = determinePhase();
       setSystemState(prev => ({ ...prev, phase: currentPhase }));
@@ -471,7 +480,7 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
       } else if (currentPhase === 'IN_TRADE') {
         monitorActiveTrade();
       }
-    }, 2000); // Check every 2 seconds
+    }, 60000); // Every 1 minute to match data refresh
 
     return () => {
       if (monitorIntervalRef.current) clearInterval(monitorIntervalRef.current);
@@ -567,6 +576,50 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        
+        {/* Real-Time Market Data Insights */}
+        {historyLog.length > 0 && (
+          <div className="glass-panel p-4 rounded-xl">
+            <h3 className="text-sm font-bold text-slate-400 mb-3 flex items-center gap-2">
+              <Activity size={16} />
+              Live Market Data (Updated Every Minute)
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {(() => {
+                const latest = historyLog[historyLog.length - 1];
+                return (
+                  <>
+                    <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                      <div className="text-xs text-slate-500">Breadth</div>
+                      <div className={`text-sm font-bold ${latest.overallSent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {latest.overallSent.toFixed(1)}%
+                      </div>
+                      <div className="text-xs text-slate-600">{latest.adv}↑ {latest.dec}↓</div>
+                    </div>
+                    <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                      <div className="text-xs text-slate-500">Options</div>
+                      <div className={`text-sm font-bold ${latest.optionsSent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {latest.optionsSent.toFixed(1)}%
+                      </div>
+                      <div className="text-xs text-slate-600">PCR: {latest.pcr.toFixed(2)}</div>
+                    </div>
+                    <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                      <div className="text-xs text-slate-500">Stock Flow</div>
+                      <div className={`text-sm font-bold ${latest.stockSent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {latest.stockSent.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="bg-slate-800/50 rounded-lg p-2 text-center">
+                      <div className="text-xs text-slate-500">Data Points</div>
+                      <div className="text-sm font-bold text-blue-400">{historyLog.length}</div>
+                      <div className="text-xs text-slate-600">Last: {latest.time}</div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        )}
         
         {/* Zones Card - DOWNLOAD Phase */}
         {zones && (

@@ -27,6 +27,11 @@ export interface SignalMetrics {
   pivotDistance: number;
   ivRank?: number;
   deltaExposure?: number;
+  // Enriched from MarketSnapshot data
+  optionsSentiment?: number; // Call vs Put sentiment
+  pcr?: number; // Put-Call Ratio
+  breadthRatio?: number; // Advance/Decline ratio
+  stockSentiment?: number; // Stock buy/sell pressure
 }
 
 export interface TradeSetup {
@@ -125,6 +130,7 @@ export class TradingEngine {
 
   /**
    * CALCULATE COMPREHENSIVE METRICS
+   * Uses ALL available market data from historyLog
    */
   private calculateMetrics(
     niftyLtp: number,
@@ -142,21 +148,40 @@ export class TradingEngine {
     const prev5 = historyLog[Math.max(0, len - 6)];
     const prev15 = historyLog[Math.max(0, len - 16)];
 
-    // Momentum calculations
+    // === MOMENTUM ANALYSIS ===
     const momentum_1m = ((latest.niftyLtp - prev1.niftyLtp) / prev1.niftyLtp) * 100;
     const momentum_5m = ((latest.niftyLtp - prev5.niftyLtp) / prev5.niftyLtp) * 100;
 
-    // Volatility (standard deviation of returns)
+    // === VOLATILITY (Realized Vol) ===
     const volatility = this.calculateVolatility(historyLog.slice(-20));
 
-    // Volume ratio (current vs average)
-    const avgVolume = historyLog.slice(-20).reduce((sum, s) => sum + (s.volumeTrend || 0), 0) / 20;
-    const volumeRatio = avgVolume > 0 ? ((latest.volumeTrend || 0) / avgVolume) : 1;
+    // === VOLUME ANALYSIS (Using actual snapshot data) ===
+    const recentVolumes = historyLog.slice(-20).map(s => 
+      (s.callsBuyQty || 0) + (s.callsSellQty || 0) + (s.putsBuyQty || 0) + (s.putsSellQty || 0)
+    );
+    const avgVolume = recentVolumes.reduce((sum, v) => sum + v, 0) / recentVolumes.length;
+    const currentVolume = (latest.callsBuyQty || 0) + (latest.callsSellQty || 0) + 
+                          (latest.putsBuyQty || 0) + (latest.putsSellQty || 0);
+    const volumeRatio = avgVolume > 0 ? (currentVolume / avgVolume) : 1;
 
-    // Order flow imbalance (from bid/ask quantities)
+    // === ORDER FLOW IMBALANCE (Using stock bid/ask data) ===
     const orderFlowImbalance = this.calculateOrderFlowImbalance(stocks);
 
-    // Distance from pivots
+    // === OPTIONS SENTIMENT (Call vs Put sentiment) ===
+    const optionsSentiment = latest.optionsSent || 0; // (callSent - putSent)
+    
+    // === PCR ANALYSIS ===
+    const pcr = latest.pcr || 1;
+    const pcrSignal = pcr > 1.2 ? 10 : pcr < 0.8 ? -10 : 0; // PCR contribution
+    
+    // === BREADTH ANALYSIS (Advance/Decline) ===
+    const breadthRatio = latest.adv > 0 ? (latest.adv - latest.dec) / (latest.adv + latest.dec) : 0;
+    const breadthStrength = breadthRatio * 100; // -100 to +100
+
+    // === STOCK SENTIMENT ===
+    const stockSentiment = latest.stockSent || 0; // (Buy-Sell)/Sell %
+
+    // === PIVOT DISTANCE ===
     const pivotDistance = pivots ? this.calculatePivotDistance(niftyLtp, pivots) : 0;
 
     return {
@@ -165,7 +190,12 @@ export class TradingEngine {
       volatility,
       volumeRatio,
       orderFlowImbalance,
-      pivotDistance
+      pivotDistance,
+      // Additional enrichment using snapshot data
+      optionsSentiment,
+      pcr,
+      breadthRatio,
+      stockSentiment
     };
   }
 
@@ -233,38 +263,94 @@ export class TradingEngine {
 
   /**
    * CONFIDENCE SCORE CALCULATION
+   * Enhanced to use ALL market snapshot data
    */
   private calculateConfidence(metrics: SignalMetrics): number {
     let score = 50; // Base confidence
 
-    // Momentum alignment (1m and 5m in same direction)
+    // === MOMENTUM ALIGNMENT (1m and 5m in same direction) ===
     if (metrics.momentum_1m * metrics.momentum_5m > 0) {
-      score += 15;
+      score += 10;
+      // Bonus if both strong
+      if (Math.abs(metrics.momentum_1m) > 0.2 && Math.abs(metrics.momentum_5m) > 0.2) {
+        score += 5;
+      }
     }
 
-    // Strong momentum
+    // === STRONG MOMENTUM ===
     if (Math.abs(metrics.momentum_5m) > 0.3) {
       score += 10;
     }
 
-    // Volume confirmation
+    // === VOLUME CONFIRMATION ===
     if (metrics.volumeRatio > 1.2) {
-      score += 10;
+      score += 8;
     }
-
-    // Order flow alignment
-    if (Math.abs(metrics.orderFlowImbalance) > 5) {
-      score += 10;
-    }
-
-    // Low volatility (more predictable)
-    if (metrics.volatility < 15) {
+    // Exceptional volume
+    if (metrics.volumeRatio > 1.5) {
       score += 5;
     }
 
-    // Near pivot level (higher probability reversal)
+    // === ORDER FLOW ALIGNMENT ===
+    if (Math.abs(metrics.orderFlowImbalance) > 5) {
+      score += 8;
+    }
+    // Strong order flow
+    if (Math.abs(metrics.orderFlowImbalance) > 10) {
+      score += 4;
+    }
+
+    // === OPTIONS SENTIMENT (Call vs Put) ===
+    if (metrics.optionsSentiment !== undefined) {
+      if (Math.abs(metrics.optionsSentiment) > 20) {
+        score += 8; // Strong options positioning
+      }
+      if (Math.abs(metrics.optionsSentiment) > 40) {
+        score += 4; // Exceptional options flow
+      }
+    }
+
+    // === PCR CONFIRMATION ===
+    if (metrics.pcr !== undefined) {
+      // Bullish: High PCR (>1.2) suggests put buying = support
+      // Bearish: Low PCR (<0.8) suggests call buying = resistance
+      if (metrics.pcr > 1.2 || metrics.pcr < 0.8) {
+        score += 6;
+      }
+    }
+
+    // === BREADTH CONFIRMATION ===
+    if (metrics.breadthRatio !== undefined) {
+      // Strong breadth (>0.3) confirms momentum
+      if (Math.abs(metrics.breadthRatio) > 0.3) {
+        score += 6;
+      }
+      // Exceptional breadth (>0.5)
+      if (Math.abs(metrics.breadthRatio) > 0.5) {
+        score += 4;
+      }
+    }
+
+    // === STOCK SENTIMENT ===
+    if (metrics.stockSentiment !== undefined) {
+      // Strong buying/selling in underlying stocks
+      if (Math.abs(metrics.stockSentiment) > 10) {
+        score += 5;
+      }
+    }
+
+    // === LOW VOLATILITY (more predictable) ===
+    if (metrics.volatility < 15) {
+      score += 5;
+    }
+    // Penalize high volatility
+    if (metrics.volatility > 30) {
+      score -= 5;
+    }
+
+    // === NEAR PIVOT LEVEL (higher probability reversal) ===
     if (metrics.pivotDistance < 0.5) {
-      score += 10;
+      score += 8;
     }
 
     return Math.min(95, Math.max(10, score));
@@ -272,22 +358,46 @@ export class TradingEngine {
 
   /**
    * STRENGTH SCORE (-100 to +100)
+   * Enhanced with multi-factor data
    */
   private calculateStrength(metrics: SignalMetrics): number {
     let strength = 0;
 
-    // Momentum contribution (40%)
-    strength += metrics.momentum_5m * 8;
+    // === MOMENTUM CONTRIBUTION (35%) ===
+    strength += metrics.momentum_5m * 7; // 5-min trend
+    strength += metrics.momentum_1m * 3.5; // 1-min momentum
 
-    // Order flow contribution (30%)
-    strength += metrics.orderFlowImbalance * 0.3;
+    // === ORDER FLOW CONTRIBUTION (25%) ===
+    strength += metrics.orderFlowImbalance * 0.25;
 
-    // Volume contribution (20%)
-    strength += (metrics.volumeRatio - 1) * 20;
+    // === OPTIONS SENTIMENT (20%) ===
+    if (metrics.optionsSentiment !== undefined) {
+      strength += metrics.optionsSentiment * 0.2;
+    }
 
-    // Volatility penalty (10%)
-    if (metrics.volatility > 20) {
+    // === STOCK SENTIMENT (10%) ===
+    if (metrics.stockSentiment !== undefined) {
+      strength += metrics.stockSentiment * 0.1;
+    }
+
+    // === BREADTH CONTRIBUTION (10%) ===
+    if (metrics.breadthRatio !== undefined) {
+      strength += metrics.breadthRatio * 10;
+    }
+
+    // === PCR ADJUSTMENT ===
+    if (metrics.pcr !== undefined) {
+      // High PCR (>1.2) = Bullish support
+      // Low PCR (<0.8) = Bearish resistance
+      if (metrics.pcr > 1.2) strength += 5;
+      if (metrics.pcr < 0.8) strength -= 5;
+    }
+
+    // === VOLATILITY PENALTY ===
+    if (metrics.volatility > 25) {
       strength -= 10;
+    } else if (metrics.volatility > 20) {
+      strength -= 5;
     }
 
     return Math.max(-100, Math.min(100, strength));
@@ -295,32 +405,71 @@ export class TradingEngine {
 
   /**
    * GENERATE HUMAN-READABLE REASONS
+   * Enhanced with ALL market data insights
    */
   private generateReasons(metrics: SignalMetrics, direction: string): string[] {
     const reasons: string[] = [];
 
+    // === MOMENTUM ===
     if (Math.abs(metrics.momentum_5m) > 0.3) {
       reasons.push(`Strong ${direction === 'LONG' ? 'bullish' : 'bearish'} momentum (${metrics.momentum_5m.toFixed(2)}%)`);
     }
-
-    if (metrics.volumeRatio > 1.3) {
-      reasons.push(`Above average volume (${(metrics.volumeRatio * 100).toFixed(0)}%)`);
+    
+    if (metrics.momentum_1m * metrics.momentum_5m > 0 && Math.abs(metrics.momentum_1m) > 0.2) {
+      reasons.push(`1m & 5m momentum aligned (${metrics.momentum_1m.toFixed(2)}%, ${metrics.momentum_5m.toFixed(2)}%)`);
     }
 
+    // === VOLUME ===
+    if (metrics.volumeRatio > 1.3) {
+      reasons.push(`High volume: ${(metrics.volumeRatio * 100).toFixed(0)}% of average`);
+    }
+
+    // === ORDER FLOW ===
     if (Math.abs(metrics.orderFlowImbalance) > 10) {
       const side = metrics.orderFlowImbalance > 0 ? 'Buy' : 'Sell';
       reasons.push(`${side} pressure in order flow (${metrics.orderFlowImbalance.toFixed(1)}%)`);
     }
 
+    // === OPTIONS DATA ===
+    if (metrics.optionsSentiment !== undefined && Math.abs(metrics.optionsSentiment) > 25) {
+      const bias = metrics.optionsSentiment > 0 ? 'Call' : 'Put';
+      reasons.push(`Strong ${bias} buildup in options (${metrics.optionsSentiment.toFixed(1)}%)`);
+    }
+
+    // === PCR ===
+    if (metrics.pcr !== undefined) {
+      if (metrics.pcr > 1.2) {
+        reasons.push(`High PCR (${metrics.pcr.toFixed(2)}) suggests put protection`);
+      } else if (metrics.pcr < 0.8) {
+        reasons.push(`Low PCR (${metrics.pcr.toFixed(2)}) suggests call buildup`);
+      }
+    }
+
+    // === BREADTH ===
+    if (metrics.breadthRatio !== undefined && Math.abs(metrics.breadthRatio) > 0.4) {
+      const breadthDir = metrics.breadthRatio > 0 ? 'Bullish' : 'Bearish';
+      reasons.push(`${breadthDir} breadth: ${(metrics.breadthRatio * 100).toFixed(0)}% stocks participating`);
+    }
+
+    // === STOCK SENTIMENT ===
+    if (metrics.stockSentiment !== undefined && Math.abs(metrics.stockSentiment) > 15) {
+      const sentDir = metrics.stockSentiment > 0 ? 'Buying' : 'Selling';
+      reasons.push(`${sentDir} pressure in Nifty 50 stocks (${metrics.stockSentiment.toFixed(1)}%)`);
+    }
+
+    // === PIVOT LEVELS ===
     if (metrics.pivotDistance < 0.5) {
-      reasons.push(`Near key pivot level`);
+      reasons.push(`Near key pivot level (${metrics.pivotDistance.toFixed(2)}% away)`);
     }
 
+    // === VOLATILITY ===
     if (metrics.volatility > 25) {
-      reasons.push(`⚠️ High volatility (${metrics.volatility.toFixed(1)}%)`);
+      reasons.push(`⚠️ High volatility environment (${metrics.volatility.toFixed(1)}%)`);
+    } else if (metrics.volatility < 12) {
+      reasons.push(`Low volatility - favorable for directional trades`);
     }
 
-    return reasons.length > 0 ? reasons : ['No strong confluence'];
+    return reasons.length > 0 ? reasons : ['Weak confluence - no clear setup'];
   }
 
   /**
@@ -437,7 +586,11 @@ export class TradingEngine {
       volatility: 0,
       volumeRatio: 1,
       orderFlowImbalance: 0,
-      pivotDistance: 0
+      pivotDistance: 0,
+      optionsSentiment: 0,
+      pcr: 1,
+      breadthRatio: 0,
+      stockSentiment: 0
     };
   }
 }
