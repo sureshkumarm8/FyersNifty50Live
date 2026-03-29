@@ -1,7 +1,7 @@
 
 
 
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant' | 'sniper' | 'premarket' | 'autotrade' | 'mysystem';
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant' | 'premarket' | 'autotrade' | 'patterns';
 
 export interface FyersCredentials {
   appId: string;

@@ -17,12 +17,13 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Play, Pause, TrendingUp, TrendingDown, Target, Shield, Zap, Clock,
   DollarSign, Activity, AlertCircle, CheckCircle, Brain, Eye, BarChart3,
-  Settings as SettingsIcon, Layers
+  Settings as SettingsIcon, Layers, Sparkles
 } from 'lucide-react';
 import { FyersCredentials, EnrichedFyersQuote, MarketSnapshot, PivotPoints } from '../types';
 import { TradingEngine, TradingSignal, TradeSetup } from '../services/tradingEngine';
 import { OrderManager, Position, Order } from '../services/orderManager';
 import { tradeJournal, Trade, TradeStats } from '../services/tradeJournal';
+import { predictionEngine, Prediction, TradeWinProbability, Anomaly } from '../services/predictionEngine';
 import { getNextExpiryDate, getFormattedExpiryDate } from '../constants/niftyExpiryDates';
 
 type Strategy = 'MOMENTUM' | 'SNIPER';
@@ -87,6 +88,11 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
   const [sniperZones, setSniperZones] = useState<SniperZone | null>(null);
   const [sniperTradeSetup, setSniperTradeSetup] = useState<TradeSetup | null>(null);
   const [sniperDailyTradeExecuted, setSniperDailyTradeExecuted] = useState(false);
+
+  // AI Prediction State
+  const [currentPrediction, setCurrentPrediction] = useState<Prediction | null>(null);
+  const [winProbability, setWinProbability] = useState<TradeWinProbability | null>(null);
+  const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
 
   // Service Refs
   const engineRef = useRef<TradingEngine | null>(null);
@@ -233,14 +239,76 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
     }
   }, [niftyLtp, sniperZones, sniperTradeSetup, sniperDailyTradeExecuted, historyLog, pivots, activePositions, addLog]);
 
-  // Unified Analysis Runner
-  const runAnalysis = useCallback(() => {
+  // Unified Analysis Runner (includes AI predictions)
+  const runAnalysis = useCallback(async () => {
     if (state.strategy === 'MOMENTUM') {
       runMomentumAnalysis();
     } else {
       runSniperAnalysis();
     }
-  }, [state.strategy, runMomentumAnalysis, runSniperAnalysis]);
+    
+    // Run AI predictions if enabled
+    if (aiEnabled && niftyLtp && historyLog.length >= 5) {
+      const latest = historyLog[historyLog.length - 1];
+      
+      try {
+        // Next-minute prediction
+        const prediction = await predictionEngine.predictNextMove({
+          niftyLtp,
+          marketSnapshot: latest,
+          last5Minutes: historyLog.slice(-5),
+          stocks,
+          pivots
+        });
+        setCurrentPrediction(prediction);
+        
+        // Anomaly detection
+        const detectedAnomalies = await predictionEngine.scanAnomalies(latest, 30);
+        if (detectedAnomalies.length > 0) {
+          setAnomalies(detectedAnomalies);
+          detectedAnomalies.forEach(anomaly => {
+            if (anomaly.severity === 'HIGH') {
+              addLog(`⚠️ ANOMALY: ${anomaly.message}`);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Prediction error:', error);
+      }
+    }
+  }, [state.strategy, runMomentumAnalysis, runSniperAnalysis, aiEnabled, niftyLtp, historyLog, stocks, pivots, addLog]);
+  
+  // Calculate win probability when signal is generated
+  useEffect(() => {
+    if ((currentSignal || sniperTradeSetup) && aiEnabled && niftyLtp) {
+      const setup = state.strategy === 'SNIPER' ? sniperTradeSetup : currentSignal;
+      if (!setup) return;
+      
+      const now = new Date();
+      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      
+      predictionEngine.getTradeWinProbability({
+        entryPrice: setup.entryPrice,
+        direction: setup.direction,
+        strikePrice: setup.strikePrice,
+        optionType: setup.optionType,
+        marketContext: {
+          time: currentTime,
+          niftyLtp,
+          sentiment: historyLog[historyLog.length - 1]?.overallSent || 0,
+          pcr: historyLog[historyLog.length - 1]?.pcr || 1,
+          volatility: 0
+        }
+      }).then(prob => {
+        setWinProbability(prob);
+        if (prob.sampleSize > 0) {
+          addLog(`🤖 AI Win Probability: ${prob.probability}% (based on ${prob.sampleSize} similar trades)`);
+        }
+      }).catch(err => {
+        console.error('Win probability error:', err);
+      });
+    }
+  }, [currentSignal, sniperTradeSetup, aiEnabled, niftyLtp, state.strategy, historyLog, addLog]);
 
   // Monitoring Loop
   useEffect(() => {
@@ -505,6 +573,35 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
               </div>
             )}
 
+            {/* AI Win Probability */}
+            {winProbability && winProbability.sampleSize > 0 && (currentSignal || sniperTradeSetup) && aiEnabled && (
+              <div className="mt-3 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={14} className="text-purple-400" />
+                    <span className="text-xs font-bold text-purple-400">AI Analysis</span>
+                  </div>
+                  <div className="text-xl font-bold text-white">{winProbability.probability}%</div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <div className="text-slate-500">Sample Size</div>
+                    <div className="text-white font-bold">{winProbability.sampleSize}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500">Avg P&L</div>
+                    <div className={`font-bold ${winProbability.avgPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      ₹{winProbability.avgPnL}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500">Risk:Reward</div>
+                    <div className="text-white font-bold">{winProbability.riskReward.toFixed(1)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Execute Button */}
             {(currentSignal || sniperTradeSetup) && state.status === 'SIGNAL_GENERATED' && (
               <button
@@ -611,6 +708,89 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
               </div>
             )}
           </div>
+
+          {/* AI Predictions Panel */}
+          {aiEnabled && currentPrediction && (
+            <div className="glass-panel rounded-xl p-4">
+              <h2 className="text-sm font-bold text-slate-400 mb-3 flex items-center gap-2">
+                <Sparkles size={16} className="text-purple-400" />
+                AI Prediction
+              </h2>
+              
+              <div className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className={`text-lg font-black flex items-center gap-2 ${
+                    currentPrediction.direction === 'UP' ? 'text-green-400' :
+                    currentPrediction.direction === 'DOWN' ? 'text-red-400' :
+                    'text-slate-400'
+                  }`}>
+                    {currentPrediction.direction === 'UP' && <TrendingUp size={20} />}
+                    {currentPrediction.direction === 'DOWN' && <TrendingDown size={20} />}
+                    {currentPrediction.direction}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-slate-500">Confidence</div>
+                    <div className="text-lg font-bold text-white">{currentPrediction.confidence}%</div>
+                  </div>
+                </div>
+                <div className="text-xs text-slate-400 mb-2">
+                  Expected: {currentPrediction.expectedMove > 0 ? '+' : ''}{currentPrediction.expectedMove} pts in {currentPrediction.timeframe}
+                </div>
+                <div className="space-y-1 text-xs">
+                  {currentPrediction.factors.map((factor, idx) => (
+                    <div key={idx} className="flex items-center justify-between">
+                      <span className="text-slate-500">{factor.name}</span>
+                      <span className={
+                        factor.signal === 'BULLISH' ? 'text-green-400' :
+                        factor.signal === 'BEARISH' ? 'text-red-400' :
+                        'text-slate-400'
+                      }>
+                        {factor.signal}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Anomaly Alerts */}
+          {anomalies.length > 0 && (
+            <div className="glass-panel rounded-xl p-4">
+              <h2 className="text-sm font-bold text-slate-400 mb-3 flex items-center gap-2">
+                <AlertCircle size={16} className="text-orange-400" />
+                Market Anomalies ({anomalies.length})
+              </h2>
+              
+              <div className="space-y-2">
+                {anomalies.map((anomaly, idx) => (
+                  <div key={idx} className={`border rounded-lg p-3 ${
+                    anomaly.severity === 'HIGH' ? 'border-red-500/30 bg-red-500/5' :
+                    anomaly.severity === 'MEDIUM' ? 'border-orange-500/30 bg-orange-500/5' :
+                    'border-yellow-500/30 bg-yellow-500/5'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className={`text-xs px-2 py-0.5 rounded font-bold ${
+                        anomaly.severity === 'HIGH' ? 'bg-red-500/20 text-red-400' :
+                        anomaly.severity === 'MEDIUM' ? 'bg-orange-500/20 text-orange-400' :
+                        'bg-yellow-500/20 text-yellow-400'
+                      }`}>
+                        {anomaly.severity}
+                      </div>
+                      <div className="text-xs text-slate-400">{anomaly.type}</div>
+                    </div>
+                    <div className="text-sm text-white mb-1">{anomaly.message}</div>
+                    {anomaly.historicalContext && (
+                      <div className="text-xs text-slate-500 mb-1">{anomaly.historicalContext}</div>
+                    )}
+                    {anomaly.suggestedAction && (
+                      <div className="text-xs text-blue-400">💡 {anomaly.suggestedAction}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Analysis Log */}

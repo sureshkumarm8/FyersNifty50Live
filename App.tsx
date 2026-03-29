@@ -1030,6 +1030,9 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('quant')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'quant' ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <BrainCircuit size={14} /> Quant
                </button>
+               <button onClick={() => handleSetViewMode('patterns')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'patterns' ? 'bg-purple-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Brain size={14} /> Patterns
+               </button>
                <button onClick={() => handleSetViewMode('premarket')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'premarket' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <TrendingUp size={14} /> PreMkt
                </button>
@@ -1245,6 +1248,15 @@ const App: React.FC = () => {
                    historyLog={historyLog || []}
                    pivots={pivots}
                    aiEnabled={credentials.aiEnabled}
+                />
+            </div>
+        )}
+
+        {viewMode === 'patterns' && (
+            <div className="flex flex-col h-full overflow-hidden">
+                <PatternDashboard 
+                   currentSnapshot={historyLog[historyLog.length - 1] || null}
+                   niftyLtp={niftyLtp}
                 />
             </div>
         )}
