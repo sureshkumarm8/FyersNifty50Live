@@ -39,13 +39,17 @@ interface DetailedCandle {
 }
 
 const formatNumber = (num: number | undefined) => num?.toLocaleString('en-IN') || '--';
-const formatPercent = (num: number | undefined) => {
-    if (num === undefined) return '--';
+const formatPercent = (num: number | undefined | null) => {
+    if (num === undefined || num === null || typeof num !== 'number' || isNaN(num)) return <span className="text-slate-400">--</span>;
     const color = num > 0 ? 'text-bull' : num < 0 ? 'text-bear' : 'text-slate-400';
-    // Fix: Using 1 decimal point for consistency
     return <span className={color}>{num > 0 ? '+' : ''}{num.toFixed(1)}%</span>;
 };
-const formatQty = (num: number | undefined) => num ? (num > 1000000 ? `${(num/1000000).toFixed(2)}M` : num > 1000 ? `${(num/1000).toFixed(1)}k` : num.toString()) : '--';
+const formatQty = (num: number | undefined | null) => {
+    if (num === undefined || num === null || typeof num !== 'number' || isNaN(num)) return '--';
+    if (num > 1000000) return `${(num/1000000).toFixed(2)}M`;
+    if (num > 1000) return `${(num/1000).toFixed(1)}k`;
+    return num.toString();
+};
 
 export const StockDetail: React.FC<StockDetailProps> = ({ symbol, credentials, onBack, sessionData }) => {
   const [candles, setCandles] = useState<DetailedCandle[]>([]);

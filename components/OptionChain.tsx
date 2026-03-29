@@ -3,6 +3,7 @@ import React, { useMemo } from 'react';
 import { SortConfig, SortField, EnrichedFyersQuote } from '../types';
 import { StockTable } from './StockTable';
 import { Target, Zap, Clock } from 'lucide-react';
+import { getNextExpiryDate, getFormattedExpiryDate } from '../constants/niftyExpiryDates';
 
 interface OptionChainProps {
   quotes: EnrichedFyersQuote[];
@@ -26,6 +27,9 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
       direction: prev.field === field && prev.direction === 'asc' ? 'desc' : 'asc',
     }));
   };
+
+  // Get next expiry date from static calendar
+  const nextExpiry = useMemo(() => getNextExpiryDate(), []);
 
   // --- Sorting & Filtering Logic (Client Side) ---
   const sortedQuotes = useMemo(() => {
@@ -96,14 +100,19 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
                 <div className="flex items-center gap-4 w-full sm:w-auto">
                     <div className="flex-1 sm:flex-none flex flex-col items-end px-4 py-2 rounded-lg bg-slate-950/30 border border-white/5">
                         <span className="text-[10px] text-slate-500 uppercase font-bold flex items-center gap-1 mb-1">
-                            <Clock size={10} /> Expiry Target
+                            <Clock size={10} /> Expiry Date
                         </span>
-                        <span className="text-sm font-bold text-blue-200">Upcoming Tuesday</span>
+                        <span className="text-sm font-bold text-blue-200">
+                          {nextExpiry ? getFormattedExpiryDate(nextExpiry) : 'N/A'}
+                        </span>
+                        <span className="text-[9px] text-slate-600 mt-0.5">
+                          {nextExpiry?.type}
+                        </span>
                     </div>
                     <div className="hidden sm:block h-8 w-[1px] bg-white/10"></div>
                     <div className="flex-1 sm:flex-none flex items-center gap-2 text-xs text-slate-400">
                         <Zap size={14} className="text-yellow-500" />
-                        <span>ATM ± 25 Strikes</span>
+                        <span>ATM ± 20 Strikes</span>
                     </div>
                 </div>
             </div>

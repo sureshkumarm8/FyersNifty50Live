@@ -54,10 +54,23 @@ export const getNiftyIndexSecurityId = (): string => {
 };
 
 export const getNiftyOptionSecurityIds = (niftyLtp: number): string[] => {
-  // Use the manually curated weekly options
-  const allIds = getWeeklyOptionIds();
+  // Round to nearest 50 to get ATM strike
+  const atmStrike = Math.round(niftyLtp / 50) * 50;
   
-  console.log(`[PayTM] Using weekly options for Nifty LTP: ${niftyLtp}, Total contracts: ${allIds.length}`);
+  // Calculate range: Current Price ± 1000 points (20 strikes of 50 each)
+  // Example: If Nifty at 23000, show strikes from 22000 to 24000
+  const strikeRange = 20; // ±20 strikes = ±1000 points
+  const minStrike = atmStrike - (strikeRange * 50); // 22000
+  const maxStrike = atmStrike + (strikeRange * 50); // 24000
+  
+  // Filter options within the strike range (both CE and PE)
+  const filteredOptions = NIFTY_WEEKLY_OPTIONS.filter(opt => 
+    opt.strike >= minStrike && opt.strike <= maxStrike
+  );
+  
+  const allIds = filteredOptions.map(opt => opt.security_id);
+  
+  console.log(`[PayTM] Options Filter: Nifty LTP=${niftyLtp}, ATM=${atmStrike}, Range=${minStrike}-${maxStrike}, Contracts=${allIds.length}`);
   
   return allIds;
 };

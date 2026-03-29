@@ -914,13 +914,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                          <div className="flex-1">
                              <h4 className="text-white font-bold text-sm mb-2">Smart Strike Selection</h4>
                              <p className="text-xs text-slate-400 leading-relaxed">
-                                 The app automatically calculates the <strong>Nearest Tuesday Expiry</strong>. It checks for holidays and moves the date if needed. It dynamically loads 25 strikes above and below the current Spot Price.
+                                 The app uses a <strong>pre-validated static calendar</strong> with all Nifty 50 expiry dates for 2026-2028, excluding NSE holidays (Republic Day, Holi, Diwali, etc.). 
+                                 It automatically selects the next valid Tuesday expiry and shows <strong>±20 strikes (1000 points)</strong> around current Nifty spot price.
                              </p>
                          </div>
                          <div className="flex-1 border-l border-white/10 pl-4">
                              <h4 className="text-white font-bold text-sm mb-2">Interpreting Option Data</h4>
                              <p className="text-xs text-slate-400 leading-relaxed">
-                                 Look at the <strong>Net Strength</strong> column in the Options view. 
+                                 <strong>Example:</strong> If Nifty is at 23000, you'll see strikes from 22000 to 24000 for both CE and PE. 
                                  <br/><br/>
                                  If <span className="text-emerald-400">CE Strength is Green</span> and <span className="text-red-400">PE Strength is Red</span>, market participants are positioning for a move UP.
                              </p>
