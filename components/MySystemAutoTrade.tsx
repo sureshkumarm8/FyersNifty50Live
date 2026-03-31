@@ -465,27 +465,69 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
   useEffect(() => {
     if (!systemState.isMonitoring) return;
 
-    const phase = determinePhase();
-    setSystemState(prev => ({ ...prev, phase }));
+    // Check if current time is before 9:17 AM IST
+    const now = new Date();
+    const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    const istDate = new Date(istString);
+    const hour = istDate.getHours();
+    const min = istDate.getMinutes();
+    const timeVal = hour * 100 + min;
+    const isBeforeMarketStart = timeVal < 917;
 
-    // Run analysis every minute (aligned with data refresh)
-    monitorIntervalRef.current = setInterval(() => {
-      const currentPhase = determinePhase();
-      setSystemState(prev => ({ ...prev, phase: currentPhase }));
+    if (isBeforeMarketStart && !credentials.bypassMarketHours) {
+      // Schedule monitoring to start at 9:17 AM IST
+      const targetTime = new Date(istDate);
+      targetTime.setHours(9, 17, 0, 0);
+      const delay = targetTime.getTime() - istDate.getTime();
+      
+      addLog(`⏰ Sniper monitoring scheduled to start at 9:17 AM IST (in ${Math.round(delay / 1000 / 60)} minutes)`);
+      
+      const timeoutId = setTimeout(() => {
+        addLog('🔔 9:17 AM IST - Starting Sniper monitoring');
+        const phase = determinePhase();
+        setSystemState(prev => ({ ...prev, phase }));
 
-      if (currentPhase === 'DOWNLOAD') {
-        runDownloadPhase();
-      } else if (currentPhase === 'ENTRY_WINDOW') {
-        runEntryWindow();
-      } else if (currentPhase === 'IN_TRADE') {
-        monitorActiveTrade();
-      }
-    }, 60000); // Every 1 minute to match data refresh
+        monitorIntervalRef.current = setInterval(() => {
+          const currentPhase = determinePhase();
+          setSystemState(prev => ({ ...prev, phase: currentPhase }));
+
+          if (currentPhase === 'DOWNLOAD') {
+            runDownloadPhase();
+          } else if (currentPhase === 'ENTRY_WINDOW') {
+            runEntryWindow();
+          } else if (currentPhase === 'IN_TRADE') {
+            monitorActiveTrade();
+          }
+        }, 60000);
+      }, delay);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        if (monitorIntervalRef.current) clearInterval(monitorIntervalRef.current);
+      };
+    } else {
+      // Normal behavior: start immediately
+      const phase = determinePhase();
+      setSystemState(prev => ({ ...prev, phase }));
+
+      monitorIntervalRef.current = setInterval(() => {
+        const currentPhase = determinePhase();
+        setSystemState(prev => ({ ...prev, phase: currentPhase }));
+
+        if (currentPhase === 'DOWNLOAD') {
+          runDownloadPhase();
+        } else if (currentPhase === 'ENTRY_WINDOW') {
+          runEntryWindow();
+        } else if (currentPhase === 'IN_TRADE') {
+          monitorActiveTrade();
+        }
+      }, 60000); // Every 1 minute to match data refresh
+    }
 
     return () => {
       if (monitorIntervalRef.current) clearInterval(monitorIntervalRef.current);
     };
-  }, [systemState.isMonitoring, determinePhase, runDownloadPhase, runEntryWindow, monitorActiveTrade]);
+  }, [systemState.isMonitoring, determinePhase, runDownloadPhase, runEntryWindow, monitorActiveTrade, credentials.bypassMarketHours, addLog]);
 
   // Toggle monitoring
   const toggleMonitoring = () => {

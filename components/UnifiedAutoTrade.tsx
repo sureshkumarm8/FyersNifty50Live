@@ -25,6 +25,7 @@ import { OrderManager, Position, Order } from '../services/orderManager';
 import { tradeJournal, Trade, TradeStats } from '../services/tradeJournal';
 import { predictionEngine, Prediction, TradeWinProbability, Anomaly } from '../services/predictionEngine';
 import { getNextExpiryDate, getFormattedExpiryDate } from '../constants/niftyExpiryDates';
+import { getMarketTimeInfo, formatDelay } from '../utils/marketTime';
 
 type Strategy = 'MOMENTUM' | 'SNIPER';
 type TradeMode = 'PAPER' | 'LIVE';
@@ -313,12 +314,41 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
   // Monitoring Loop
   useEffect(() => {
     if (state.isMonitoring && !monitorIntervalRef.current) {
-      addLog(`🚀 Started monitoring with ${state.strategy} strategy`);
-      runAnalysis();
-      
-      monitorIntervalRef.current = setInterval(() => {
+      // Get market time info
+      const marketInfo = getMarketTimeInfo();
+
+      // Don't start monitoring before 9:17 AM IST unless bypass is enabled
+      if (marketInfo.isBeforeMarketStart && !credentials.bypassMarketHours) {
+        // Schedule monitoring to start at 9:17 AM IST
+        const delayTime = formatDelay(marketInfo.delayUntil917);
+        
+        addLog(`⏰ ${state.strategy} monitoring scheduled at 9:17 AM IST (in ${delayTime})`);
+        
+        const timeoutId = setTimeout(() => {
+          addLog(`🔔 9:17 AM IST - Starting ${state.strategy} monitoring`);
+          runAnalysis();
+          
+          monitorIntervalRef.current = setInterval(() => {
+            runAnalysis();
+          }, 30000);
+        }, marketInfo.delayUntil917);
+        
+        return () => {
+          clearTimeout(timeoutId);
+          if (monitorIntervalRef.current) {
+            clearInterval(monitorIntervalRef.current);
+            monitorIntervalRef.current = null;
+          }
+        };
+      } else {
+        // Normal behavior: start immediately
+        addLog(`🚀 Started monitoring with ${state.strategy} strategy`);
         runAnalysis();
-      }, 30000);
+        
+        monitorIntervalRef.current = setInterval(() => {
+          runAnalysis();
+        }, 30000);
+      }
     } else if (!state.isMonitoring && monitorIntervalRef.current) {
       clearInterval(monitorIntervalRef.current);
       monitorIntervalRef.current = null;
@@ -331,7 +361,7 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
         monitorIntervalRef.current = null;
       }
     };
-  }, [state.isMonitoring, state.strategy, runAnalysis, addLog]);
+  }, [state.isMonitoring, state.strategy, runAnalysis, addLog, credentials.bypassMarketHours]);
 
   const handleExecuteTrade = async () => {
     if (!orderManagerRef.current) return;

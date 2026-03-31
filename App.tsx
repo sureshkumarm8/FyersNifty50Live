@@ -20,6 +20,7 @@ import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, 
 import { dbService } from './services/db';
 import { lifecycleManager } from './services/lifecycleManager';
 import { downloadCSV } from './services/csv';
+import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
@@ -634,17 +635,54 @@ const App: React.FC = () => {
       : (credentials.appId && credentials.accessToken);
       
     if (isDbLoaded && hasValidCreds && !isPaused) {
-      refreshDataRef.current();
+      // Get market time info
+      const marketInfo = getMarketTimeInfo();
       
-      const intervalId = setInterval(() => {
-          if (refreshDataRef.current) {
+      // Don't call API before 9:17 AM IST unless bypass is enabled
+      if (marketInfo.isBeforeMarketStart && !credentials.bypassMarketHours) {
+        // Schedule first call at 9:17 AM IST
+        const delayTime = formatDelay(marketInfo.delayUntil917);
+        
+        console.log(`⏰ Config loaded before market start. First API call scheduled at 9:17 AM IST (in ${delayTime})`);
+        setMarketStatusMsg(`⏰ First data fetch at 9:17 AM IST (in ${delayTime})`);
+        
+        const timeoutId = setTimeout(() => {
+          console.log('🔔 9:17 AM IST reached - Starting live data fetch');
+          setMarketStatusMsg(null);
+          refreshDataRef.current();
+          
+          // Start regular interval after first call
+          const intervalId = setInterval(() => {
+            if (refreshDataRef.current) {
               refreshDataRef.current();
+            }
+          }, credentials.refreshInterval || 30000);
+          
+          // Store intervalId for cleanup
+          (timeoutId as any).intervalId = intervalId;
+        }, marketInfo.delayUntil917);
+        
+        return () => {
+          clearTimeout(timeoutId);
+          if ((timeoutId as any).intervalId) {
+            clearInterval((timeoutId as any).intervalId);
           }
-      }, credentials.refreshInterval || 30000);
-      
-      return () => clearInterval(intervalId);
+        };
+      } else {
+        // Normal behavior: call immediately and set up interval
+        console.log('🚀 Starting live data fetch');
+        refreshDataRef.current();
+        
+        const intervalId = setInterval(() => {
+          if (refreshDataRef.current) {
+            refreshDataRef.current();
+          }
+        }, credentials.refreshInterval || 30000);
+        
+        return () => clearInterval(intervalId);
+      }
     }
-  }, [isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval]);
+  }, [isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval, credentials.bypassMarketHours]);
 
   // --- Hybrid Quant Logic (AI + Local Heuristic) ---
   const runQuantAnalysis = useCallback(async () => {
