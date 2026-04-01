@@ -198,7 +198,9 @@ export const StockTable: React.FC<StockTableProps> = ({ data, sortConfig, onSort
                   
                   <div className="flex flex-col relative z-10 pl-1">
                       <span>{stock.short_name || stock.symbol}</span>
-                      <span className="text-[9px] text-slate-600 font-mono font-normal uppercase tracking-widest group-hover:text-slate-500">{stock.exchange}</span>
+                      <span className="text-[9px] text-slate-600 font-mono font-normal uppercase tracking-widest group-hover:text-slate-500">
+                        {stock.expiry_date ? `${stock.exchange}: ${stock.expiry_date}` : stock.exchange}
+                      </span>
                   </div>
                 </td>
                 

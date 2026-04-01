@@ -7,7 +7,8 @@ import {
 } from '../constants/paytmMappings';
 import { 
   NIFTY_WEEKLY_OPTIONS, 
-  getWeeklyOptionIds 
+  getWeeklyOptionIds,
+  CURRENT_EXPIRY_FORMATTED
 } from '../constants/niftyWeeklyOptions';
 
 const PROXY_PAYTM_QUOTES_URL = '/api/paytm/quotes';
@@ -85,6 +86,7 @@ const convertPayTMToFyersQuote = (
   let symbol = 'UNKNOWN';
   let shortName = 'UNKNOWN';
   let description = 'Unknown Security';
+  let expiryDate: string | undefined = undefined;
   
   if (stockInfo) {
     symbol = `NSE:${stockInfo.symbol}`;
@@ -95,8 +97,11 @@ const convertPayTMToFyersQuote = (
     const optInfo = NIFTY_WEEKLY_OPTIONS.find(o => o.security_id === securityIdStr);
     if (optInfo) {
       symbol = `NSE:NIFTY-${optInfo.strike}-${optInfo.type}`;
+      // Format: "NIFTY 22750 CE" for short_name (main display)
       shortName = `NIFTY ${optInfo.strike} ${optInfo.type}`;
-      description = `NIFTY ${optInfo.strike} ${optInfo.type}`;
+      // Use description for full info including expiry
+      description = `NIFTY ${optInfo.strike} ${optInfo.type} ${CURRENT_EXPIRY_FORMATTED}`;
+      expiryDate = CURRENT_EXPIRY_FORMATTED;
     }
   }
   
@@ -106,10 +111,24 @@ const convertPayTMToFyersQuote = (
     timestamp = timestamp / 1000; // Convert ms to seconds
   }
   
+  // Debug: Log raw PayTM data for first few items
+  if (Math.random() < 0.05) { // 5% sampling to avoid spam
+    console.log(`[PayTM Convert] Security ${securityIdStr}:`, {
+      last_price: paytmQuote.last_price,
+      volume_traded: paytmQuote.volume_traded,
+      total_buy_quantity: paytmQuote.total_buy_quantity,
+      total_sell_quantity: paytmQuote.total_sell_quantity,
+      oi: paytmQuote.oi,
+      has_ohlc: !!paytmQuote.ohlc,
+      has_depth: !!paytmQuote.depth
+    });
+  }
+  
   return {
     symbol,
     short_name: shortName,
     exchange: 'NSE',
+    expiry_date: expiryDate,
     description,
     original_name: shortName,
     fyToken: securityIdStr,
@@ -182,6 +201,26 @@ export const fetchPayTMQuotes = async (
           quotes.push(quote);
           if (index === 0) {
             console.log('[PayTM] First quote sample:', JSON.stringify(quote).substring(0, 150));
+            console.log('[PayTM] First quote full data:', {
+              symbol: quote.symbol,
+              lp: quote.lp,
+              chp: quote.chp,
+              volume: quote.volume,
+              total_buy_qty: quote.total_buy_qty,
+              total_sell_qty: quote.total_sell_qty,
+              oi: quote.oi
+            });
+          }
+          // Log options specifically
+          if (scripType === 'OPTION' && index < 3) {
+            console.log(`[PayTM] Option ${index + 1}:`, {
+              symbol: quote.symbol,
+              lp: quote.lp,
+              volume: quote.volume,
+              oi: quote.oi,
+              total_buy_qty: quote.total_buy_qty,
+              total_sell_qty: quote.total_sell_qty
+            });
           }
         } else {
           console.warn(`[PayTM] Quote not found for security_id: ${paytmQuote.security_id}`);

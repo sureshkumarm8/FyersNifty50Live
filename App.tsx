@@ -519,12 +519,35 @@ const App: React.FC = () => {
           
           if (credentials.dataProvider === 'paytm') {
             rawOptions = await fetchPayTMOptions(niftyLtpVal, credentials);
+            console.log(`[App] Fetched ${rawOptions.length} options from PayTM`);
+            if (rawOptions.length > 0) {
+              console.log('[App] First option sample:', {
+                symbol: rawOptions[0].symbol,
+                lp: rawOptions[0].lp,
+                volume: rawOptions[0].volume,
+                total_buy_qty: rawOptions[0].total_buy_qty,
+                total_sell_qty: rawOptions[0].total_sell_qty,
+                oi: rawOptions[0].oi
+              });
+            }
           } else {
             const optionSymbols = getNiftyOptionSymbols(niftyLtpVal);
             rawOptions = await fetchQuotes(optionSymbols, credentials);
           }
           
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
+          console.log(`[App] Enriched ${enrichedOptions.length} options`);
+          if (enrichedOptions.length > 0) {
+            console.log('[App] First enriched option:', {
+              symbol: enrichedOptions[0].symbol,
+              lp: enrichedOptions[0].lp,
+              chp: enrichedOptions[0].chp,
+              volume: enrichedOptions[0].volume,
+              total_buy_qty: enrichedOptions[0].total_buy_qty,
+              total_sell_qty: enrichedOptions[0].total_sell_qty,
+              oi: enrichedOptions[0].oi
+            });
+          }
           setOptionQuotes(enrichedOptions);
           updateSessionHistory(enrichedOptions);
           

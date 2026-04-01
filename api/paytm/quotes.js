@@ -100,6 +100,13 @@ export default async function handler(request, response) {
         
         console.log(`[PayTM Proxy] Data structure:`, JSON.stringify(data).substring(0, 300));
         
+        // Log first item for debugging
+        if (data && data.data && Array.isArray(data.data) && data.data.length > 0) {
+          const firstItem = data.data[0];
+          console.log(`[PayTM Proxy] First item fields:`, Object.keys(firstItem));
+          console.log(`[PayTM Proxy] First item sample:`, JSON.stringify(firstItem).substring(0, 200));
+        }
+        
         response.writeHead(paytmResponse.status, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify(data));
         resolve();

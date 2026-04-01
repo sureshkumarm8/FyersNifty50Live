@@ -61,6 +61,7 @@ export interface FyersQuote {
   chp: number; // Change percentage
   description: string;
   exchange: string;
+  expiry_date?: string; // For options: formatted expiry date (e.g., "07-APR-26")
   fyToken: string;
   high_price: number;
   low_price: number;

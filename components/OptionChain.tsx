@@ -30,6 +30,10 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
 
   // Get next expiry date from static calendar
   const nextExpiry = useMemo(() => getNextExpiryDate(), []);
+  
+  // Check if we have no valid options data
+  const hasNoData = quotes.length === 0 || quotes.every(q => q.lp === 0 && q.volume === 0);
+  const hasValidData = quotes.length > 0 && quotes.some(q => q.lp > 0 || q.volume > 0);
 
   // --- Sorting & Filtering Logic (Client Side) ---
   const sortedQuotes = useMemo(() => {
@@ -60,6 +64,26 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      
+      {/* Warning Banner for Outdated Data */}
+      {hasNoData && !isLoading && (
+        <div className="flex-none mb-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+          <div className="flex items-start gap-3">
+            <div className="text-amber-500 mt-1 text-xl">⚠️</div>
+            <div className="flex-1">
+              <h3 className="text-amber-400 font-bold mb-1">Option Contracts Outdated</h3>
+              <p className="text-amber-200/80 text-sm mb-2">
+                The option security IDs in your file are from an expired contract week.
+                Download the latest CSV and regenerate.
+              </p>
+              <div className="text-xs text-amber-300/60 space-y-1 font-mono">
+                <p>📥 Step 1: Download from PayTM Developer Console</p>
+                <p>🔧 Step 2: <code className="bg-black/30 px-2 py-0.5 rounded">node scripts/generateWeeklyOptions.cjs</code></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* HUD Header Stats (Fixed) */}
       <div className="flex-none mb-4">

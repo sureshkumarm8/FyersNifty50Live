@@ -122,6 +122,15 @@ function parseOptions(csvData, expiryDate) {
  */
 function generateTypeScriptFile(options, expiryDate) {
   const now = new Date();
+  
+  // Format expiry as DD-MMM-YY for display
+  const expiryDateObj = new Date(expiryDate);
+  const day = expiryDateObj.getDate().toString().padStart(2, '0');
+  const monthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  const month = monthNames[expiryDateObj.getMonth()];
+  const year = expiryDateObj.getFullYear().toString().slice(-2);
+  const formattedExpiry = `${day}-${month}-${year}`;
+  
   const content = `
 // Nifty Weekly Options - Manually curated for current week
 // Expiry: ${expiryDate} (Next Tuesday)
@@ -132,6 +141,10 @@ export interface NiftyOption {
   strike: number;
   type: 'CE' | 'PE';
 }
+
+// Current week expiry date (auto-updated by generateWeeklyOptions.cjs)
+export const CURRENT_EXPIRY_DATE = '${expiryDate}';
+export const CURRENT_EXPIRY_FORMATTED = '${formattedExpiry}';
 
 export const NIFTY_WEEKLY_OPTIONS: NiftyOption[] = ${JSON.stringify(options, null, 2)};
 
