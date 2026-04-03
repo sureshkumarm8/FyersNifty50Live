@@ -12,7 +12,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   TrendingUp, TrendingDown, Clock, Target, BarChart3, Calendar,
   CheckCircle, AlertCircle, Search, Filter, ChevronRight, Zap,
-  Brain, Activity, ArrowRight, Eye, Sparkles, Download, History, X
+  Brain, Activity, ArrowRight, Eye, Sparkles, Download, History, X, Trash2
 } from 'lucide-react';
 import { MarketSnapshot, Pattern, DailyArchive } from '../types';
 import { patternMiner } from '../services/patternMiner';
@@ -116,6 +116,31 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
 
     const dateStr = new Date(archive.date).toISOString().slice(0, 10);
     downloadCSV(csvData, `nifty_sentiment_momentum_${dateStr}`);
+  };
+
+  const handleDeleteArchive = async (archive: DailyArchive, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent card click
+    
+    if (!confirm(`⚠️ Delete archive for ${archive.date}?\n\nThis will permanently delete:\n• ${archive.snapshots.length} snapshots\n• All session data\n• Summary & metadata\n\nThis action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await dbService.deleteArchive(archive.date);
+      setAllArchives(prev => prev.filter(a => a.date !== archive.date));
+      
+      // Update stats
+      const stats = await lifecycleManager.getArchiveStats();
+      setArchiveStats(stats);
+      
+      // Clear selected day if it was deleted
+      if (selectedDay?.date === archive.date) {
+        setSelectedDay(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete archive:', error);
+      alert('❌ Failed to delete archive');
+    }
   };
 
   const checkPatternMatches = async () => {
@@ -822,9 +847,19 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
                   return (
                     <div
                       key={archive.date}
-                      onClick={() => setSelectedDay(archive)}
-                      className="bg-slate-900/50 border border-white/10 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 hover:bg-slate-900/70 transition-all"
+                      className="bg-slate-900/50 border border-white/10 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 hover:bg-slate-900/70 transition-all relative group"
                     >
+                      {/* Delete Button */}
+                      <button
+                        onClick={(e) => handleDeleteArchive(archive, e)}
+                        className="absolute top-2 right-2 p-1.5 bg-red-600/80 hover:bg-red-600 text-white rounded opacity-0 group-hover:opacity-100 transition-all z-10"
+                        title="Delete Archive"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+
+                      {/* Card Content - Make clickable */}
+                      <div onClick={() => setSelectedDay(archive)}>
                       {/* Date Header */}
                       <div className="flex items-center justify-between mb-3">
                         <div className="text-sm font-bold text-white">
@@ -892,6 +927,7 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
                           <div className="text-slate-500">Volatility</div>
                           <div className="text-white font-bold">{archive.summary.volatility.toFixed(1)}</div>
                         </div>
+                      </div>
                       </div>
                     </div>
                   );

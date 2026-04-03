@@ -198,6 +198,16 @@ export const dbService = {
       req.onerror = () => reject(req.error);
     });
   },
+
+  deleteArchive: async (date: string): Promise<void> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORES.DAILY_ARCHIVES, 'readwrite');
+      const req = tx.objectStore(STORES.DAILY_ARCHIVES).delete(date);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  },
   
   pruneOldArchives: async (keepDays: number) => {
     const db = await openDB();
