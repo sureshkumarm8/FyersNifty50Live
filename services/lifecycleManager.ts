@@ -3,16 +3,25 @@
  * 
  * Manages the daily lifecycle of trading data:
  * - Morning setup: Archive yesterday, clear today
- * - EOD cleanup: Archive today, mine patterns
+ * - EOD cleanup: Archive today, mine patterns, save CSV
  * - Auto-scheduling via background workers
  */
 
 import { dbService } from './db';
 import { DailyArchive, DailySummary, DailyMetadata, MarketSnapshot, SessionHistoryMap } from '../types';
 import { tradeJournal } from './tradeJournal';
+import { downloadCSV } from './csv';
 
 export class DataLifecycleManager {
   private autoArchiveInterval: NodeJS.Timeout | null = null;
+  private onArchiveCallback?: (message: string) => void;
+
+  /**
+   * Set callback for archive notifications
+   */
+  setArchiveCallback(callback: (message: string) => void): void {
+    this.onArchiveCallback = callback;
+  }
 
   /**
    * Morning Setup Routine
@@ -90,17 +99,28 @@ export class DataLifecycleManager {
     
     if (todaySnapshots.length === 0) {
       console.log('⚠️ No data to archive');
+      if (this.onArchiveCallback) {
+        this.onArchiveCallback('⚠️ No data to archive today');
+      }
       return;
     }
     
     // Step 2: Create archive
     const archive = await this.createDailyArchive(today, todaySnapshots, todaySession);
     
-    // Step 3: Save archive
+    // Step 3: Save archive to IndexedDB
     await dbService.archiveDailyData(today, archive);
     console.log(`✅ Archived ${today}: ${todaySnapshots.length} snapshots`);
     
-    // Step 4: Pattern mining will be done separately by PatternMiner
+    // Step 4: Auto-save CSV with sentiment & momentum history
+    this.autoSaveDailyCSV(today, todaySnapshots);
+    
+    // Notify user
+    if (this.onArchiveCallback) {
+      this.onArchiveCallback(`📦 Archived ${today} - ${todaySnapshots.length} snapshots saved for pattern building`);
+    }
+    
+    // Step 5: Pattern mining will be done separately by PatternMiner
     
     console.log('✅ EOD cleanup complete');
   }
@@ -266,6 +286,46 @@ export class DataLifecycleManager {
     const today = new Date().toDateString();
     const savedDate = await dbService.getMeta('current_session_date');
     return savedDate !== today;
+  }
+
+  /**
+   * Auto-save daily CSV with sentiment & momentum history
+   */
+  private autoSaveDailyCSV(date: string, snapshots: MarketSnapshot[]): void {
+    try {
+      // Prepare CSV data with sentiment and momentum
+      const csvData = snapshots.map((snapshot, index) => ({
+        timestamp: new Date(snapshot.timestamp).toISOString(),
+        time: new Date(snapshot.timestamp).toLocaleTimeString('en-IN', { hour12: false }),
+        niftyLTP: snapshot.niftyLtp,
+        change: snapshot.niftyChange || 0,
+        changePercent: snapshot.niftyChangePercent || 0,
+        sentiment: snapshot.overallSent || 0,
+        pcr: snapshot.pcr || 0,
+        callOI: snapshot.callOI || 0,
+        putOI: snapshot.putOI || 0,
+        vix: snapshot.vix || 0,
+        bullishStocks: snapshot.bullishCount || 0,
+        bearishStocks: snapshot.bearishCount || 0,
+        advanceDecline: (snapshot.bullishCount || 0) - (snapshot.bearishCount || 0),
+        momentum: index > 0 ? snapshot.niftyLtp - snapshots[index - 1].niftyLtp : 0,
+        cumulativeMomentum: snapshots.slice(0, index + 1).reduce((sum, s, i) => {
+          if (i === 0) return 0;
+          return sum + (s.niftyLtp - snapshots[i - 1].niftyLtp);
+        }, 0)
+      }));
+
+      // Format date for filename
+      const dateObj = new Date(date);
+      const dateStr = dateObj.toISOString().slice(0, 10);
+      
+      // Auto-download CSV
+      downloadCSV(csvData, `nifty_sentiment_momentum_${dateStr}`);
+      
+      console.log(`✅ CSV auto-saved: ${csvData.length} records for ${date}`);
+    } catch (error) {
+      console.error('Failed to auto-save CSV:', error);
+    }
   }
 
   /**

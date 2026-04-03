@@ -12,27 +12,34 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   TrendingUp, TrendingDown, Clock, Target, BarChart3, Calendar,
   CheckCircle, AlertCircle, Search, Filter, ChevronRight, Zap,
-  Brain, Activity, ArrowRight, Eye, Sparkles
+  Brain, Activity, ArrowRight, Eye, Sparkles, Download, History, X
 } from 'lucide-react';
 import { MarketSnapshot, Pattern, DailyArchive } from '../types';
 import { patternMiner } from '../services/patternMiner';
 import { lifecycleManager } from '../services/lifecycleManager';
 import { dbService } from '../services/db';
+import { downloadCSV } from '../services/csv';
+import { SentimentHistory } from './SentimentHistory';
 
 interface PatternDashboardProps {
   currentSnapshot: MarketSnapshot | null;
   niftyLtp: number | null;
+  credentials: any; // For SentimentHistory
 }
 
-const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, niftyLtp }) => {
+const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, niftyLtp, credentials }) => {
+  const [activeTab, setActiveTab] = useState<'patterns' | 'archives'>('patterns');
   const [liveMatches, setLiveMatches] = useState<Pattern[]>([]);
   const [allPatterns, setAllPatterns] = useState<Pattern[]>([]);
   const [similarDays, setSimilarDays] = useState<DailyArchive[]>([]);
+  const [allArchives, setAllArchives] = useState<DailyArchive[]>([]);
   const [archiveStats, setArchiveStats] = useState<any>(null);
   const [selectedPattern, setSelectedPattern] = useState<Pattern | null>(null);
   const [selectedDay, setSelectedDay] = useState<DailyArchive | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [filterConfidence, setFilterConfidence] = useState(0);
+  const [isLoadingArchives, setIsLoadingArchives] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   // Load initial data
   useEffect(() => {
@@ -64,6 +71,51 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
     } catch (error) {
       console.error('Failed to load archive stats:', error);
     }
+  };
+
+  const loadAllArchives = async () => {
+    setIsLoadingArchives(true);
+    try {
+      const archives = await dbService.getAllArchives();
+      setAllArchives(archives.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    } catch (error) {
+      console.error('Failed to load archives:', error);
+    } finally {
+      setIsLoadingArchives(false);
+    }
+  };
+
+  // Load archives when switching to archives tab
+  useEffect(() => {
+    if (activeTab === 'archives' && allArchives.length === 0) {
+      loadAllArchives();
+    }
+  }, [activeTab]);
+
+  const exportDayCSV = (archive: DailyArchive) => {
+    const csvData = archive.snapshots.map((snapshot, index) => ({
+      timestamp: new Date(snapshot.timestamp).toISOString(),
+      time: new Date(snapshot.timestamp).toLocaleTimeString('en-IN', { hour12: false }),
+      niftyLTP: snapshot.niftyLtp,
+      change: snapshot.niftyChange || 0,
+      changePercent: snapshot.niftyChangePercent || 0,
+      sentiment: snapshot.overallSent || 0,
+      pcr: snapshot.pcr || 0,
+      callOI: snapshot.callOI || 0,
+      putOI: snapshot.putOI || 0,
+      vix: snapshot.vix || 0,
+      bullishStocks: snapshot.bullishCount || 0,
+      bearishStocks: snapshot.bearishCount || 0,
+      advanceDecline: (snapshot.bullishCount || 0) - (snapshot.bearishCount || 0),
+      momentum: index > 0 ? snapshot.niftyLtp - archive.snapshots[index - 1].niftyLtp : 0,
+      cumulativeMomentum: archive.snapshots.slice(0, index + 1).reduce((sum, s, i) => {
+        if (i === 0) return 0;
+        return sum + (s.niftyLtp - archive.snapshots[i - 1].niftyLtp);
+      }, 0)
+    }));
+
+    const dateStr = new Date(archive.date).toISOString().slice(0, 10);
+    downloadCSV(csvData, `nifty_sentiment_momentum_${dateStr}`);
   };
 
   const checkPatternMatches = async () => {
@@ -115,7 +167,7 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
     <div className="h-full bg-slate-950 overflow-hidden flex flex-col">
       {/* Header */}
       <div className="flex-none glass-header border-b border-white/10 p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-bold text-white flex items-center gap-2">
               <Brain className="text-purple-400" size={24} />
@@ -130,46 +182,81 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Confidence Filter */}
-            <div className="flex items-center gap-2 bg-slate-900/50 px-3 py-2 rounded-lg border border-white/10">
-              <Filter size={14} className="text-slate-400" />
-              <span className="text-xs text-slate-400">Min Confidence:</span>
-              <select
-                value={filterConfidence}
-                onChange={(e) => setFilterConfidence(Number(e.target.value))}
-                className="bg-transparent text-white text-xs font-bold outline-none cursor-pointer"
-              >
-                <option value={0}>All</option>
-                <option value={50}>50%+</option>
-                <option value={70}>70%+</option>
-                <option value={80}>80%+</option>
-              </select>
-            </div>
+            {activeTab === 'patterns' && (
+              <>
+                {/* Confidence Filter */}
+                <div className="flex items-center gap-2 bg-slate-900/50 px-3 py-2 rounded-lg border border-white/10">
+                  <Filter size={14} className="text-slate-400" />
+                  <span className="text-xs text-slate-400">Min Confidence:</span>
+                  <select
+                    value={filterConfidence}
+                    onChange={(e) => setFilterConfidence(Number(e.target.value))}
+                    className="bg-transparent text-white text-xs font-bold outline-none cursor-pointer"
+                  >
+                    <option value={0}>All</option>
+                    <option value={50}>50%+</option>
+                    <option value={70}>70%+</option>
+                    <option value={80}>80%+</option>
+                  </select>
+                </div>
 
-            {/* Scan Button */}
-            <button
-              onClick={scanForNewPatterns}
-              disabled={isScanning}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-900 text-white font-bold text-sm rounded-lg flex items-center gap-2 transition-all"
-            >
-              {isScanning ? (
-                <>
-                  <Activity className="animate-spin" size={14} />
-                  Scanning...
-                </>
-              ) : (
-                <>
-                  <Zap size={14} />
-                  Scan Archives
-                </>
-              )}
-            </button>
+                {/* Scan Button */}
+                <button
+                  onClick={scanForNewPatterns}
+                  disabled={isScanning}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-900 text-white font-bold text-sm rounded-lg flex items-center gap-2 transition-all"
+                >
+                  {isScanning ? (
+                    <>
+                      <Activity className="animate-spin" size={14} />
+                      Scanning...
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={14} />
+                      Scan Archives
+                    </>
+                  )}
+                </button>
+              </>
+            )}
           </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-2 border-t border-white/5 pt-3">
+          <button
+            onClick={() => setActiveTab('patterns')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'patterns'
+                ? 'bg-purple-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} />
+              Patterns
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('archives')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'archives'
+                ? 'bg-blue-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Calendar size={14} />
+              Archives ({allArchives.length || archiveStats?.totalDays || 0})
+            </div>
+          </button>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
+      {activeTab === 'patterns' ? (
+        <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
         
         {/* Left Column: Live Matches & Similar Days */}
         <div className="lg:col-span-1 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
@@ -582,6 +669,281 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
           )}
         </div>
       </div>
+      ) : (
+        /* ARCHIVES VIEW */
+        <div className="flex-1 overflow-hidden p-4">
+          {selectedDay ? (
+            /* Archive Detail View */
+            <div className="h-full glass-panel rounded-xl p-6 overflow-y-auto custom-scrollbar">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-white">{selectedDay.date}</h2>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowHistoryModal(true)}
+                    className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg transition-all flex items-center gap-2"
+                  >
+                    <History size={14} />
+                    View History ({selectedDay.snapshots.length})
+                  </button>
+                  <button
+                    onClick={() => exportDayCSV(selectedDay)}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-all flex items-center gap-2"
+                  >
+                    <Download size={14} />
+                    Export CSV
+                  </button>
+                  <button
+                    onClick={() => setSelectedDay(null)}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-sm rounded-lg transition-all"
+                  >
+                    ← Back to Archives
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* OHLC Summary */}
+                <div className="glass-panel rounded-xl p-4">
+                  <h3 className="text-sm font-bold text-slate-400 mb-3">Price Summary</h3>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Open</span>
+                      <span className="text-white font-bold text-lg">{selectedDay.summary.open.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">High</span>
+                      <span className="text-green-400 font-bold text-lg">{selectedDay.summary.high.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Low</span>
+                      <span className="text-red-400 font-bold text-lg">{selectedDay.summary.low.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Close</span>
+                      <span className="text-white font-bold text-lg">{selectedDay.summary.close.toFixed(2)}</span>
+                    </div>
+                    <div className={`p-3 rounded-lg ${
+                      selectedDay.summary.close > selectedDay.summary.open
+                        ? 'bg-green-500/10 border border-green-500/30'
+                        : 'bg-red-500/10 border border-red-500/30'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Change</span>
+                        <span className={`font-bold text-lg ${
+                          selectedDay.summary.close > selectedDay.summary.open ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {selectedDay.summary.close > selectedDay.summary.open ? '+' : ''}
+                          {(selectedDay.summary.close - selectedDay.summary.open).toFixed(2)} 
+                          ({((selectedDay.summary.close - selectedDay.summary.open) / selectedDay.summary.open * 100).toFixed(2)}%)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Market Stats */}
+                <div className="glass-panel rounded-xl p-4">
+                  <h3 className="text-sm font-bold text-slate-400 mb-3">Market Metrics</h3>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Range</span>
+                      <span className="text-white font-bold">{selectedDay.summary.range.toFixed(2)} pts</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Volatility</span>
+                      <span className="text-white font-bold">{selectedDay.summary.volatility.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Total Volume</span>
+                      <span className="text-white font-bold">{(selectedDay.summary.totalVolume / 1000000).toFixed(2)}M</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Avg Sentiment</span>
+                      <span className={`font-bold ${
+                        selectedDay.summary.dominantSentiment > 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {selectedDay.summary.dominantSentiment.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Avg PCR</span>
+                      <span className="text-white font-bold">{selectedDay.summary.avgPCR.toFixed(3)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Snapshots</span>
+                      <span className="text-blue-400 font-bold">{selectedDay.snapshots.length}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Top/Worst Performers */}
+                {(selectedDay.summary.topPerformer || selectedDay.summary.worstPerformer) && (
+                  <div className="glass-panel rounded-xl p-4 lg:col-span-2">
+                    <h3 className="text-sm font-bold text-slate-400 mb-3">Stock Performance</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      {selectedDay.summary.topPerformer && (
+                        <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                          <div className="text-xs text-slate-400 mb-1">Top Performer</div>
+                          <div className="text-green-400 font-bold">{selectedDay.summary.topPerformer}</div>
+                        </div>
+                      )}
+                      {selectedDay.summary.worstPerformer && (
+                        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                          <div className="text-xs text-slate-400 mb-1">Worst Performer</div>
+                          <div className="text-red-400 font-bold">{selectedDay.summary.worstPerformer}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Archive List View */
+            <div className="h-full glass-panel rounded-xl p-6 overflow-y-auto custom-scrollbar">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Daily Archives</h2>
+              {isLoadingArchives && (
+                <div className="text-sm text-slate-400 flex items-center gap-2">
+                  <Activity className="animate-spin" size={14} />
+                  Loading...
+                </div>
+              )}
+            </div>
+
+            {allArchives.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {allArchives.map((archive) => {
+                  const dateObj = new Date(archive.date);
+                  const dayChange = archive.summary.close - archive.summary.open;
+                  const dayChangePercent = (dayChange / archive.summary.open) * 100;
+                  const isPositive = dayChange >= 0;
+
+                  return (
+                    <div
+                      key={archive.date}
+                      onClick={() => setSelectedDay(archive)}
+                      className="bg-slate-900/50 border border-white/10 rounded-lg p-4 cursor-pointer hover:border-blue-500/50 hover:bg-slate-900/70 transition-all"
+                    >
+                      {/* Date Header */}
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="text-sm font-bold text-white">
+                          {dateObj.toLocaleDateString('en-IN', { 
+                            day: '2-digit', 
+                            month: 'short', 
+                            year: 'numeric' 
+                          })}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {dateObj.toLocaleDateString('en-IN', { weekday: 'short' })}
+                        </div>
+                      </div>
+
+                      {/* OHLC */}
+                      <div className="space-y-1 mb-3 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Open</span>
+                          <span className="text-white font-mono">{archive.summary.open.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">High</span>
+                          <span className="text-green-400 font-mono">{archive.summary.high.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Low</span>
+                          <span className="text-red-400 font-mono">{archive.summary.low.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Close</span>
+                          <span className="text-white font-mono font-bold">{archive.summary.close.toFixed(2)}</span>
+                        </div>
+                      </div>
+
+                      {/* Change */}
+                      <div className={`flex items-center justify-between p-2 rounded ${
+                        isPositive ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'
+                      }`}>
+                        <div className="flex items-center gap-1">
+                          {isPositive ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                          <span className={`text-xs font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                            {isPositive ? '+' : ''}{dayChange.toFixed(2)}
+                          </span>
+                        </div>
+                        <span className={`text-xs font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                          {isPositive ? '+' : ''}{dayChangePercent.toFixed(2)}%
+                        </span>
+                      </div>
+
+                      {/* Stats */}
+                      <div className="mt-3 pt-3 border-t border-white/5 grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <div className="text-slate-500">Snapshots</div>
+                          <div className="text-white font-bold">{archive.snapshots.length}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-500">Range</div>
+                          <div className="text-white font-bold">{archive.summary.range.toFixed(1)}</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-500">Volume</div>
+                          <div className="text-white font-bold">{(archive.summary.totalVolume / 1000000).toFixed(1)}M</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-500">Volatility</div>
+                          <div className="text-white font-bold">{archive.summary.volatility.toFixed(1)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : isLoadingArchives ? (
+              <div className="flex items-center justify-center h-64">
+                <div className="text-center text-slate-500">
+                  <Activity className="animate-spin mx-auto mb-4" size={48} />
+                  <p>Loading archives...</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64">
+                <div className="text-center text-slate-500">
+                  <Calendar size={48} className="mx-auto mb-4 opacity-50" />
+                  <p className="text-sm">No archives found</p>
+                  <p className="text-xs mt-2">Data will be archived daily at 3:45 PM IST</p>
+                </div>
+              </div>
+            )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* History Modal */}
+      {showHistoryModal && selectedDay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-7xl h-[90vh] bg-slate-950 rounded-xl border border-white/20 shadow-2xl flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex-none flex items-center justify-between p-4 border-b border-white/10 bg-slate-900/50">
+              <h2 className="text-xl font-bold text-white">Market History - {selectedDay.date}</h2>
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="p-2 hover:bg-slate-800 rounded-lg transition-all"
+              >
+                <X size={20} className="text-slate-400 hover:text-white" />
+              </button>
+            </div>
+            
+            {/* Modal Content */}
+            <div className="flex-1 overflow-hidden">
+              <SentimentHistory 
+                history={selectedDay.snapshots} 
+                credentials={credentials}
+                aiEnabled={credentials?.aiEnabled}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

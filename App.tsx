@@ -124,6 +124,10 @@ const App: React.FC = () => {
             }
             
             // Setup auto-archive (runs at 3:45 PM)
+            lifecycleManager.setArchiveCallback((message) => {
+                setMarketStatusMsg(message);
+                setTimeout(() => setMarketStatusMsg(null), 8000);
+            });
             lifecycleManager.setupAutoArchive();
             
         } catch (e) {
@@ -1318,6 +1322,7 @@ const App: React.FC = () => {
                 <PatternDashboard 
                    currentSnapshot={historyLog[historyLog.length - 1] || null}
                    niftyLtp={niftyLtp}
+                   credentials={credentials}
                 />
             </div>
         )}
