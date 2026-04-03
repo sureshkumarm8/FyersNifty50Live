@@ -17,6 +17,9 @@ export interface FyersCredentials {
   // PayTM Money Integration
   dataProvider?: 'fyers' | 'paytm';
   paytmAccessToken?: string;
+  
+  // Live Trading Control
+  liveOrdersEnabled?: boolean;
 }
 
 // All available Groq models (Updated as of March 2026)

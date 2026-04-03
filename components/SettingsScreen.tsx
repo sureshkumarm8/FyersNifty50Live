@@ -96,6 +96,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [dataProvider, setDataProvider] = useState<'fyers' | 'paytm'>(currentCreds.dataProvider || 'fyers');
   const [paytmAccessToken, setPaytmAccessToken] = useState(currentCreds.paytmAccessToken || '');
   
+  // Live Trading Control
+  const [liveOrdersEnabled, setLiveOrdersEnabled] = useState(currentCreds.liveOrdersEnabled || false);
+  
   // Protocol State
   const [protocolData, setProtocolData] = useState<TradingSystemProtocol>(() => {
       try {
@@ -129,7 +132,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       aiEnabled, 
       aiProvider: selectedAiProvider,
       dataProvider,
-      paytmAccessToken
+      paytmAccessToken,
+      liveOrdersEnabled
     });
     onBack();
   };
@@ -676,6 +680,32 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             </div>
                             <button onClick={() => setBypassMarketHours(!bypassMarketHours)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${bypassMarketHours ? 'bg-purple-600' : 'bg-slate-700'}`}>
                                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${bypassMarketHours ? 'translate-x-6' : 'translate-x-1'}`}/>
+                            </button>
+                         </div>
+
+                         <div className="flex items-center justify-between p-4 bg-slate-950/50 border border-red-500/20 rounded-xl">
+                            <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-lg ${liveOrdersEnabled ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-600'}`}>
+                                    <Lock size={20} />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-white">Live Trading</h3>
+                                    <p className="text-xs text-slate-500">Enable Real Broker Orders (Use with caution)</p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => {
+                                    if (!liveOrdersEnabled) {
+                                        if (confirm('⚠️ WARNING: Enabling live orders will allow AutoTrade to place real orders with your broker. Are you sure?')) {
+                                            setLiveOrdersEnabled(true);
+                                        }
+                                    } else {
+                                        setLiveOrdersEnabled(false);
+                                    }
+                                }} 
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${liveOrdersEnabled ? 'bg-red-600 animate-pulse' : 'bg-slate-700'}`}
+                            >
+                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${liveOrdersEnabled ? 'translate-x-6' : 'translate-x-1'}`}/>
                             </button>
                          </div>
                     </div>

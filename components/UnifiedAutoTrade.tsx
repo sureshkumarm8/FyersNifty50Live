@@ -64,19 +64,38 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
   pivots,
   aiEnabled
 }) => {
-  // Main State
-  const [state, setState] = useState<SystemState>({
-    status: 'IDLE',
-    strategy: 'MOMENTUM',
-    tradingMode: 'PAPER',
-    isMonitoring: false
+  // Main State - Persisted in localStorage
+  const [state, setState] = useState<SystemState>(() => {
+    try {
+      const saved = localStorage.getItem('autotrade_state');
+      return saved ? JSON.parse(saved) : {
+        status: 'IDLE',
+        strategy: 'MOMENTUM',
+        tradingMode: 'PAPER',
+        isMonitoring: false
+      };
+    } catch {
+      return {
+        status: 'IDLE',
+        strategy: 'MOMENTUM',
+        tradingMode: 'PAPER',
+        isMonitoring: false
+      };
+    }
   });
 
   const [currentSignal, setCurrentSignal] = useState<TradingSignal | null>(null);
   const [activePositions, setActivePositions] = useState<Position[]>([]);
   const [recentTrades, setRecentTrades] = useState<Trade[]>([]);
   const [tradeStats, setTradeStats] = useState<TradeStats | null>(null);
-  const [analysisLog, setAnalysisLog] = useState<string[]>([]);
+  const [analysisLog, setAnalysisLog] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('autotrade_logs');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [accountStatus, setAccountStatus] = useState({
     currentEquity: 100000,
     peakEquity: 100000,
@@ -99,6 +118,17 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
   const engineRef = useRef<TradingEngine | null>(null);
   const orderManagerRef = useRef<OrderManager | null>(null);
   const monitorIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isFirstMountRef = useRef(true);
+
+  // Add log function
+  const addLog = useCallback((message: string) => {
+    const timestamp = new Date().toLocaleTimeString('en-IN', { hour12: false });
+    setAnalysisLog(prev => {
+      const newLogs = [`[${timestamp}] ${message}`, ...prev.slice(0, 49)];
+      localStorage.setItem('autotrade_logs', JSON.stringify(newLogs));
+      return newLogs;
+    });
+  }, []);
 
   // Initialize services
   useEffect(() => {
@@ -124,10 +154,35 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
     setRecentTrades(tradeJournal.getTodayTrades());
   }, [credentials, state.tradingMode]);
 
-  const addLog = useCallback((message: string) => {
-    const timestamp = new Date().toLocaleTimeString('en-IN', { hour12: false });
-    setAnalysisLog(prev => [`[${timestamp}] ${message}`, ...prev.slice(0, 49)]);
-  }, []);
+  // Restore monitoring state message on mount
+  useEffect(() => {
+    if (isFirstMountRef.current && state.isMonitoring) {
+      addLog(`🔄 AutoTrade restored - ${state.strategy} monitoring active`);
+      isFirstMountRef.current = false;
+    }
+  }, [state.isMonitoring, state.strategy, addLog]);
+
+  // Auto-start monitoring during market hours on app load
+  useEffect(() => {
+    if (!credentials.bypassMarketHours && isFirstMountRef.current && !state.isMonitoring) {
+      const marketInfo = getMarketTimeInfo();
+      
+      // Auto-start if app loads during market hours (9:17 AM - 3:35 PM IST)
+      if (marketInfo.isWeekday && marketInfo.timeVal >= 917 && marketInfo.timeVal <= 1535) {
+        addLog('🔔 Market hours detected - Auto-starting monitoring');
+        setState(prev => ({ 
+          ...prev, 
+          isMonitoring: true,
+          status: 'MONITORING'
+        }));
+      }
+    }
+  }, [credentials.bypassMarketHours, state.isMonitoring, addLog]);
+
+  // Persist state changes
+  useEffect(() => {
+    localStorage.setItem('autotrade_state', JSON.stringify(state));
+  }, [state]);
 
   // Strategy: MOMENTUM - Multi-factor Analysis
   const runMomentumAnalysis = useCallback(() => {
@@ -475,23 +530,34 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
             <div className="flex bg-slate-900/50 p-1 rounded-lg border border-white/10">
               <button
                 onClick={() => setState(prev => ({ ...prev, tradingMode: 'PAPER' }))}
+                disabled={state.isMonitoring}
                 className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${
                   state.tradingMode === 'PAPER'
                     ? 'bg-green-600 text-white'
-                    : 'text-slate-400 hover:text-white'
+                    : 'text-slate-400 hover:text-white disabled:opacity-50'
                 }`}
               >
                 PAPER
               </button>
               <button
-                onClick={() => setState(prev => ({ ...prev, tradingMode: 'LIVE' }))}
+                onClick={() => {
+                  if (credentials.liveOrdersEnabled) {
+                    setState(prev => ({ ...prev, tradingMode: 'LIVE' }));
+                  } else {
+                    alert('Live orders are disabled. Enable in Settings → Configuration → Live Trading');
+                  }
+                }}
+                disabled={state.isMonitoring || !credentials.liveOrdersEnabled}
                 className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${
                   state.tradingMode === 'LIVE'
                     ? 'bg-red-600 text-white animate-pulse'
-                    : 'text-slate-400 hover:text-white'
-                }`}
+                    : credentials.liveOrdersEnabled 
+                      ? 'text-slate-400 hover:text-white'
+                      : 'text-slate-600 cursor-not-allowed opacity-40'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                title={!credentials.liveOrdersEnabled ? 'Enable Live Orders in Settings first' : ''}
               >
-                LIVE
+                LIVE {!credentials.liveOrdersEnabled && '🔒'}
               </button>
             </div>
 
