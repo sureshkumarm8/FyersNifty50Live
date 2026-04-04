@@ -21,6 +21,7 @@ import { dbService } from './services/db';
 import { lifecycleManager } from './services/lifecycleManager';
 import { downloadCSV } from './services/csv';
 import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
+import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
@@ -70,6 +71,20 @@ const App: React.FC = () => {
   const [quantHistory, setQuantHistory] = useState<AnalysisRecord[]>([]);
   const [isQuantAnalyzing, setIsQuantAnalyzing] = useState(false);
   const [quantError, setQuantError] = useState<string | null>(null);
+
+  const [apiStats, setApiStats] = useState<APIStats>({
+    lastMinute: 0,
+    last5Minutes: 0,
+    lastHour: 0,
+    today: 0,
+    total: 0,
+    avgDuration: 0,
+    successRate: 0,
+    geminiCalls: 0,
+    groqCalls: 0,
+    claudeCalls: 0,
+    recentCalls: []
+  });
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
@@ -143,6 +158,17 @@ const App: React.FC = () => {
     return () => {
         lifecycleManager.stopAutoArchive();
     };
+  }, []);
+
+  // Subscribe to API call tracker
+  useEffect(() => {
+    // Initialize with current stats
+    setApiStats(apiCallTracker.getStats());
+    
+    const unsubscribe = apiCallTracker.subscribe((stats) => {
+      setApiStats(stats);
+    });
+    return unsubscribe;
   }, []);
 
   // --- 1.1 Quant History Hydration ---
@@ -870,88 +896,21 @@ const App: React.FC = () => {
             }
           `;
 
-          if (credentials.aiProvider === 'groq') {
-              // --- GROQ AI ---
-              // Using latest active model - check https://console.groq.com/docs/models for current list
-              const model = 'llama-3.3-70b-versatile';
-              console.log(`%c📡 Sending request to Groq API (${model})`, 'color: purple; font-size: 11px;');
-              const startTime = performance.now();
-              
-              // Groq works better with simpler message format - combine system + user
-              const fullPrompt = `${systemInstruction}\n\nAnalyze this market data: ${dataContext}`;
-              
-              const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                  method: 'POST',
-                  headers: {
-                      'Authorization': `Bearer ${credentials.groqApiKey}`,
-                      'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify({
-                      model: model,
-                      messages: [
-                          { role: 'user', content: fullPrompt }
-                      ],
-                      temperature: 0.3,
-                      max_tokens: 2048
-                  })
-              });
-
-              const endTime = performance.now();
-              const duration = (endTime - startTime).toFixed(2);
-              
-              console.log(`%c✅ Groq Response received in ${duration}ms (Status: ${groqResponse.status})`, 'color: purple; font-size: 11px;');
-
-              if (!groqResponse.ok) {
-                  const errorData = await groqResponse.json().catch(() => ({ error: 'Unknown error' }));
-                  console.error(`%c❌ Groq API Error: ${groqResponse.status} ${groqResponse.statusText}`, 'color: red; font-weight: bold;');
-                  console.error('Error details:', errorData);
-                  // If model is decommissioned, suggest fallback
-                  if (errorData.error?.code === 'model_decommissioned') {
-                      console.warn('%c⚠️  Model decommissioned. Try Gemini or use local engine instead.', 'color: orange; font-weight: bold;');
-                  }
-                  throw new Error(`Groq API error (${groqResponse.status}): ${JSON.stringify(errorData)}`);
+          // Use centralized callAI function (automatically tracks)
+          const responseText = await callAI(credentials, systemInstruction, `Analyze this market data: ${dataContext}`, { jsonMode: true });
+          
+          // Try to extract JSON from response
+          try {
+              result = JSON.parse(responseText);
+          } catch (e) {
+              const jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/) || responseText.match(/```\n?([\s\S]*?)\n?```/);
+              if (jsonMatch) {
+                  result = JSON.parse(jsonMatch[1]);
+              } else {
+                  throw new Error(`Could not parse AI response as JSON: ${responseText.substring(0, 200)}`);
               }
-
-              const groqData = await groqResponse.json();
-              const responseText = groqData.choices?.[0]?.message?.content || '{}';
-              
-              // Try to extract JSON from response
-              try {
-                  // First try direct JSON parse
-                  result = JSON.parse(responseText);
-              } catch (e) {
-                  // If that fails, try to extract JSON from markdown code blocks
-                  const jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/) || responseText.match(/```\n?([\s\S]*?)\n?```/);
-                  if (jsonMatch) {
-                      result = JSON.parse(jsonMatch[1]);
-                  } else {
-                      throw new Error(`Could not parse Groq response as JSON: ${responseText.substring(0, 200)}`);
-                  }
-              }
-              console.log('%c📊 Groq Analysis Result:', 'color: purple; font-weight: bold;', result);
-          } else {
-              // --- GEMINI AI (Default) ---
-              console.log('%c📡 Sending request to Gemini API (gemini-2.5-flash)', 'color: green; font-size: 11px;');
-              const startTime = performance.now();
-              
-              const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey! });
-              
-              const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: `Analyze this market data: ${dataContext}`,
-                config: { 
-                    responseMimeType: "application/json",
-                    systemInstruction 
-                }
-              });
-
-              const endTime = performance.now();
-              const duration = (endTime - startTime).toFixed(2);
-              console.log(`%c✅ Gemini Response received in ${duration}ms`, 'color: green; font-size: 11px;');
-
-              result = JSON.parse(response.text || "{}");
-              console.log('%c📊 Gemini Analysis Result:', 'color: green; font-weight: bold;', result);
           }
+          console.log('%c📊 AI Analysis Result:', 'color: purple; font-weight: bold;', result);
       }
       
       const newRecord: AnalysisRecord = {
@@ -1126,6 +1085,13 @@ const App: React.FC = () => {
                    <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-yellow-400 text-xs">
                        <Moon size={14} />
                        <span className="truncate max-w-[150px]">{marketStatusMsg}</span>
+                   </div>
+               )}
+
+               {credentials.aiEnabled && apiStats.today > 0 && (
+                   <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-purple-500/10 border border-purple-500/20 rounded-lg text-purple-300 text-xs font-mono">
+                       <Bot size={12} />
+                       AI: {apiStats.lastMinute}/min • {apiStats.today} today • {apiStats.avgDuration.toFixed(0)}ms
                    </div>
                )}
 

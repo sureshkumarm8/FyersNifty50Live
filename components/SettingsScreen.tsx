@@ -8,10 +8,11 @@ import {
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
   ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair,
-  Volume2, Layers, Key, Lock, Cpu
+  Volume2, Layers, Key, Lock, Cpu, TrendingDown
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
+import { apiCallTracker, APIStats } from '../services/aiProvider';
 
 interface SettingsScreenProps {
   onBack: () => void;
@@ -19,7 +20,7 @@ interface SettingsScreenProps {
   currentCreds: FyersCredentials;
 }
 
-type Tab = 'configs' | 'guide' | 'glossary' | 'review' | 'system';
+type Tab = 'configs' | 'guide' | 'glossary' | 'review' | 'system' | 'ai-usage';
 
 const DEFAULT_PROTOCOL: TradingSystemProtocol = {
   "name": "Nifty Sniper: The Office Protocol",
@@ -86,8 +87,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
-  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq'>(currentCreds.aiProvider || 'gemini');
+  const [claudeApiKey, setClaudeApiKey] = useState(currentCreds.claudeApiKey || '');
+  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq' | 'claude'>(currentCreds.aiProvider || 'gemini');
   const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'llama-3.3-70b-versatile');
+  const [geminiModel, setGeminiModel] = useState(currentCreds.geminiModel || 'gemini-2.5-flash');
+  const [claudeModel, setClaudeModel] = useState(currentCreds.claudeModel || 'claude-sonnet-4-6');
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
@@ -98,6 +102,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   
   // Live Trading Control
   const [liveOrdersEnabled, setLiveOrdersEnabled] = useState(currentCreds.liveOrdersEnabled || false);
+  
+  // AI Usage Stats
+  const [apiStats, setApiStats] = useState<APIStats>(apiCallTracker.getStats());
   
   // Protocol State
   const [protocolData, setProtocolData] = useState<TradingSystemProtocol>(() => {
@@ -120,13 +127,30 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       }
   }, [isEditingProtocol, protocolData]);
 
+  // Subscribe to API stats updates
+  useEffect(() => {
+    const unsubscribe = apiCallTracker.subscribe((stats) => {
+      setApiStats(stats);
+    });
+    const interval = setInterval(() => {
+      setApiStats(apiCallTracker.getStats());
+    }, 5000);
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, []);
+
   const handleSave = () => {
     onSave({ 
       appId, 
       accessToken, 
       googleApiKey, 
       groqApiKey,
+      claudeApiKey,
       groqModel,
+      geminiModel,
+      claudeModel,
       bypassMarketHours, 
       refreshInterval, 
       aiEnabled, 
@@ -163,17 +187,36 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const handleDownloadTemplate = () => {
     const template = {
-      appId: "XV1234567-100",
-      accessToken: "YOUR_GENERATED_ACCESS_TOKEN_HERE",
-      googleApiKey: "YOUR_GEMINI_API_KEY_HERE",
-      groqApiKey: "YOUR_GROQ_API_KEY_HERE",
-      groqModel: "llama-3.3-70b-versatile",
-      aiProvider: "gemini",
-      dataProvider: "paytm",
-      paytmAccessToken: "YOUR_PAYTM_ACCESS_TOKEN_HERE",
-      bypassMarketHours: false,
-      aiEnabled: true,
-      refreshInterval: 60000
+      paytm: {
+        apiKey: "YOUR_PAYTM_API_KEY",
+        apiSecret: "YOUR_PAYTM_API_SECRET",
+        accessToken: "YOUR_PAYTM_ACCESS_TOKEN"
+      },
+      fyers: {
+        clientId: "XV1234567-100",
+        secretKey: "YOUR_FYERS_SECRET_KEY",
+        accessToken: "YOUR_FYERS_ACCESS_TOKEN"
+      },
+      google: {
+        apiKey: "YOUR_GEMINI_API_KEY_HERE"
+      },
+      groq: {
+        apiKey: "YOUR_GROQ_API_KEY_HERE"
+      },
+      claudeApiKey: {
+        apiKey: "YOUR_CLAUDE_API_KEY_HERE"
+      },
+      config: {
+        bypassMarketHours: false,
+        refreshInterval: 60000,
+        aiEnabled: true,
+        aiProvider: "gemini",
+        groqModel: "llama-3.3-70b-versatile",
+        geminiModel: "gemini-2.5-flash",
+        claudeModel: "claude-sonnet-4-6",
+        dataProvider: "paytm",
+        liveOrdersEnabled: false
+      }
     };
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(template, null, 2));
     const downloadAnchorNode = document.createElement('a');
@@ -194,7 +237,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         const json = JSON.parse(e.target?.result as string);
         let imported = false;
         
-        // Handle nested structure (paytm, fyers, google, groq, config)
+        // Handle nested structure (paytm, fyers, google, groq, claudeApiKey, config)
         if (json.fyers) {
           if (json.fyers.clientId) {
             setAppId(json.fyers.clientId);
@@ -227,6 +270,24 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           }
         }
         
+        if (json.claude) {
+          if (json.claude.apiKey) {
+            setClaudeApiKey(json.claude.apiKey);
+            imported = true;
+          }
+        }
+        
+        // Handle nested claudeApiKey object structure
+        if (json.claudeApiKey) {
+          if (typeof json.claudeApiKey === 'string') {
+            setClaudeApiKey(json.claudeApiKey);
+            imported = true;
+          } else if (json.claudeApiKey.apiKey) {
+            setClaudeApiKey(json.claudeApiKey.apiKey);
+            imported = true;
+          }
+        }
+        
         if (json.config) {
           if (json.config.bypassMarketHours !== undefined) {
             setBypassMarketHours(json.config.bypassMarketHours);
@@ -234,6 +295,34 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           }
           if (json.config.refreshInterval !== undefined) {
             setRefreshInterval(json.config.refreshInterval);
+            imported = true;
+          }
+          if (json.config.aiEnabled !== undefined) {
+            setAiEnabled(json.config.aiEnabled);
+            imported = true;
+          }
+          if (json.config.aiProvider) {
+            setSelectedAiProvider(json.config.aiProvider);
+            imported = true;
+          }
+          if (json.config.groqModel) {
+            setGroqModel(json.config.groqModel);
+            imported = true;
+          }
+          if (json.config.geminiModel) {
+            setGeminiModel(json.config.geminiModel);
+            imported = true;
+          }
+          if (json.config.claudeModel) {
+            setClaudeModel(json.config.claudeModel);
+            imported = true;
+          }
+          if (json.config.dataProvider) {
+            setDataProvider(json.config.dataProvider);
+            imported = true;
+          }
+          if (json.config.liveOrdersEnabled !== undefined) {
+            setLiveOrdersEnabled(json.config.liveOrdersEnabled);
             imported = true;
           }
         }
@@ -255,8 +344,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           setGroqApiKey(json.groqApiKey);
           imported = true;
         }
+        if (json.claudeApiKey && typeof json.claudeApiKey === 'string') {
+          setClaudeApiKey(json.claudeApiKey);
+          imported = true;
+        }
         if (json.groqModel) {
           setGroqModel(json.groqModel);
+          imported = true;
+        }
+        if (json.geminiModel) {
+          setGeminiModel(json.geminiModel);
+          imported = true;
+        }
+        if (json.claudeModel) {
+          setClaudeModel(json.claudeModel);
           imported = true;
         }
         if (json.aiProvider) {
@@ -281,6 +382,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         }
         if (json.paytmAccessToken) {
           setPaytmAccessToken(json.paytmAccessToken);
+          imported = true;
+        }
+        if (json.liveOrdersEnabled !== undefined) {
+          setLiveOrdersEnabled(json.liveOrdersEnabled);
           imported = true;
         }
         
@@ -384,6 +489,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'review' ? 'border-yellow-500 text-yellow-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
             >
                 <Star size={16} /> Review
+            </button>
+            <button 
+                onClick={() => setActiveTab('ai-usage')}
+                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'ai-usage' ? 'border-purple-500 text-purple-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            >
+                <Bot size={16} /> AI Usage
             </button>
         </div>
       </header>
@@ -529,11 +640,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 </div>
                                 <select 
                                     value={selectedAiProvider} 
-                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq')}
+                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq' | 'claude')}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                 >
                                     <option value="gemini">Gemini AI</option>
                                     <option value="groq">Groq AI</option>
+                                    <option value="claude">Claude AI</option>
                                 </select>
                                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -542,7 +654,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                          </div>
 
                          {selectedAiProvider === 'gemini' && (
-                            <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                            <>
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Gemini API Key</label>
                                <div className="relative group">
                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors">
@@ -557,7 +670,57 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                    />
                                </div>
                                <p className="text-[10px] text-slate-500 text-right">Get your key from console.ai.google.com</p>
-                            </div>
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Gemini Model</label>
+                               <div className="relative">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                       <BrainCircuit size={16} />
+                                   </div>
+                                   <select 
+                                       value={geminiModel} 
+                                       onChange={(e) => setGeminiModel(e.target.value)}
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
+                                   >
+                                       <optgroup label="💎 Frontier Models (Recommended)">
+                                           <option value="gemini-2.5-flash">Gemini 2.5 Flash - Current Default</option>
+                                           <option value="gemini-2.5-pro">Gemini 2.5 Pro - Stable Multimodal</option>
+                                           <option value="gemini-3-flash-preview">Gemini 3 Flash Preview - High-Speed</option>
+                                           <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview - Peak Reasoning</option>
+                                           <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite - Low Latency</option>
+                                       </optgroup>
+                                       <optgroup label="🔄 Latest Aliases (Auto-upgrade)">
+                                           <option value="gemini-3-flash-latest">Gemini 3 Flash Latest - Auto-upgrade</option>
+                                           <option value="gemini-3.1-pro-latest">Gemini 3.1 Pro Latest - Auto-upgrade</option>
+                                       </optgroup>
+                                       <optgroup label="🦾 Gemma 4 Open Models (April 2, 2026)">
+                                           <option value="gemma-4-31b-it">Gemma 4 31B Dense - Workstation-class</option>
+                                           <option value="gemma-4-26b-moe-it">Gemma 4 26B MoE - Fast Inference (3.8B active)</option>
+                                           <option value="gemma-4-4b-it">Gemma 4 E4B - Edge-optimized (Audio/Image)</option>
+                                           <option value="gemma-4-2b-it">Gemma 4 E2B - Ultra-lightweight (Mobile/IoT)</option>
+                                       </optgroup>
+                                       <optgroup label="🎨 Specialized Endpoints">
+                                           <option value="gemini-3.1-flash-image-preview">Image Generation (Nano Banana 2)</option>
+                                           <option value="veo-3.1-lite-generate-preview">Video Generation (Veo 3.1)</option>
+                                           <option value="lyria-3-generate-preview">Music Generation (Lyria 3)</option>
+                                       </optgroup>
+                                       <optgroup label="🔢 Embedding">
+                                           <option value="text-embedding-004">Text Embedding 004</option>
+                                       </optgroup>
+                                   </select>
+                                   <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                   </div>
+                               </div>
+                               <p className="text-[10px] text-slate-500">
+                                   <span className="text-blue-400 font-bold">2.5 Flash</span> = Default | 
+                                   <span className="text-purple-400 font-bold ml-1">3.1 Pro</span> = Complex reasoning |
+                                   <span className="text-green-400 font-bold ml-1">Gemma 4</span> = Open models |
+                                   <span className="text-yellow-400 font-bold ml-1">15+ models</span> available
+                               </p>
+                              </div>
+                            </>
                          )}
 
                          {selectedAiProvider === 'groq' && (
@@ -633,6 +796,53 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                    <span className="text-blue-400 font-bold ml-1">Llama 4 Scout</span> = Latest |
                                    <span className="text-green-400 font-bold ml-1">8B Instant</span> = Fastest |
                                    <span className="text-yellow-400 font-bold ml-1">25+ models</span> available
+                               </p>
+                              </div>
+                            </>
+                         )}
+
+                         {selectedAiProvider === 'claude' && (
+                            <>
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Claude API Key</label>
+                               <div className="relative group">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors">
+                                       <Lock size={16} />
+                                   </div>
+                                   <input 
+                                       type="password" 
+                                       value={claudeApiKey} 
+                                       onChange={(e) => setClaudeApiKey(e.target.value)} 
+                                       placeholder="sk-ant-..."
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono"
+                                   />
+                               </div>
+                               <p className="text-[10px] text-slate-500 text-right">Get your key from console.anthropic.com</p>
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Claude Model</label>
+                               <div className="relative">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                       <BrainCircuit size={16} />
+                                   </div>
+                                   <select 
+                                       value={claudeModel} 
+                                       onChange={(e) => setClaudeModel(e.target.value)}
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
+                                   >
+                                       <option value="claude-sonnet-4-6">Claude Sonnet 4.6 - Best Balance (1M tokens) [$3/$15]</option>
+                                       <option value="claude-opus-4-6">Claude Opus 4.6 - Most Intelligent (1M tokens) [$5/$25]</option>
+                                       <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 - Fastest & Affordable (200K tokens) [$1/$5]</option>
+                                   </select>
+                                   <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                   </div>
+                               </div>
+                               <p className="text-[10px] text-slate-500">
+                                   <span className="text-orange-400 font-bold">Sonnet 4.6</span> = Recommended | 
+                                   <span className="text-purple-400 font-bold ml-1">Opus 4.6</span> = Maximum intelligence |
+                                   <span className="text-green-400 font-bold ml-1">Haiku 4.5</span> = Speed & cost-effective
                                </p>
                               </div>
                             </>
@@ -1088,6 +1298,152 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     </div>
                 </div>
              </div>
+        )}
+
+        {activeTab === 'ai-usage' && (
+            <div className="max-w-6xl mx-auto animate-in slide-in-from-bottom-4 duration-300 pb-20">
+                {/* Header Stats */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div className="glass-panel p-4 rounded-xl border border-purple-500/20">
+                        <div className="text-xs text-slate-400 mb-1">Calls/Minute</div>
+                        <div className="text-2xl font-bold text-purple-400">{apiStats.lastMinute}</div>
+                    </div>
+                    <div className="glass-panel p-4 rounded-xl border border-blue-500/20">
+                        <div className="text-xs text-slate-400 mb-1">Today's Calls</div>
+                        <div className="text-2xl font-bold text-blue-400">{apiStats.today}</div>
+                    </div>
+                    <div className="glass-panel p-4 rounded-xl border border-green-500/20">
+                        <div className="text-xs text-slate-400 mb-1">Avg Response</div>
+                        <div className="text-2xl font-bold text-green-400">{apiStats.avgDuration.toFixed(0)}ms</div>
+                    </div>
+                    <div className="glass-panel p-4 rounded-xl border border-yellow-500/20">
+                        <div className="text-xs text-slate-400 mb-1">Success Rate</div>
+                        <div className="text-2xl font-bold text-yellow-400">{apiStats.successRate.toFixed(1)}%</div>
+                    </div>
+                </div>
+
+                {/* Provider Breakdown */}
+                <div className="glass-panel p-6 rounded-xl mb-6">
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <BarChart4 size={20} className="text-purple-400" />
+                        Provider Breakdown
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Total Calls</div>
+                            <div className="text-3xl font-bold text-white">{apiStats.total}</div>
+                        </div>
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Gemini Calls</div>
+                            <div className="text-3xl font-bold text-green-400">{apiStats.geminiCalls}</div>
+                            <div className="text-xs text-slate-500 mt-1">
+                                {apiStats.total > 0 ? ((apiStats.geminiCalls / apiStats.total) * 100).toFixed(1) : 0}%
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Groq Calls</div>
+                            <div className="text-3xl font-bold text-purple-400">{apiStats.groqCalls}</div>
+                            <div className="text-xs text-slate-500 mt-1">
+                                {apiStats.total > 0 ? ((apiStats.groqCalls / apiStats.total) * 100).toFixed(1) : 0}%
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Claude Calls</div>
+                            <div className="text-3xl font-bold text-orange-400">{apiStats.claudeCalls}</div>
+                            <div className="text-xs text-slate-500 mt-1">
+                                {apiStats.total > 0 ? ((apiStats.claudeCalls / apiStats.total) * 100).toFixed(1) : 0}%
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Time-based Stats */}
+                <div className="glass-panel p-6 rounded-xl mb-6">
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <Clock size={20} className="text-blue-400" />
+                        Time-based Activity
+                    </h2>
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
+                            <span className="text-slate-300">Last Minute</span>
+                            <span className="text-white font-bold">{apiStats.lastMinute} calls</span>
+                        </div>
+                        <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
+                            <span className="text-slate-300">Last 5 Minutes</span>
+                            <span className="text-white font-bold">{apiStats.last5Minutes} calls</span>
+                        </div>
+                        <div className="flex items-center justify-between p-3 bg-slate-900/50 rounded-lg">
+                            <span className="text-slate-300">Last Hour</span>
+                            <span className="text-white font-bold">{apiStats.lastHour} calls</span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Recent Calls */}
+                <div className="glass-panel p-6 rounded-xl">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                            <Activity size={20} className="text-green-400" />
+                            Recent API Calls (Last 10)
+                        </h2>
+                        <button
+                            onClick={() => {
+                                if (confirm('Clear all API call statistics?')) {
+                                    apiCallTracker.clearStats();
+                                }
+                            }}
+                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-bold transition-all flex items-center gap-2"
+                        >
+                            <Trash2 size={14} />
+                            Clear Stats
+                        </button>
+                    </div>
+                    
+                    {apiStats.recentCalls.length > 0 ? (
+                        <div className="space-y-2">
+                            {apiStats.recentCalls.map((call, idx) => (
+                                <div
+                                    key={idx}
+                                    className={`flex items-center justify-between p-3 rounded-lg border ${
+                                        call.success 
+                                            ? 'bg-green-500/5 border-green-500/20' 
+                                            : 'bg-red-500/5 border-red-500/20'
+                                    }`}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-2 h-2 rounded-full ${call.success ? 'bg-green-500' : 'bg-red-500'}`} />
+                                        <div>
+                                            <div className="text-sm text-white font-mono">
+                                                {call.provider.toUpperCase()} {call.model ? `(${call.model})` : ''}
+                                            </div>
+                                            <div className="text-xs text-slate-500">
+                                                {new Date(call.timestamp).toLocaleTimeString('en-IN', { hour12: false })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className={`text-sm font-bold ${call.success ? 'text-green-400' : 'text-red-400'}`}>
+                                            {call.duration.toFixed(0)}ms
+                                        </div>
+                                        {call.tokensUsed && (
+                                            <div className="text-xs text-slate-500">{call.tokensUsed} tokens</div>
+                                        )}
+                                        {call.error && (
+                                            <div className="text-xs text-red-400 max-w-xs truncate" title={call.error}>{call.error}</div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="text-center py-8 text-slate-500">
+                            <Bot size={48} className="mx-auto mb-4 opacity-50" />
+                            <p className="text-sm">No API calls yet</p>
+                            <p className="text-xs mt-2">AI stats will appear when you use AI features</p>
+                        </div>
+                    )}
+                </div>
+            </div>
         )}
 
       </div>

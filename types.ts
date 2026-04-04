@@ -10,9 +10,12 @@ export interface FyersCredentials {
   refreshInterval?: number;
   googleApiKey?: string;
   groqApiKey?: string;
+  claudeApiKey?: string;
   aiEnabled?: boolean;
-  aiProvider?: 'gemini' | 'groq';
+  aiProvider?: 'gemini' | 'groq' | 'claude';
   groqModel?: string;
+  geminiModel?: string;
+  claudeModel?: string;
   
   // PayTM Money Integration
   dataProvider?: 'fyers' | 'paytm';
@@ -53,6 +56,41 @@ export const GROQ_MODELS = [
   // Legacy/Other models
   { id: 'allam-2-7b', name: '🦙 Allam 2 7B (500K/day)', tokenLimit: 500000, dailyLimit: 500000 },
   { id: 'llama-3.3-70b-versatile', name: '🦙 Llama 3.3 70B Versatile (100K/day)', tokenLimit: 100000, dailyLimit: 100000 },
+];
+
+// Gemini Models (Updated as of April 2026)
+export const GEMINI_MODELS = [
+  // Frontier Models (Text & Multimodal)
+  { id: 'gemini-3.1-pro-preview', name: '💎 Gemini 3.1 Pro Preview - Peak reasoning, complex coding', category: 'frontier' },
+  { id: 'gemini-3-flash-preview', name: '⚡ Gemini 3 Flash Preview - High-speed production', category: 'frontier' },
+  { id: 'gemini-3.1-flash-lite-preview', name: '🚀 Gemini 3.1 Flash-Lite Preview - Low latency', category: 'frontier' },
+  { id: 'gemini-2.5-pro', name: '🎯 Gemini 2.5 Pro - Stable multimodal (Audio/Video/PDF)', category: 'frontier' },
+  { id: 'gemini-2.5-flash', name: '⚡ Gemini 2.5 Flash - Current default', category: 'frontier' },
+  
+  // Latest Aliases (Auto-upgrade to newest stable version)
+  { id: 'gemini-3-flash-latest', name: '🔄 Gemini 3 Flash Latest - Auto-upgrade', category: 'latest' },
+  { id: 'gemini-3.1-pro-latest', name: '🔄 Gemini 3.1 Pro Latest - Auto-upgrade', category: 'latest' },
+  
+  // Gemma 4 Open Models (Released April 2, 2026)
+  { id: 'gemma-4-31b-it', name: '🦾 Gemma 4 31B Dense - Workstation-class', category: 'gemma' },
+  { id: 'gemma-4-26b-moe-it', name: '⚙️ Gemma 4 26B MoE - Fast inference (3.8B active)', category: 'gemma' },
+  { id: 'gemma-4-4b-it', name: '📱 Gemma 4 E4B - Edge-optimized (Audio/Image)', category: 'gemma' },
+  { id: 'gemma-4-2b-it', name: '🔋 Gemma 4 E2B - Ultra-lightweight (Mobile/IoT)', category: 'gemma' },
+  
+  // Specialized Endpoints
+  { id: 'gemini-3.1-flash-image-preview', name: '🎨 Image Generation (Nano Banana 2)', category: 'specialized' },
+  { id: 'veo-3.1-lite-generate-preview', name: '🎬 Video Generation (Veo 3.1)', category: 'specialized' },
+  { id: 'lyria-3-generate-preview', name: '🎵 Music Generation (Lyria 3)', category: 'specialized' },
+  
+  // Embedding Model
+  { id: 'text-embedding-004', name: '🔢 Text Embedding 004', category: 'embedding' },
+];
+
+// Claude Models (Updated as of April 2026)
+export const CLAUDE_MODELS = [
+  { id: 'claude-opus-4-6', name: '🧠 Claude Opus 4.6 - Most intelligent (1M tokens)', contextWindow: '1M', pricing: '$5/$25' },
+  { id: 'claude-sonnet-4-6', name: '⚡ Claude Sonnet 4.6 - Best balance (1M tokens)', contextWindow: '1M', pricing: '$3/$15' },
+  { id: 'claude-haiku-4-5-20251001', name: '🚀 Claude Haiku 4.5 - Fastest & affordable (200K tokens)', contextWindow: '200K', pricing: '$1/$5' },
 ];
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
