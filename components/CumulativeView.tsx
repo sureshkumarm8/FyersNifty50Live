@@ -536,10 +536,12 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
                             <p className="text-xs text-slate-300 leading-relaxed line-clamp-2 mb-2">
                                 {quantAnalysis.primary_reason}
                             </p>
-                            <div className="flex items-center gap-2 text-[10px] text-slate-400">
-                                <CheckCircle size={10} className="text-indigo-400" />
-                                <span>Strategy: <span className="text-white">{quantAnalysis.suggested_trade.strategy_type.replace('_', ' ')}</span></span>
-                            </div>
+                            {quantAnalysis.suggested_trade && (
+                                <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                                    <CheckCircle size={10} className="text-indigo-400" />
+                                    <span>Strategy: <span className="text-white">{quantAnalysis.suggested_trade.strategy_type.replace('_', ' ')}</span></span>
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="text-center py-4">

@@ -1,5 +1,5 @@
 // Nifty Weekly Options - Manually curated for current week
-// Expiry: 2026-04-07 (Next Tuesday)
+// Expiry: 2026-04-13 (Next Tuesday)
 // Range: 21000 to 25000 (ATM ± 20 strikes)
 
 export interface NiftyOption {
@@ -9,817 +9,817 @@ export interface NiftyOption {
 }
 
 // Current week expiry date (auto-updated by generateWeeklyOptions.cjs)
-export const CURRENT_EXPIRY_DATE = '2026-04-07';
-export const CURRENT_EXPIRY_FORMATTED = '07-APR-26';
+export const CURRENT_EXPIRY_DATE = '2026-04-13';
+export const CURRENT_EXPIRY_FORMATTED = '13-APR-26';
 
 export const NIFTY_WEEKLY_OPTIONS: NiftyOption[] = [
   {
-    "security_id": "40641",
+    "security_id": "54362",
     "strike": 21000,
     "type": "PE"
   },
   {
-    "security_id": "40640",
+    "security_id": "54361",
     "strike": 21000,
     "type": "CE"
   },
   {
-    "security_id": "40643",
+    "security_id": "54364",
     "strike": 21050,
     "type": "PE"
   },
   {
-    "security_id": "40642",
+    "security_id": "54363",
     "strike": 21050,
     "type": "CE"
   },
   {
-    "security_id": "40647",
+    "security_id": "54503",
     "strike": 21100,
     "type": "PE"
   },
   {
-    "security_id": "40644",
+    "security_id": "54458",
     "strike": 21100,
     "type": "CE"
   },
   {
-    "security_id": "40651",
+    "security_id": "54601",
     "strike": 21150,
     "type": "PE"
   },
   {
-    "security_id": "40648",
+    "security_id": "54504",
     "strike": 21150,
     "type": "CE"
   },
   {
-    "security_id": "40655",
+    "security_id": "54603",
     "strike": 21200,
     "type": "PE"
   },
   {
-    "security_id": "40652",
+    "security_id": "54602",
     "strike": 21200,
     "type": "CE"
   },
   {
-    "security_id": "40659",
+    "security_id": "54605",
     "strike": 21250,
     "type": "PE"
   },
   {
-    "security_id": "40656",
+    "security_id": "54604",
     "strike": 21250,
     "type": "CE"
   },
   {
-    "security_id": "40661",
+    "security_id": "54607",
     "strike": 21300,
     "type": "PE"
   },
   {
-    "security_id": "40660",
+    "security_id": "54606",
     "strike": 21300,
     "type": "CE"
   },
   {
-    "security_id": "40663",
+    "security_id": "54609",
     "strike": 21350,
     "type": "PE"
   },
   {
-    "security_id": "40662",
+    "security_id": "54608",
     "strike": 21350,
     "type": "CE"
   },
   {
-    "security_id": "40667",
+    "security_id": "54628",
     "strike": 21400,
     "type": "PE"
   },
   {
-    "security_id": "40664",
+    "security_id": "54610",
     "strike": 21400,
     "type": "CE"
   },
   {
-    "security_id": "40677",
+    "security_id": "54634",
     "strike": 21450,
     "type": "PE"
   },
   {
-    "security_id": "40668",
+    "security_id": "54629",
     "strike": 21450,
     "type": "CE"
   },
   {
-    "security_id": "40679",
+    "security_id": "54638",
     "strike": 21500,
     "type": "PE"
   },
   {
-    "security_id": "40678",
+    "security_id": "54635",
     "strike": 21500,
     "type": "CE"
   },
   {
-    "security_id": "40681",
+    "security_id": "54648",
     "strike": 21550,
     "type": "PE"
   },
   {
-    "security_id": "40680",
+    "security_id": "54647",
     "strike": 21550,
     "type": "CE"
   },
   {
-    "security_id": "40683",
+    "security_id": "54656",
     "strike": 21600,
     "type": "PE"
   },
   {
-    "security_id": "40682",
+    "security_id": "54649",
     "strike": 21600,
     "type": "CE"
   },
   {
-    "security_id": "40687",
+    "security_id": "54658",
     "strike": 21650,
     "type": "PE"
   },
   {
-    "security_id": "40684",
+    "security_id": "54657",
     "strike": 21650,
     "type": "CE"
   },
   {
-    "security_id": "40689",
+    "security_id": "54660",
     "strike": 21700,
     "type": "PE"
   },
   {
-    "security_id": "40688",
+    "security_id": "54659",
     "strike": 21700,
     "type": "CE"
   },
   {
-    "security_id": "40691",
+    "security_id": "54662",
     "strike": 21750,
     "type": "PE"
   },
   {
-    "security_id": "40690",
+    "security_id": "54661",
     "strike": 21750,
     "type": "CE"
   },
   {
-    "security_id": "40693",
+    "security_id": "54670",
     "strike": 21800,
     "type": "PE"
   },
   {
-    "security_id": "40692",
+    "security_id": "54663",
     "strike": 21800,
     "type": "CE"
   },
   {
-    "security_id": "40695",
+    "security_id": "54675",
     "strike": 21850,
     "type": "PE"
   },
   {
-    "security_id": "40694",
+    "security_id": "54674",
     "strike": 21850,
     "type": "CE"
   },
   {
-    "security_id": "40697",
+    "security_id": "54678",
     "strike": 21900,
     "type": "PE"
   },
   {
-    "security_id": "40696",
+    "security_id": "54676",
     "strike": 21900,
     "type": "CE"
   },
   {
-    "security_id": "40699",
+    "security_id": "54680",
     "strike": 21950,
     "type": "PE"
   },
   {
-    "security_id": "40698",
+    "security_id": "54679",
     "strike": 21950,
     "type": "CE"
   },
   {
-    "security_id": "40701",
+    "security_id": "54682",
     "strike": 22000,
     "type": "PE"
   },
   {
-    "security_id": "40700",
+    "security_id": "54681",
     "strike": 22000,
     "type": "CE"
   },
   {
-    "security_id": "40704",
+    "security_id": "54684",
     "strike": 22050,
     "type": "PE"
   },
   {
-    "security_id": "40703",
+    "security_id": "54683",
     "strike": 22050,
     "type": "CE"
   },
   {
-    "security_id": "40706",
+    "security_id": "54686",
     "strike": 22100,
     "type": "PE"
   },
   {
-    "security_id": "40705",
+    "security_id": "54685",
     "strike": 22100,
     "type": "CE"
   },
   {
-    "security_id": "40708",
+    "security_id": "54688",
     "strike": 22150,
     "type": "PE"
   },
   {
-    "security_id": "40707",
+    "security_id": "54687",
     "strike": 22150,
     "type": "CE"
   },
   {
-    "security_id": "40717",
+    "security_id": "54690",
     "strike": 22200,
     "type": "PE"
   },
   {
-    "security_id": "40714",
+    "security_id": "54689",
     "strike": 22200,
     "type": "CE"
   },
   {
-    "security_id": "40723",
+    "security_id": "54692",
     "strike": 22250,
     "type": "PE"
   },
   {
-    "security_id": "40718",
+    "security_id": "54691",
     "strike": 22250,
     "type": "CE"
   },
   {
-    "security_id": "40725",
+    "security_id": "54694",
     "strike": 22300,
     "type": "PE"
   },
   {
-    "security_id": "40724",
+    "security_id": "54693",
     "strike": 22300,
     "type": "CE"
   },
   {
-    "security_id": "40727",
+    "security_id": "54696",
     "strike": 22350,
     "type": "PE"
   },
   {
-    "security_id": "40726",
+    "security_id": "54695",
     "strike": 22350,
     "type": "CE"
   },
   {
-    "security_id": "40729",
+    "security_id": "54698",
     "strike": 22400,
     "type": "PE"
   },
   {
-    "security_id": "40728",
+    "security_id": "54697",
     "strike": 22400,
     "type": "CE"
   },
   {
-    "security_id": "40731",
+    "security_id": "54700",
     "strike": 22450,
     "type": "PE"
   },
   {
-    "security_id": "40730",
+    "security_id": "54699",
     "strike": 22450,
     "type": "CE"
   },
   {
-    "security_id": "40735",
+    "security_id": "54702",
     "strike": 22500,
     "type": "PE"
   },
   {
-    "security_id": "40732",
+    "security_id": "54701",
     "strike": 22500,
     "type": "CE"
   },
   {
-    "security_id": "40737",
+    "security_id": "54704",
     "strike": 22550,
     "type": "PE"
   },
   {
-    "security_id": "40736",
+    "security_id": "54703",
     "strike": 22550,
     "type": "CE"
   },
   {
-    "security_id": "40739",
+    "security_id": "54706",
     "strike": 22600,
     "type": "PE"
   },
   {
-    "security_id": "40738",
+    "security_id": "54705",
     "strike": 22600,
     "type": "CE"
   },
   {
-    "security_id": "40741",
+    "security_id": "54710",
     "strike": 22650,
     "type": "PE"
   },
   {
-    "security_id": "40740",
+    "security_id": "54707",
     "strike": 22650,
     "type": "CE"
   },
   {
-    "security_id": "40745",
+    "security_id": "54754",
     "strike": 22700,
     "type": "PE"
   },
   {
-    "security_id": "40742",
+    "security_id": "54711",
     "strike": 22700,
     "type": "CE"
   },
   {
-    "security_id": "40751",
+    "security_id": "54756",
     "strike": 22750,
     "type": "PE"
   },
   {
-    "security_id": "40747",
+    "security_id": "54755",
     "strike": 22750,
     "type": "CE"
   },
   {
-    "security_id": "40753",
+    "security_id": "54758",
     "strike": 22800,
     "type": "PE"
   },
   {
-    "security_id": "40752",
+    "security_id": "54757",
     "strike": 22800,
     "type": "CE"
   },
   {
-    "security_id": "40760",
+    "security_id": "54760",
     "strike": 22850,
     "type": "PE"
   },
   {
-    "security_id": "40754",
+    "security_id": "54759",
     "strike": 22850,
     "type": "CE"
   },
   {
-    "security_id": "40769",
+    "security_id": "54762",
     "strike": 22900,
     "type": "PE"
   },
   {
-    "security_id": "40761",
+    "security_id": "54761",
     "strike": 22900,
     "type": "CE"
   },
   {
-    "security_id": "40771",
+    "security_id": "54764",
     "strike": 22950,
     "type": "PE"
   },
   {
-    "security_id": "40770",
+    "security_id": "54763",
     "strike": 22950,
     "type": "CE"
   },
   {
-    "security_id": "40773",
+    "security_id": "54766",
     "strike": 23000,
     "type": "PE"
   },
   {
-    "security_id": "40772",
+    "security_id": "54765",
     "strike": 23000,
     "type": "CE"
   },
   {
-    "security_id": "40775",
+    "security_id": "54768",
     "strike": 23050,
     "type": "PE"
   },
   {
-    "security_id": "40774",
+    "security_id": "54767",
     "strike": 23050,
     "type": "CE"
   },
   {
-    "security_id": "40777",
+    "security_id": "54770",
     "strike": 23100,
     "type": "PE"
   },
   {
-    "security_id": "40776",
+    "security_id": "54769",
     "strike": 23100,
     "type": "CE"
   },
   {
-    "security_id": "40779",
+    "security_id": "54772",
     "strike": 23150,
     "type": "PE"
   },
   {
-    "security_id": "40778",
+    "security_id": "54771",
     "strike": 23150,
     "type": "CE"
   },
   {
-    "security_id": "40782",
+    "security_id": "54774",
     "strike": 23200,
     "type": "PE"
   },
   {
-    "security_id": "40781",
+    "security_id": "54773",
     "strike": 23200,
     "type": "CE"
   },
   {
-    "security_id": "40784",
+    "security_id": "54776",
     "strike": 23250,
     "type": "PE"
   },
   {
-    "security_id": "40783",
+    "security_id": "54775",
     "strike": 23250,
     "type": "CE"
   },
   {
-    "security_id": "40787",
+    "security_id": "54778",
     "strike": 23300,
     "type": "PE"
   },
   {
-    "security_id": "40785",
+    "security_id": "54777",
     "strike": 23300,
     "type": "CE"
   },
   {
-    "security_id": "40789",
+    "security_id": "54787",
     "strike": 23350,
     "type": "PE"
   },
   {
-    "security_id": "40788",
+    "security_id": "54779",
     "strike": 23350,
     "type": "CE"
   },
   {
-    "security_id": "40791",
+    "security_id": "54789",
     "strike": 23400,
     "type": "PE"
   },
   {
-    "security_id": "40790",
+    "security_id": "54788",
     "strike": 23400,
     "type": "CE"
   },
   {
-    "security_id": "40795",
+    "security_id": "54791",
     "strike": 23450,
     "type": "PE"
   },
   {
-    "security_id": "40792",
+    "security_id": "54790",
     "strike": 23450,
     "type": "CE"
   },
   {
-    "security_id": "40797",
+    "security_id": "54793",
     "strike": 23500,
     "type": "PE"
   },
   {
-    "security_id": "40796",
+    "security_id": "54792",
     "strike": 23500,
     "type": "CE"
   },
   {
-    "security_id": "40799",
+    "security_id": "54795",
     "strike": 23550,
     "type": "PE"
   },
   {
-    "security_id": "40798",
+    "security_id": "54794",
     "strike": 23550,
     "type": "CE"
   },
   {
-    "security_id": "40801",
+    "security_id": "54797",
     "strike": 23600,
     "type": "PE"
   },
   {
-    "security_id": "40800",
+    "security_id": "54796",
     "strike": 23600,
     "type": "CE"
   },
   {
-    "security_id": "40803",
+    "security_id": "54799",
     "strike": 23650,
     "type": "PE"
   },
   {
-    "security_id": "40802",
+    "security_id": "54798",
     "strike": 23650,
     "type": "CE"
   },
   {
-    "security_id": "40806",
+    "security_id": "54801",
     "strike": 23700,
     "type": "PE"
   },
   {
-    "security_id": "40804",
+    "security_id": "54800",
     "strike": 23700,
     "type": "CE"
   },
   {
-    "security_id": "40814",
+    "security_id": "54803",
     "strike": 23750,
     "type": "PE"
   },
   {
-    "security_id": "40809",
+    "security_id": "54802",
     "strike": 23750,
     "type": "CE"
   },
   {
-    "security_id": "40817",
+    "security_id": "54805",
     "strike": 23800,
     "type": "PE"
   },
   {
-    "security_id": "40816",
+    "security_id": "54804",
     "strike": 23800,
     "type": "CE"
   },
   {
-    "security_id": "40819",
+    "security_id": "54807",
     "strike": 23850,
     "type": "PE"
   },
   {
-    "security_id": "40818",
+    "security_id": "54806",
     "strike": 23850,
     "type": "CE"
   },
   {
-    "security_id": "40821",
+    "security_id": "54809",
     "strike": 23900,
     "type": "PE"
   },
   {
-    "security_id": "40820",
+    "security_id": "54808",
     "strike": 23900,
     "type": "CE"
   },
   {
-    "security_id": "40823",
+    "security_id": "54811",
     "strike": 23950,
     "type": "PE"
   },
   {
-    "security_id": "40822",
+    "security_id": "54810",
     "strike": 23950,
     "type": "CE"
   },
   {
-    "security_id": "40829",
+    "security_id": "54815",
     "strike": 24000,
     "type": "PE"
   },
   {
-    "security_id": "40824",
+    "security_id": "54812",
     "strike": 24000,
     "type": "CE"
   },
   {
-    "security_id": "40832",
+    "security_id": "54817",
     "strike": 24050,
     "type": "PE"
   },
   {
-    "security_id": "40830",
+    "security_id": "54816",
     "strike": 24050,
     "type": "CE"
   },
   {
-    "security_id": "40837",
+    "security_id": "54820",
     "strike": 24100,
     "type": "PE"
   },
   {
-    "security_id": "40833",
+    "security_id": "54818",
     "strike": 24100,
     "type": "CE"
   },
   {
-    "security_id": "40839",
+    "security_id": "54832",
     "strike": 24150,
     "type": "PE"
   },
   {
-    "security_id": "40838",
+    "security_id": "54821",
     "strike": 24150,
     "type": "CE"
   },
   {
-    "security_id": "40841",
+    "security_id": "54834",
     "strike": 24200,
     "type": "PE"
   },
   {
-    "security_id": "40840",
+    "security_id": "54833",
     "strike": 24200,
     "type": "CE"
   },
   {
-    "security_id": "40847",
+    "security_id": "54863",
     "strike": 24250,
     "type": "PE"
   },
   {
-    "security_id": "40842",
+    "security_id": "54835",
     "strike": 24250,
     "type": "CE"
   },
   {
-    "security_id": "40851",
+    "security_id": "54865",
     "strike": 24300,
     "type": "PE"
   },
   {
-    "security_id": "40850",
+    "security_id": "54864",
     "strike": 24300,
     "type": "CE"
   },
   {
-    "security_id": "40857",
+    "security_id": "54867",
     "strike": 24350,
     "type": "PE"
   },
   {
-    "security_id": "40852",
+    "security_id": "54866",
     "strike": 24350,
     "type": "CE"
   },
   {
-    "security_id": "40861",
+    "security_id": "54869",
     "strike": 24400,
     "type": "PE"
   },
   {
-    "security_id": "40858",
+    "security_id": "54868",
     "strike": 24400,
     "type": "CE"
   },
   {
-    "security_id": "40863",
+    "security_id": "54871",
     "strike": 24450,
     "type": "PE"
   },
   {
-    "security_id": "40862",
+    "security_id": "54870",
     "strike": 24450,
     "type": "CE"
   },
   {
-    "security_id": "40865",
+    "security_id": "54873",
     "strike": 24500,
     "type": "PE"
   },
   {
-    "security_id": "40864",
+    "security_id": "54872",
     "strike": 24500,
     "type": "CE"
   },
   {
-    "security_id": "40867",
+    "security_id": "54875",
     "strike": 24550,
     "type": "PE"
   },
   {
-    "security_id": "40866",
+    "security_id": "54874",
     "strike": 24550,
     "type": "CE"
   },
   {
-    "security_id": "40869",
+    "security_id": "54877",
     "strike": 24600,
     "type": "PE"
   },
   {
-    "security_id": "40868",
+    "security_id": "54876",
     "strike": 24600,
     "type": "CE"
   },
   {
-    "security_id": "40875",
+    "security_id": "54879",
     "strike": 24650,
     "type": "PE"
   },
   {
-    "security_id": "40870",
+    "security_id": "54878",
     "strike": 24650,
     "type": "CE"
   },
   {
-    "security_id": "40877",
+    "security_id": "54881",
     "strike": 24700,
     "type": "PE"
   },
   {
-    "security_id": "40876",
+    "security_id": "54880",
     "strike": 24700,
     "type": "CE"
   },
   {
-    "security_id": "40879",
+    "security_id": "54883",
     "strike": 24750,
     "type": "PE"
   },
   {
-    "security_id": "40878",
+    "security_id": "54882",
     "strike": 24750,
     "type": "CE"
   },
   {
-    "security_id": "40881",
+    "security_id": "54885",
     "strike": 24800,
     "type": "PE"
   },
   {
-    "security_id": "40880",
+    "security_id": "54884",
     "strike": 24800,
     "type": "CE"
   },
   {
-    "security_id": "40883",
+    "security_id": "54887",
     "strike": 24850,
     "type": "PE"
   },
   {
-    "security_id": "40882",
+    "security_id": "54886",
     "strike": 24850,
     "type": "CE"
   },
   {
-    "security_id": "40887",
+    "security_id": "54889",
     "strike": 24900,
     "type": "PE"
   },
   {
-    "security_id": "40884",
+    "security_id": "54888",
     "strike": 24900,
     "type": "CE"
   },
   {
-    "security_id": "40889",
+    "security_id": "54891",
     "strike": 24950,
     "type": "PE"
   },
   {
-    "security_id": "40888",
+    "security_id": "54890",
     "strike": 24950,
     "type": "CE"
   },
   {
-    "security_id": "40893",
+    "security_id": "54893",
     "strike": 25000,
     "type": "PE"
   },
   {
-    "security_id": "40890",
+    "security_id": "54892",
     "strike": 25000,
     "type": "CE"
   }

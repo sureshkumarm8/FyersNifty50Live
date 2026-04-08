@@ -64,6 +64,7 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
   pivots,
   aiEnabled
 }) => {
+  // console.log('[AutoTrade] Component render at', new Date().toLocaleTimeString(), 'stocks:', stocks?.length, 'history:', historyLog?.length);
   // Main State - Persisted in localStorage
   const [state, setState] = useState<SystemState>(() => {
     try {
@@ -108,6 +109,21 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
   const [sniperZones, setSniperZones] = useState<SniperZone | null>(null);
   const [sniperTradeSetup, setSniperTradeSetup] = useState<TradeSetup | null>(null);
   const [sniperDailyTradeExecuted, setSniperDailyTradeExecuted] = useState(false);
+  const [autoExecuteEnabled, setAutoExecuteEnabled] = useState(() => {
+    const saved = localStorage.getItem('autotrade_auto_execute');
+    return saved ? JSON.parse(saved) : false;
+  });
+  
+  // Refs for sniper state to avoid recreating callbacks
+  const sniperZonesRef = useRef(sniperZones);
+  const sniperTradeSetupRef = useRef(sniperTradeSetup);
+  const sniperDailyTradeExecutedRef = useRef(sniperDailyTradeExecuted);
+  
+  useEffect(() => {
+    sniperZonesRef.current = sniperZones;
+    sniperTradeSetupRef.current = sniperTradeSetup;
+    sniperDailyTradeExecutedRef.current = sniperDailyTradeExecuted;
+  }, [sniperZones, sniperTradeSetup, sniperDailyTradeExecuted]);
 
   // AI Prediction State
   const [currentPrediction, setCurrentPrediction] = useState<Prediction | null>(null);
@@ -119,6 +135,30 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
   const orderManagerRef = useRef<OrderManager | null>(null);
   const monitorIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isFirstMountRef = useRef(true);
+  const autoExecuteTriggeredRef = useRef(false);
+  const lastAICallRef = useRef<number>(0);
+  
+  // Track component lifecycle
+  useEffect(() => {
+    // console.log('[AutoTrade] Component MOUNTED');
+    return () => {
+      // console.log('[AutoTrade] Component UNMOUNTED');
+    };
+  }, []);
+  
+  // Refs for frequently changing props to prevent runAnalysis recreation
+  const stocksRef = useRef(stocks);
+  const historyLogRef = useRef(historyLog);
+  const pivotsRef = useRef(pivots);
+  const niftyLtpRef = useRef(niftyLtp);
+  
+  // Update refs when props change
+  useEffect(() => {
+    stocksRef.current = stocks;
+    historyLogRef.current = historyLog;
+    pivotsRef.current = pivots;
+    niftyLtpRef.current = niftyLtp;
+  }, [stocks, historyLog, pivots, niftyLtp]);
 
   // Add log function
   const addLog = useCallback((message: string) => {
@@ -186,19 +226,24 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
 
   // Strategy: MOMENTUM - Multi-factor Analysis
   const runMomentumAnalysis = useCallback(() => {
-    if (!niftyLtp || !engineRef.current) return;
+    const nifty = niftyLtpRef.current;
+    const history = historyLogRef.current;
+    const currentPivots = pivotsRef.current;
+    const currentStocks = stocksRef.current;
+    
+    if (!nifty || !engineRef.current) return;
 
-    const latest = historyLog[historyLog.length - 1];
+    const latest = history[history.length - 1];
     if (!latest) return;
 
     addLog('🔍 Running Momentum analysis...');
 
     const signal = engineRef.current.generateSignal({
-      niftyLtp,
+      niftyLtp: nifty,
       marketSnapshot: latest,
-      pivots,
-      stocks,
-      historyLog
+      pivots: currentPivots,
+      stocks: currentStocks,
+      historyLog: history
     });
 
     if (signal && signal.signal !== 'NO_TRADE') {
@@ -208,11 +253,24 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
     } else {
       addLog('⏸️ No trade opportunity detected');
     }
-  }, [niftyLtp, historyLog, pivots, stocks, addLog]);
+  }, [addLog]);
 
   // Strategy: SNIPER - Office Hour 30pt Strategy
   const runSniperAnalysis = useCallback(() => {
-    if (!niftyLtp || sniperDailyTradeExecuted) return;
+    const nifty = niftyLtpRef.current;
+    const history = historyLogRef.current;
+    const currentPivots = pivotsRef.current;
+    const zones = sniperZonesRef.current;
+    const tradeSetup = sniperTradeSetupRef.current;
+    const dailyTradeExecuted = sniperDailyTradeExecutedRef.current;
+    
+    if (!nifty) {
+      addLog('⚠️ SNIPER: No Nifty LTP available');
+      return;
+    }
+    if (dailyTradeExecuted) {
+      return;
+    }
 
     const now = new Date();
     const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
@@ -220,19 +278,19 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
     const min = istTime.getMinutes();
     const timeValue = hour * 100 + min;
 
-    // Phase 1: Download phase (09:15-09:25)
-    if (timeValue >= 915 && timeValue < 925 && !sniperZones) {
-      addLog('📥 SNIPER: Download phase - Calculating zones...');
+    // Phase 1: Download phase (09:15-09:35) - Extended window for delayed data
+    if (timeValue >= 915 && timeValue < 935 && !zones) {
+      addLog(`📥 SNIPER: Download phase - Time: ${hour}:${min.toString().padStart(2, '0')} | History: ${history.length} candles`);
       
-      const firstCandles = historyLog.slice(0, 5);
+      const firstCandles = history.slice(0, 10);
       if (firstCandles.length >= 2) {
         const fiveMinHigh = Math.max(...firstCandles.map(c => c.niftyLtp));
         const fiveMinLow = Math.min(...firstCandles.map(c => c.niftyLtp));
-        const openPrice = firstCandles[0]?.niftyLtp || niftyLtp;
-        const prevClose = pivots?.dayLow || niftyLtp;
+        const openPrice = firstCandles[0]?.niftyLtp || nifty;
+        const prevClose = currentPivots?.dayLow || nifty;
         
-        const support = pivots?.s1 || (fiveMinLow - 20);
-        const resistance = pivots?.r1 || (fiveMinHigh + 20);
+        const support = currentPivots?.s1 || (fiveMinLow - 20);
+        const resistance = currentPivots?.r1 || (fiveMinHigh + 20);
         
         let openType: 'GAP_UP' | 'GAP_DOWN' | 'FLAT' = 'FLAT';
         if (openPrice > prevClose + 20) openType = 'GAP_UP';
@@ -248,34 +306,60 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
         };
 
         setSniperZones(zones);
-        addLog(`✅ Zones set: Support ${support} | Resistance ${resistance} | Open: ${openType}`);
+        addLog(`✅ Zones set: Support ${support.toFixed(0)} | Resistance ${resistance.toFixed(0)} | Open: ${openType}`);
+      } else {
+        addLog(`⏳ SNIPER: Waiting for more data (${firstCandles.length}/2 candles)`);
+      }
+    }
+
+    // Fallback: If zones not set by 9:35, use pivots or current price ranges
+    if (timeValue >= 935 && timeValue < 1015 && !zones) {
+      if (currentPivots) {
+        addLog('🔄 SNIPER: Using pivot-based zones (fallback)');
+        const zones: SniperZone = {
+          support: currentPivots.s1,
+          resistance: currentPivots.r1,
+          fiveMinHigh: nifty + 50,
+          fiveMinLow: nifty - 50,
+          openType: 'FLAT',
+          currentZone: 'NEUTRAL'
+        };
+        setSniperZones(zones);
+        addLog(`✅ Fallback zones: S1 ${currentPivots.s1.toFixed(0)} | R1 ${currentPivots.r1.toFixed(0)}`);
+      } else {
+        addLog('⚠️ SNIPER: No pivots available for fallback zones');
       }
     }
 
     // Phase 2: Entry window (09:25-10:15)
-    if (timeValue >= 925 && timeValue <= 1015 && sniperZones && !sniperTradeSetup) {
-      const distToSupport = Math.abs(niftyLtp - sniperZones.support);
-      const distToResistance = Math.abs(niftyLtp - sniperZones.resistance);
+    if (timeValue >= 925 && timeValue <= 1015 && zones && !tradeSetup) {
+      const distToSupport = Math.abs(nifty - zones.support);
+      const distToResistance = Math.abs(nifty - zones.resistance);
       
       let zone: 'NEAR_SUPPORT' | 'NEAR_RESISTANCE' | 'NEUTRAL' = 'NEUTRAL';
       if (distToSupport < 30) zone = 'NEAR_SUPPORT';
       else if (distToResistance < 30) zone = 'NEAR_RESISTANCE';
 
-      sniperZones.currentZone = zone;
+      zones.currentZone = zone;
+      
+      // Log every 2 minutes to show we're monitoring
+      if (min % 2 === 0) {
+        addLog(`👁️ Monitoring: Nifty ${nifty.toFixed(0)} | Zone: ${zone} | Dist S:${distToSupport.toFixed(0)} R:${distToResistance.toFixed(0)}`);
+      }
 
       if (zone === 'NEAR_SUPPORT' || zone === 'NEAR_RESISTANCE') {
         const isCallSetup = zone === 'NEAR_SUPPORT';
         const strikeStep = 50;
-        const atm = Math.round(niftyLtp / strikeStep) * strikeStep;
+        const atm = Math.round(nifty / strikeStep) * strikeStep;
         const itmStrike = isCallSetup ? atm - 100 : atm + 100;
         
         const setup: TradeSetup = {
           strikePrice: itmStrike,
           optionType: isCallSetup ? 'CE' : 'PE',
           direction: 'LONG',
-          entryPrice: niftyLtp,
-          targetPrice: isCallSetup ? niftyLtp + 30 : niftyLtp - 30,
-          stopLossPrice: isCallSetup ? niftyLtp - 30 : niftyLtp + 30,
+          entryPrice: nifty,
+          targetPrice: isCallSetup ? nifty + 30 : nifty - 30,
+          stopLossPrice: isCallSetup ? nifty - 30 : nifty + 30,
           confidence: 75,
           reasoning: [`${zone} detected`, `ITM ${isCallSetup ? 'CALL' : 'PUT'} setup`],
           expiryDate: getFormattedExpiryDate(getNextExpiryDate()),
@@ -285,6 +369,12 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
         setSniperTradeSetup(setup);
         setState(prev => ({ ...prev, status: 'SIGNAL_GENERATED' }));
         addLog(`🎯 SNIPER Setup: ${setup.optionType} ${setup.strikePrice} | Target: ±30pts`);
+        
+        // Trigger auto-execute flag
+        if (autoExecuteEnabled && !autoExecuteTriggeredRef.current) {
+          autoExecuteTriggeredRef.current = true;
+          addLog('⚡ Auto-execute will trigger in 1 second...');
+        }
       }
     }
 
@@ -293,10 +383,12 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
       addLog('⏰ 10:15 AM - Force closing positions');
       handleCloseAllPositions();
     }
-  }, [niftyLtp, sniperZones, sniperTradeSetup, sniperDailyTradeExecuted, historyLog, pivots, activePositions, addLog]);
+  }, [addLog, autoExecuteEnabled]);
 
   // Unified Analysis Runner (includes AI predictions)
   const runAnalysis = useCallback(async () => {
+    // console.log('[AutoTrade] runAnalysis called at', new Date().toLocaleTimeString());
+    
     if (state.strategy === 'MOMENTUM') {
       runMomentumAnalysis();
     } else {
@@ -304,17 +396,31 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
     }
     
     // Run AI predictions if enabled
-    if (aiEnabled && niftyLtp && historyLog.length >= 5) {
-      const latest = historyLog[historyLog.length - 1];
+    const nifty = niftyLtpRef.current;
+    const history = historyLogRef.current;
+    const currentStocks = stocksRef.current;
+    const currentPivots = pivotsRef.current;
+    
+    if (aiEnabled && nifty && history.length >= 5) {
+      // Throttle AI calls to once per 30 seconds
+      const now = Date.now();
+      if (now - lastAICallRef.current < 30000) {
+        // console.log('[AutoTrade] AI call throttled - last call was', (now - lastAICallRef.current) / 1000, 'seconds ago');
+        return; // Skip AI call if called within last 30 seconds
+      }
+      lastAICallRef.current = now;
+      // console.log('[AutoTrade] Making AI prediction calls at', new Date().toLocaleTimeString());
+      
+      const latest = history[history.length - 1];
       
       try {
         // Next-minute prediction
         const prediction = await predictionEngine.predictNextMove({
-          niftyLtp,
+          niftyLtp: nifty,
           marketSnapshot: latest,
-          last5Minutes: historyLog.slice(-5),
-          stocks,
-          pivots
+          last5Minutes: history.slice(-5),
+          stocks: currentStocks,
+          pivots: currentPivots
         });
         setCurrentPrediction(prediction);
         
@@ -332,13 +438,17 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
         console.error('Prediction error:', error);
       }
     }
-  }, [state.strategy, runMomentumAnalysis, runSniperAnalysis, aiEnabled, niftyLtp, historyLog, stocks, pivots, addLog]);
+  }, [state.strategy, runMomentumAnalysis, runSniperAnalysis, aiEnabled, addLog]);
   
   // Calculate win probability when signal is generated
   useEffect(() => {
-    if ((currentSignal || sniperTradeSetup) && aiEnabled && niftyLtp) {
+    if ((currentSignal || sniperTradeSetup) && aiEnabled) {
       const setup = state.strategy === 'SNIPER' ? sniperTradeSetup : currentSignal;
       if (!setup) return;
+      
+      const nifty = niftyLtpRef.current;
+      const history = historyLogRef.current;
+      if (!nifty) return;
       
       const now = new Date();
       const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
@@ -350,9 +460,9 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
         optionType: setup.optionType,
         marketContext: {
           time: currentTime,
-          niftyLtp,
-          sentiment: historyLog[historyLog.length - 1]?.overallSent || 0,
-          pcr: historyLog[historyLog.length - 1]?.pcr || 1,
+          niftyLtp: nifty,
+          sentiment: history[history.length - 1]?.overallSent || 0,
+          pcr: history[history.length - 1]?.pcr || 1,
           volatility: 0
         }
       }).then(prob => {
@@ -364,10 +474,12 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
         console.error('Win probability error:', err);
       });
     }
-  }, [currentSignal, sniperTradeSetup, aiEnabled, niftyLtp, state.strategy, historyLog, addLog]);
+  }, [currentSignal, sniperTradeSetup, aiEnabled, state.strategy, addLog]);
 
   // Monitoring Loop
   useEffect(() => {
+    // console.log('[AutoTrade] Monitoring effect triggered. isMonitoring:', state.isMonitoring, 'hasInterval:', !!monitorIntervalRef.current);
+    
     if (state.isMonitoring && !monitorIntervalRef.current) {
       // Get market time info
       const marketInfo = getMarketTimeInfo();
@@ -398,9 +510,11 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
       } else {
         // Normal behavior: start immediately
         addLog(`🚀 Started monitoring with ${state.strategy} strategy`);
+        // console.log('[AutoTrade] Setting up 30-second interval');
         runAnalysis();
         
         monitorIntervalRef.current = setInterval(() => {
+          // console.log('[AutoTrade] Interval tick - calling runAnalysis');
           runAnalysis();
         }, 30000);
       }
@@ -486,6 +600,18 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
     setSniperTradeSetup(null);
     addLog(`🔄 Switched to ${strategy} strategy`);
   };
+
+  // Auto-execute effect - runs after handleExecuteTrade is defined
+  useEffect(() => {
+    if (autoExecuteTriggeredRef.current && autoExecuteEnabled && state.status === 'SIGNAL_GENERATED') {
+      const timer = setTimeout(() => {
+        addLog('⚡ Auto-executing trade now...');
+        handleExecuteTrade();
+        autoExecuteTriggeredRef.current = false;
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [state.status, autoExecuteEnabled]);
 
   return (
     <div className="h-full bg-slate-950 overflow-hidden flex flex-col">
@@ -584,12 +710,32 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
               {state.isMonitoring ? <Pause size={16} /> : <Play size={16} />}
               {state.isMonitoring ? 'Stop' : 'Start'}
             </button>
+
+            {/* Auto-Execute Toggle */}
+            <button
+              onClick={() => {
+                const newValue = !autoExecuteEnabled;
+                setAutoExecuteEnabled(newValue);
+                localStorage.setItem('autotrade_auto_execute', JSON.stringify(newValue));
+                addLog(newValue ? '⚡ Auto-execute enabled' : '⏸️ Auto-execute disabled');
+              }}
+              disabled={state.isMonitoring}
+              className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all border ${
+                autoExecuteEnabled
+                  ? 'bg-purple-600/20 border-purple-500/50 text-purple-400'
+                  : 'bg-slate-800 border-white/10 text-slate-400 hover:text-white'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+              title="Auto-execute trades when signal is generated"
+            >
+              <Zap size={14} className={autoExecuteEnabled ? 'animate-pulse' : ''} />
+              {autoExecuteEnabled ? 'AUTO' : 'MANUAL'}
+            </button>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
+      <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
         
         {/* Left: Signal & Setup */}
         <div className="lg:col-span-2 flex flex-col gap-4 overflow-y-auto custom-scrollbar">

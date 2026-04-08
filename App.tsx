@@ -98,6 +98,19 @@ const App: React.FC = () => {
   
   const prevNiftyLtpRef = useRef<number | null>(null);
   const didFetchPivots = useRef(false);
+  
+  // Refs for Quant Analysis to prevent recreation
+  const historyLogRef = useRef(historyLog);
+  const stocksRefForQuant = useRef(stocks);
+  const niftyLtpRefForQuant = useRef(niftyLtp);
+  const pivotsRefForQuant = useRef(pivots);
+  
+  useEffect(() => {
+    historyLogRef.current = historyLog;
+    stocksRefForQuant.current = stocks;
+    niftyLtpRefForQuant.current = niftyLtp;
+    pivotsRefForQuant.current = pivots;
+  }, [historyLog, stocks, niftyLtp, pivots]);
 
   // --- 1. Database Hydration (On Mount) ---
   // --- 1. Database Hydration & Lifecycle (On Mount) ---
@@ -514,11 +527,11 @@ const App: React.FC = () => {
       let niftyLtpVal = 0;
       
       if (credentials.dataProvider === 'paytm') {
-        console.log('[App] Using PayTM Money API');
+        // console.log('[App] Using PayTM Money API');
         stockData = await fetchPayTMStocks(credentials);
         niftyLtpVal = await fetchNiftyIndexLTP(credentials);
       } else {
-        console.log('[App] Using Fyers API');
+        // console.log('[App] Using Fyers API');
         stockData = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
         
         if (stockData.length === 0) {
@@ -549,35 +562,14 @@ const App: React.FC = () => {
           
           if (credentials.dataProvider === 'paytm') {
             rawOptions = await fetchPayTMOptions(niftyLtpVal, credentials);
-            console.log(`[App] Fetched ${rawOptions.length} options from PayTM`);
-            if (rawOptions.length > 0) {
-              console.log('[App] First option sample:', {
-                symbol: rawOptions[0].symbol,
-                lp: rawOptions[0].lp,
-                volume: rawOptions[0].volume,
-                total_buy_qty: rawOptions[0].total_buy_qty,
-                total_sell_qty: rawOptions[0].total_sell_qty,
-                oi: rawOptions[0].oi
-              });
-            }
+            // console.log(`[App] Fetched ${rawOptions.length} options from PayTM`);
           } else {
             const optionSymbols = getNiftyOptionSymbols(niftyLtpVal);
             rawOptions = await fetchQuotes(optionSymbols, credentials);
           }
           
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
-          console.log(`[App] Enriched ${enrichedOptions.length} options`);
-          if (enrichedOptions.length > 0) {
-            console.log('[App] First enriched option:', {
-              symbol: enrichedOptions[0].symbol,
-              lp: enrichedOptions[0].lp,
-              chp: enrichedOptions[0].chp,
-              volume: enrichedOptions[0].volume,
-              total_buy_qty: enrichedOptions[0].total_buy_qty,
-              total_sell_qty: enrichedOptions[0].total_sell_qty,
-              oi: enrichedOptions[0].oi
-            });
-          }
+          // console.log(`[App] Enriched ${enrichedOptions.length} options`);
           setOptionQuotes(enrichedOptions);
           updateSessionHistory(enrichedOptions);
           
@@ -739,7 +731,16 @@ const App: React.FC = () => {
 
   // --- Hybrid Quant Logic (AI + Local Heuristic) ---
   const runQuantAnalysis = useCallback(async () => {
-    if (isQuantAnalyzing) return;
+    console.log('[Quant] runQuantAnalysis called, isAnalyzing:', isQuantAnalyzing);
+    if (isQuantAnalyzing) {
+      console.log('[Quant] Already analyzing, skipping...');
+      return;
+    }
+    
+    const history = historyLogRef.current;
+    const currentStocks = stocksRefForQuant.current;
+    const nifty = niftyLtpRefForQuant.current;
+    const currentPivots = pivotsRefForQuant.current;
     
     // Check local fallback condition - use provider-specific key check
     const hasValidKey = credentials.aiProvider === 'groq' 
@@ -756,7 +757,7 @@ const App: React.FC = () => {
       hasGeminiKey: !!credentials.googleApiKey,
       hasValidKey,
       useLocalEngine,
-      niftyLtp
+      niftyLtp: nifty
     };
     console.log('%c🔍 QUANT ANALYSIS START', 'color: blue; font-weight: bold; font-size: 14px;');
     console.table(debugLog);
@@ -776,12 +777,12 @@ const App: React.FC = () => {
             provider: credentials.aiProvider
           });
           
-          if (historyLog.length < 5 || !niftyLtp) {
+          if (history.length < 5 || !nifty) {
               throw new Error("Insufficient data for Local Analysis. Need at least 5 mins of history.");
           }
           
-          const latest = historyLog[historyLog.length - 1];
-          const fiveMinsAgo = historyLog[Math.max(0, historyLog.length - 5)];
+          const latest = history[history.length - 1];
+          const fiveMinsAgo = history[Math.max(0, history.length - 5)];
           
           const priceChange = latest.niftyLtp - fiveMinsAgo.niftyLtp;
           const flow = latest.optionsSent;
@@ -810,7 +811,7 @@ const App: React.FC = () => {
 
           // Strike Selection Logic (Simple ATM +/-)
           const strikeStep = 50;
-          const atm = Math.round(niftyLtp / 50) * 50;
+          const atm = Math.round(nifty / 50) * 50;
           const targetStrike = signal === 'LONG' ? atm + 100 : signal === 'SHORT' ? atm - 100 : atm;
           
           result = {
@@ -841,16 +842,16 @@ const App: React.FC = () => {
           const provider = credentials.aiProvider || 'gemini';
           console.log(`%c🤖 Using ${provider.toUpperCase()} AI ENGINE`, `color: ${provider === 'groq' ? 'purple' : 'green'}; font-weight: bold; font-size: 12px;`);
           
-          const last15Mins = historyLog.slice(-15);
+          const last15Mins = history.slice(-15);
           const latest = last15Mins[last15Mins.length - 1];
           
-          const topFlow = stocks
+          const topFlow = currentStocks
               .sort((a,b) => (b.day_net_strength || 0) - (a.day_net_strength || 0))
               .slice(0, 3)
               .map(s => `${s.short_name}(NetStr:${s.day_net_strength?.toFixed(1)}%)`);
 
           const dataContext = JSON.stringify({
-             nifty_ltp: niftyLtp,
+             nifty_ltp: nifty,
              snapshot: {
                 time: latest?.time,
                 overall_sentiment_weighted: latest?.overallSent,
@@ -861,7 +862,7 @@ const App: React.FC = () => {
              },
              trend_history_last_15m: last15Mins.map(s => ({ t: s.time, ltp: s.niftyLtp, sent: s.overallSent })),
              top_flow_stocks: topFlow,
-             pivot_levels: pivots ? `Pivot:${pivots.pivot}, R1:${pivots.r1}, S1:${pivots.s1}` : 'Unavailable'
+             pivot_levels: currentPivots ? `Pivot:${currentPivots.pivot}, R1:${currentPivots.r1}, S1:${currentPivots.s1}` : 'Unavailable'
           });
 
           const systemInstruction = `
@@ -935,32 +936,45 @@ const App: React.FC = () => {
     } finally {
         setIsQuantAnalyzing(false);
     }
-  }, [credentials.groqApiKey, credentials.googleApiKey, credentials.aiProvider, credentials.aiEnabled, isQuantAnalyzing, historyLog, stocks, niftyLtp, pivots]);
+  }, [credentials.groqApiKey, credentials.googleApiKey, credentials.aiProvider, credentials.aiEnabled, isQuantAnalyzing]);
 
   // --- Auto-Run Quant Analysis (Every 5 Mins) ---
   useEffect(() => {
-      // Check if correct API key is present for the selected provider
-      const hasValidKey = credentials.aiProvider === 'groq' 
-        ? credentials.groqApiKey 
-        : credentials.googleApiKey;
-      const canRun = (credentials.aiEnabled && hasValidKey) || (!credentials.aiEnabled);
-      
-      if (!canRun || historyLog.length === 0 || isQuantAnalyzing) return;
-
-      const lastRecord = quantHistory.length > 0 ? quantHistory[0] : null;
-      const lastTime = lastRecord ? lastRecord.timestamp : 0;
-      const now = Date.now();
-      
-      if (now - lastTime >= 300000) { 
-          const date = new Date();
-          const t = date.getHours() * 100 + date.getMinutes();
-          const isMarketHours = t >= 915 && t <= 1530;
+      const checkAndRun = () => {
+          const history = historyLogRef.current;
           
-          if (credentials.bypassMarketHours || isMarketHours) {
-              runQuantAnalysis();
+          // Check if correct API key is present for the selected provider
+          const hasValidKey = credentials.aiProvider === 'groq' 
+            ? credentials.groqApiKey 
+            : credentials.googleApiKey;
+          const canRun = (credentials.aiEnabled && hasValidKey) || (!credentials.aiEnabled);
+          
+          if (!canRun || history.length === 0 || isQuantAnalyzing) return;
+
+          const lastRecord = quantHistory.length > 0 ? quantHistory[0] : null;
+          const lastTime = lastRecord ? lastRecord.timestamp : 0;
+          const now = Date.now();
+          
+          if (now - lastTime >= 300000) { // 5 minutes
+              const date = new Date();
+              const t = date.getHours() * 100 + date.getMinutes();
+              const isMarketHours = t >= 915 && t <= 1530;
+              
+              if (credentials.bypassMarketHours || isMarketHours) {
+                  console.log('[Quant] Auto-running analysis (5 min interval reached)');
+                  runQuantAnalysis();
+              }
           }
-      }
-  }, [historyLog, quantHistory, isQuantAnalyzing, credentials, runQuantAnalysis]);
+      };
+      
+      // Check every 30 seconds if we should run
+      const intervalId = setInterval(checkAndRun, 30000);
+      
+      // Also check immediately on mount
+      checkAndRun();
+      
+      return () => clearInterval(intervalId);
+  }, [quantHistory, isQuantAnalyzing, credentials, runQuantAnalysis]);
 
   const handleClearQuantHistory = () => {
     if(confirm("Clear today's analysis history?")) {

@@ -8,7 +8,7 @@
  * 
  * This script:
  * 1. Reads option_security_master.csv
- * 2. Filters for next Tuesday's NIFTY weekly options
+ * 2. Filters for next expiry's NIFTY weekly options (handles holidays)
  * 3. Generates TypeScript file with security IDs
  */
 
@@ -18,43 +18,43 @@ const path = require('path');
 // Configuration
 const CSV_PATH = path.join(__dirname, '../api/paytm/option_security_master.csv');
 const OUTPUT_PATH = path.join(__dirname, '../constants/niftyWeeklyOptions.ts');
+const EXPIRY_DATES_PATH = path.join(__dirname, '../constants/niftyExpiryDates.ts');
 const STRIKE_MIN = 21000;
 const STRIKE_MAX = 25000;
 
 /**
- * Get next Tuesday date (weekly expiry)
+ * Get next expiry date from the official calendar (handles holidays)
  */
-function getNextTuesday() {
-  const today = new Date();
-  const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+function getNextExpiryDate() {
+  // Read and parse the expiry dates file
+  const fileContent = fs.readFileSync(EXPIRY_DATES_PATH, 'utf-8');
   
-  // Calculate days until next Tuesday (2)
-  let daysUntilTuesday;
-  if (dayOfWeek === 2) {
-    // Today is Tuesday - check if market has closed (3:30 PM = 15:30)
-    const hours = today.getHours();
-    const minutes = today.getMinutes();
-    const timeValue = hours * 100 + minutes;
-    
-    if (timeValue < 1530) {
-      // Before 3:30 PM - use today
-      daysUntilTuesday = 0;
-    } else {
-      // After 3:30 PM - use next Tuesday
-      daysUntilTuesday = 7;
-    }
-  } else if (dayOfWeek < 2) {
-    // Sunday (0) or Monday (1)
-    daysUntilTuesday = 2 - dayOfWeek;
-  } else {
-    // Wednesday (3) to Saturday (6)
-    daysUntilTuesday = (9 - dayOfWeek) % 7;
+  // Extract the NIFTY_EXPIRY_DATES array
+  const arrayMatch = fileContent.match(/export const NIFTY_EXPIRY_DATES: NiftyExpiry\[\] = \[([\s\S]*?)\];/);
+  if (!arrayMatch) {
+    throw new Error('Could not parse NIFTY_EXPIRY_DATES from file');
   }
   
-  const nextTuesday = new Date(today);
-  nextTuesday.setDate(today.getDate() + daysUntilTuesday);
+  // Parse dates manually (simple approach)
+  const datePattern = /date: "(\d{4}-\d{2}-\d{2})"/g;
+  const dates = [];
+  let match;
+  while ((match = datePattern.exec(arrayMatch[1])) !== null) {
+    dates.push(match[1]);
+  }
   
-  return nextTuesday;
+  // Find next date from today
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  for (const dateStr of dates) {
+    const expiryDate = new Date(dateStr);
+    if (expiryDate >= today) {
+      return dateStr;
+    }
+  }
+  
+  return null;
 }
 
 /**
@@ -185,9 +185,16 @@ function main() {
   console.log('📂 Reading CSV file...');
   const csvData = fs.readFileSync(CSV_PATH, 'utf-8');
   
-  // Calculate expiry date
-  const nextTuesday = getNextTuesday();
-  const expiryDate = formatDate(nextTuesday);
+  // Get next expiry date from official calendar (handles holidays)
+  console.log('📅 Reading expiry calendar...');
+  const expiryDate = getNextExpiryDate();
+  
+  if (!expiryDate) {
+    console.error('❌ Could not determine next expiry date from calendar');
+    process.exit(1);
+  }
+  
+  console.log(`✅ Next expiry: ${expiryDate} (auto-adjusted for holidays)`);
   
   // Parse options
   console.log('\n⚙️  Parsing options...');

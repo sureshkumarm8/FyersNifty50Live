@@ -71,7 +71,7 @@ export const getNiftyOptionSecurityIds = (niftyLtp: number): string[] => {
   
   const allIds = filteredOptions.map(opt => opt.security_id);
   
-  console.log(`[PayTM] Options Filter: Nifty LTP=${niftyLtp}, ATM=${atmStrike}, Range=${minStrike}-${maxStrike}, Contracts=${allIds.length}`);
+  // console.log(`[PayTM] Options Filter: Nifty LTP=${niftyLtp}, ATM=${atmStrike}, Range=${minStrike}-${maxStrike}, Contracts=${allIds.length}`);
   
   return allIds;
 };
@@ -211,17 +211,17 @@ export const fetchPayTMQuotes = async (
               oi: quote.oi
             });
           }
-          // Log options specifically
-          if (scripType === 'OPTION' && index < 3) {
-            console.log(`[PayTM] Option ${index + 1}:`, {
-              symbol: quote.symbol,
-              lp: quote.lp,
-              volume: quote.volume,
-              oi: quote.oi,
-              total_buy_qty: quote.total_buy_qty,
-              total_sell_qty: quote.total_sell_qty
-            });
-          }
+          // Log options specifically (commented out - too verbose)
+          // if (scripType === 'OPTION' && index < 3) {
+          //   console.log(`[PayTM] Option ${index + 1}:`, {
+          //     symbol: quote.symbol,
+          //     lp: quote.lp,
+          //     volume: quote.volume,
+          //     oi: quote.oi,
+          //     total_buy_qty: quote.total_buy_qty,
+          //     total_sell_qty: quote.total_sell_qty
+          //   });
+          // }
         } else {
           console.warn(`[PayTM] Quote not found for security_id: ${paytmQuote.security_id}`);
         }

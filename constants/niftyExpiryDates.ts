@@ -6,12 +6,19 @@
  * - Monthly expiry is the LAST Tuesday of the month
  * - If Tuesday is a holiday, expiry moves to the PREVIOUS trading day (Monday)
  * 
- * Holiday Adjustments Applied:
- * 2026: Jan 26 (Republic Day), Mar 31 (Holi), Apr 14 (Ambedkar), Oct 20 (Dussehra), Nov 10 (Diwali), Nov 24 (Gurupurab)
- * 2027: Jan 26 (Republic Day)
+ * Holiday Adjustments Applied for 2026:
+ * - Mar 02 (Mon) - Moved from Mar 03 (Holi)
+ * - Mar 30 (Mon) - Moved from Mar 31 (Mahavir Jayanti)
+ * - Apr 13 (Mon) - Moved from Apr 14 (Ambedkar Jayanti)
+ * - Oct 19 (Mon) - Moved from Oct 20 (Dussehra)
+ * - Nov 09 (Mon) - Moved from Nov 10 (Diwali-Balipratipada)
+ * - Nov 23 (Mon) - Moved from Nov 24 (Guru Nanak Jayanti)
  * 
- * Source: NSE Official Calendar + Python verification
- * Last Updated: March 2026
+ * 2027 Adjustments:
+ * - Jan 25 (Mon) - Moved from Jan 26 (Republic Day)
+ * 
+ * Source: NSE Official Calendar + Market Holidays 2026
+ * Last Updated: April 2026
  */
 
 export interface NiftyExpiry {
@@ -38,7 +45,7 @@ export const NIFTY_EXPIRY_DATES: NiftyExpiry[] = [
   { date: "2026-02-24", type: "MONTHLY", dayOfWeek: "Tuesday", month: "February", year: 2026 },
   
   // March 2026
-  { date: "2026-03-03", type: "WEEKLY", dayOfWeek: "Tuesday", month: "March", year: 2026 },
+  { date: "2026-03-02", type: "WEEKLY", dayOfWeek: "Monday", month: "March", year: 2026 },
   { date: "2026-03-10", type: "WEEKLY", dayOfWeek: "Tuesday", month: "March", year: 2026 },
   { date: "2026-03-17", type: "WEEKLY", dayOfWeek: "Tuesday", month: "March", year: 2026 },
   { date: "2026-03-24", type: "WEEKLY", dayOfWeek: "Tuesday", month: "March", year: 2026 },
