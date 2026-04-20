@@ -86,13 +86,21 @@ To run this application, you need to start **both** the backend proxy server and
 
 ## 🔑 Configuration
 
-1.  **Fyers API**:
-    *   Get App ID & Access Token from [Fyers API Dashboard](https://api-dashboard.fyers.in/).
-2.  **Gemini API**:
-    *   Get API Key from [Google AI Studio](https://aistudio.google.com/).
-3.  **App Settings**:
-    *   Click the **Settings (Gear Icon)** in the dashboard.
-    *   Enter credentials and save.
+### Option 1: Environment Variables (Recommended for Vercel)
+1.  **Set up once on Vercel**:
+    *   See `VERCEL_SETUP_GUIDE.md` for detailed instructions
+    *   Or run `./setup-vercel-env.sh` for automated setup
+2.  **Update tokens when needed**:
+    *   Run `./update-token.sh paytm "new_token"` or
+    *   Update via Vercel Dashboard → Settings → Environment Variables
+
+### Option 2: Manual Upload (Legacy)
+1.  **Get API credentials**:
+    *   Fyers: [Fyers API Dashboard](https://api-dashboard.fyers.in/)
+    *   Gemini: [Google AI Studio](https://aistudio.google.com/)
+2.  **Upload in app**:
+    *   Click the **Settings (Gear Icon)** in the dashboard
+    *   Upload JSON file or enter credentials manually
 
 ## 📁 Project Structure
 
