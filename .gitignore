@@ -39,3 +39,6 @@ Nifty50_AI_config_tokens*.json
 # Temporary files
 *.tmp
 *.temp
+
+# GitHub Actions - keep workflows
+!.github/workflows/*.yml

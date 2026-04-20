@@ -2,6 +2,12 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "crons": [
+    {
+      "path": "/api/cron/fetch-market-data",
+      "schedule": "* 9-15 * * 1-5"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",
