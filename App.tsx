@@ -25,23 +25,49 @@ import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 
 const App: React.FC = () => {
-  // Initialize with server mode (no credentials needed)
+  // Auto-load credentials from env vars (Vercel) or localStorage
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
+    // Try environment variables first (Vercel deployment)
+    if (import.meta.env.VITE_PAYTM_ACCESS_TOKEN) {
+      console.log('[App] Loading credentials from environment variables');
+      return {
+        appId: import.meta.env.VITE_FYERS_CLIENT_ID || '',
+        accessToken: import.meta.env.VITE_FYERS_ACCESS_TOKEN || '',
+        paytmAccessToken: import.meta.env.VITE_PAYTM_ACCESS_TOKEN || '',
+        googleApiKey: import.meta.env.VITE_GOOGLE_API_KEY || '',
+        groqApiKey: import.meta.env.VITE_GROQ_API_KEY || '',
+        claudeApiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
+        refreshInterval: parseInt(import.meta.env.VITE_REFRESH_INTERVAL || '60000', 10),
+        bypassMarketHours: import.meta.env.VITE_BYPASS_MARKET_HOURS === 'true',
+        dataProvider: 'paytm', // Use PayTM by default
+        aiEnabled: true,
+        aiProvider: 'gemini',
+        groqModel: 'llama-3.3-70b-versatile',
+        geminiModel: 'gemini-2.5-flash',
+        claudeModel: 'claude-sonnet-4-6',
+        liveOrdersEnabled: false
+      };
+    }
+
+    // Fallback to localStorage (local development or manual config)
     try {
       const saved = localStorage.getItem('fyers_creds');
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        console.log('[App] Loading credentials from localStorage');
+        return parsed;
       }
     } catch (e) {
-      console.error('Error loading credentials:', e);
+      console.error('[App] Error loading credentials:', e);
     }
-    
-    // Default: Server mode (no credentials needed)
-    return { 
-      appId: '', 
-      accessToken: '', 
+
+    // Default empty credentials (will show Settings screen)
+    console.log('[App] No credentials found, will show Settings');
+    return {
+      appId: '',
+      accessToken: '',
       refreshInterval: REFRESH_OPTIONS[3].value,
-      dataProvider: 'server', // New: server-side data mode
+      dataProvider: 'paytm',
       aiEnabled: true,
       bypassMarketHours: false
     };
