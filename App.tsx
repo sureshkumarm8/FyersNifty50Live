@@ -553,8 +553,25 @@ const App: React.FC = () => {
       let niftyLtpVal = 0;
       
       if (credentials.dataProvider === 'paytm') {
-        // console.log('[App] Using PayTM Money API');
-        stockData = await fetchPayTMStocks(credentials);
+        // Check if we should use server-side data (broadcast mode)
+        const useServerData = import.meta.env.VITE_USE_SERVER_DATA === 'true';
+        
+        if (useServerData) {
+          console.log('[App] Fetching from server API (broadcast mode)');
+          const serverResponse = await fetchServerMarketData();
+          
+          if (serverResponse.success && serverResponse.data?.stocks) {
+            stockData = convertServerDataToQuotes(serverResponse.data.stocks);
+            console.log(`[App] Loaded ${stockData.length} stocks from server cache`);
+          } else {
+            setError(serverResponse.error || 'No server data available');
+            setIsLoading(false);
+            return;
+          }
+        } else {
+          // Direct fetch from PayTM (client-side)
+          stockData = await fetchPayTMStocks(credentials);
+        }
         niftyLtpVal = await fetchNiftyIndexLTP(credentials);
       } else {
         // console.log('[App] Using Fyers API');
