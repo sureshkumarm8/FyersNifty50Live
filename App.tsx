@@ -16,6 +16,7 @@ import PatternDashboard from './components/PatternDashboard';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP } from './services/paytmService';
+import { fetchServerMarketData, convertServerDataToQuotes } from './services/serverDataService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
 import { dbService } from './services/db';
 import { lifecycleManager } from './services/lifecycleManager';
@@ -24,27 +25,26 @@ import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 
 const App: React.FC = () => {
+  // Initialize with server mode (no credentials needed)
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     try {
       const saved = localStorage.getItem('fyers_creds');
-      const parsed = saved ? JSON.parse(saved) : { 
-        appId: '', 
-        accessToken: '', 
-        refreshInterval: REFRESH_OPTIONS[3].value,
-        dataProvider: 'paytm'
-      };
-      if (parsed.aiEnabled === undefined) parsed.aiEnabled = true;
-      if (parsed.dataProvider === undefined) parsed.dataProvider = 'paytm';
-      return parsed;
+      if (saved) {
+        return JSON.parse(saved);
+      }
     } catch (e) {
-      return { 
-        appId: '', 
-        accessToken: '', 
-        refreshInterval: REFRESH_OPTIONS[3].value, 
-        aiEnabled: true,
-        dataProvider: 'paytm'
-      };
+      console.error('Error loading credentials:', e);
     }
+    
+    // Default: Server mode (no credentials needed)
+    return { 
+      appId: '', 
+      accessToken: '', 
+      refreshInterval: REFRESH_OPTIONS[3].value,
+      dataProvider: 'server', // New: server-side data mode
+      aiEnabled: true,
+      bypassMarketHours: false
+    };
   });
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
