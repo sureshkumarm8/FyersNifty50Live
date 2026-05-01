@@ -20,9 +20,17 @@ export default async function handler(request, response) {
   }
 
   const authHeader = request.headers['authorization'];
+  
+  // Try to get token from env var first, then fall back to auth header
+  let paytmToken = process.env.PAYTM_ACCESS_TOKEN;
 
-  if (!authHeader) {
-    return response.status(401).json({ error: 'Missing Authorization header' });
+  if (!paytmToken && !authHeader) {
+    return response.status(401).json({ error: 'Missing Authorization header and PAYTM_ACCESS_TOKEN not configured' });
+  }
+  
+  // If no env token, use the authorization header
+  if (!paytmToken) {
+    paytmToken = authHeader.replace('Bearer ', '');
   }
 
   if (request.method !== 'POST') {
@@ -71,7 +79,7 @@ export default async function handler(request, response) {
         const paytmResponse = await fetch(paytmUrl, {
           method: 'GET',
           headers: {
-            'x-jwt-token': authHeader.replace('Bearer ', ''),
+            'x-jwt-token': paytmToken,
             'Accept': 'application/json'
           }
         });

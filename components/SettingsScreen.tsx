@@ -13,7 +13,6 @@ import {
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
 import { apiCallTracker, APIStats } from '../services/aiProvider';
-import { loadConfig, saveConfigToLocalStorage } from '../utils/configLoader';
 
 interface SettingsScreenProps {
   onBack: () => void;
@@ -84,26 +83,22 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   currentCreds 
 }) => {
   const [activeTab, setActiveTab] = useState<Tab>('configs');
-  
-  // Load config from environment variables or localStorage on mount
-  const initialConfig = loadConfig();
-  
-  const [appId, setAppId] = useState(currentCreds.appId || initialConfig.fyers.clientId);
-  const [accessToken, setAccessToken] = useState(currentCreds.accessToken || initialConfig.fyers.accessToken);
-  const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || initialConfig.google.apiKey);
-  const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || initialConfig.groq.apiKey);
-  const [claudeApiKey, setClaudeApiKey] = useState(currentCreds.claudeApiKey || initialConfig.claudeApiKey.apiKey);
+  const [appId, setAppId] = useState(currentCreds.appId);
+  const [accessToken, setAccessToken] = useState(currentCreds.accessToken);
+  const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
+  const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
+  const [claudeApiKey, setClaudeApiKey] = useState(currentCreds.claudeApiKey || '');
   const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq' | 'claude'>(currentCreds.aiProvider || 'gemini');
   const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'llama-3.3-70b-versatile');
   const [geminiModel, setGeminiModel] = useState(currentCreds.geminiModel || 'gemini-2.5-flash');
   const [claudeModel, setClaudeModel] = useState(currentCreds.claudeModel || 'claude-sonnet-4-6');
-  const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || initialConfig.config.bypassMarketHours);
+  const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
-  const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || initialConfig.config.refreshInterval || REFRESH_OPTIONS[3].value);
+  const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
   
   // PayTM Integration
   const [dataProvider, setDataProvider] = useState<'fyers' | 'paytm'>(currentCreds.dataProvider || 'fyers');
-  const [paytmAccessToken, setPaytmAccessToken] = useState(currentCreds.paytmAccessToken || initialConfig.paytm.accessToken);
+  const [paytmAccessToken, setPaytmAccessToken] = useState(currentCreds.paytmAccessToken || '');
   
   // Live Trading Control
   const [liveOrdersEnabled, setLiveOrdersEnabled] = useState(currentCreds.liveOrdersEnabled || false);
@@ -395,8 +390,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         }
         
         if (imported) {
-          // Save imported config to localStorage for future use
-          saveConfigToLocalStorage(json);
           alert("Configuration imported successfully!");
         } else {
           alert("No valid configuration found in JSON file.");

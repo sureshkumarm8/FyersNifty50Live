@@ -23,19 +23,14 @@ dist-ssr
 *.sln
 *.sw?
 
-# Environment variables - NEVER COMMIT THESE
+# API Keys and Credentials
+*_config.json
+!fyers_config_template.json
+*.key
+*.secret
 .env
 .env.local
 .env.production
-.env.*.local
-
-# Config files with tokens - NEVER COMMIT THESE
-*_config*.json
-!fyers_config_template.json
+.env.development
+*_config_tokens*.json
 Nifty50_AI_config_tokens*.json
-*.key
-*.secret
-
-# Temporary files
-*.tmp
-*.temp
