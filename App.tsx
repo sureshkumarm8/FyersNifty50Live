@@ -46,6 +46,8 @@ const App: React.FC = () => {
       };
     }
   });
+  
+  const [isLoadingConfig, setIsLoadingConfig] = useState(false);
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
   const [error, setError] = useState<string | null>(null);
@@ -112,11 +114,30 @@ const App: React.FC = () => {
     pivotsRefForQuant.current = pivots;
   }, [historyLog, stocks, niftyLtp, pivots]);
 
-  // --- 1. Database Hydration (On Mount) ---
-  // --- 1. Database Hydration & Lifecycle (On Mount) ---
+  // --- 1. Database Hydration & Config Loading (On Mount) ---
   useEffect(() => {
     const initData = async () => {
         try {
+            // Try to load encrypted config from backend first
+            if (!credentials.paytmAccessToken) {
+              setIsLoadingConfig(true);
+              try {
+                const { fetchEncryptedConfig } = await import('./utils/configLoader');
+                const backendConfig = await fetchEncryptedConfig();
+                
+                if (backendConfig && backendConfig.paytmAccessToken) {
+                  console.log('✅ Loaded encrypted config from backend');
+                  const updatedCreds = { ...credentials, ...backendConfig };
+                  setCredentials(updatedCreds);
+                  localStorage.setItem('fyers_creds', JSON.stringify(updatedCreds));
+                }
+              } catch (err) {
+                console.log('ℹ️ Backend config not available, using localStorage');
+              } finally {
+                setIsLoadingConfig(false);
+              }
+            }
+            
             await dbService.init();
             
             // Check if new trading day
@@ -1021,6 +1042,18 @@ const App: React.FC = () => {
   const hasCredentials = credentials.dataProvider === 'paytm' 
     ? credentials.paytmAccessToken 
     : credentials.appId;
+  
+  // Show loading state while fetching config from backend
+  if (isLoadingConfig) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-slate-950">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-slate-400">Loading configuration...</p>
+        </div>
+      </div>
+    );
+  }
     
   if (!hasCredentials && viewMode !== 'settings') {
      return (
