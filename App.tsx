@@ -140,6 +140,37 @@ const App: React.FC = () => {
             
             await dbService.init();
             
+            // Load historical data from Redis (if available)
+            try {
+              const historyResponse = await fetch('/api/get-history?limit=500');
+              if (historyResponse.ok) {
+                const historyData = await historyResponse.json();
+                if (historyData.success && historyData.data?.length > 0) {
+                  console.log(`📥 Loaded ${historyData.data.length} snapshots from Redis`);
+                  
+                  // Convert Redis data to MarketSnapshot format
+                  const redisSnapshots = historyData.data.map((snap: any) => ({
+                    timestamp: snap.timestamp,
+                    timeStr: new Date(snap.timestamp).toLocaleTimeString(),
+                    niftyLtp: snap.niftyLTP,
+                    // Add other fields as needed from your snapshot format
+                  }));
+                  
+                  // Merge with existing data if any
+                  setHistoryLog(prev => {
+                    const combined = [...redisSnapshots, ...prev];
+                    // Remove duplicates by timestamp
+                    const unique = combined.filter((v, i, a) => 
+                      a.findIndex(t => t.timestamp === v.timestamp) === i
+                    );
+                    return unique.sort((a, b) => a.timestamp - b.timestamp);
+                  });
+                }
+              }
+            } catch (err) {
+              console.log('ℹ️ No Redis history available yet');
+            }
+            
             // Check if new trading day
             const isNewDay = await lifecycleManager.isNewTradingDay();
             
