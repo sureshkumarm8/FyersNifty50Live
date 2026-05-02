@@ -1,8 +1,8 @@
 
 
 import React, { useMemo, useState } from 'react';
-import { EnrichedFyersQuote, MarketSnapshot, ViewMode, StrategySignal, SectorMetric } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, Play, CheckCircle, ArrowUp, ArrowDown, Minus, BarChart3, ListFilter } from 'lucide-react';
+import { EnrichedFyersQuote, MarketSnapshot, ViewMode, SectorMetric } from '../types';
+import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, ArrowUp, ArrowDown, Minus, BarChart3, ListFilter } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
