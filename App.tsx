@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain, Sparkles } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
@@ -9,6 +9,7 @@ import { CumulativeView } from './components/CumulativeView';
 import { SentimentHistory } from './components/SentimentHistory';
 import { SettingsScreen } from './components/SettingsScreen';
 import { AIView } from './components/AIView';
+import AILab from './components/AILab';
 import { PreMarketAnalyzer } from './components/PreMarketAnalyzer';
 import UnifiedAutoTrade from './components/UnifiedAutoTrade';
 import PatternDashboard from './components/PatternDashboard';
@@ -898,8 +899,8 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('autotrade')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'autotrade' ? 'bg-purple-600 text-white shadow-md animate-pulse' : 'text-slate-400 hover:text-white'}`}>
                    <Layers size={14} /> AutoTrade
                </button>
-               <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <Bot size={14} /> Chat
+               <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Sparkles size={14} /> AI Lab
                </button>
            </div>
 
@@ -1073,14 +1074,12 @@ const App: React.FC = () => {
         )}
 
         {viewMode === 'ai' && (
-            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
-                <AIView 
-                   stocks={stocks}
+            <div className="flex flex-col h-full overflow-hidden">
+                <AILab 
+                   currentSnapshot={historyLog[0] || null}
                    niftyLtp={niftyLtp}
+                   stocks={stocks}
                    historyLog={historyLog}
-                   optionQuotes={optionQuotes}
-                   credentials={credentials}
-                   aiEnabled={credentials.aiEnabled}
                 />
             </div>
         )}
