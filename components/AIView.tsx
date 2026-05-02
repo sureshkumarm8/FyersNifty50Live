@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { FyersCredentials, EnrichedFyersQuote, MarketSnapshot } from '../types';
-import { callAI } from '../services/aiProvider';
+import { callAI, apiCallTracker } from '../services/aiProvider';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob } from "@google/genai";
 import { Send, Mic, StopCircle, Bot, Sparkles, Loader2, Info, Search, Volume2, Globe, Trash2, ShieldAlert } from 'lucide-react';
 
@@ -204,6 +204,16 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
   const handleSend = async () => {
     if (!input.trim() || isProcessing) return;
     
+    // Check if AI Lab is enabled
+    if (credentials.aiLabEnabled === false) {
+        setMessages(prev => [...prev, { 
+            role: 'model', 
+            text: 'AI is disabled for AI Lab screen. Enable it in Settings > AI Usage tab.', 
+            isError: true 
+        }]);
+        return;
+    }
+
     const userMsg = input;
     setInput('');
     setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
@@ -224,28 +234,51 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
             responseText = await callAI(credentials, systemInstruction, userMsg);
         } else {
             // Use Gemini directly for Google Search capability
-            const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey });
-            const config: any = { systemInstruction };
-            if (useSearch) {
-                config.tools = [{ googleSearch: {} }];
-            }
+            const startTime = performance.now();
+            try {
+                const ai = new GoogleGenAI({ apiKey: credentials.googleApiKey });
+                const config: any = { systemInstruction };
+                if (useSearch) {
+                    config.tools = [{ googleSearch: {} }];
+                }
 
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: userMsg,
-                config
-            });
+                const response = await ai.models.generateContent({
+                    model: "gemini-2.5-flash",
+                    contents: userMsg,
+                    config
+                });
 
-            responseText = response.text || "I couldn't generate a response.";
-            
-            // Append Search Sources if any
-            const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-            if (chunks) {
-                const links = chunks
-                    .map((c: any) => c.web?.uri ? `[${c.web.title}](${c.web.uri})` : null)
-                    .filter(Boolean)
-                    .join(', ');
-                if (links) responseText += `\n\n**Sources:** ${links}`;
+                const duration = performance.now() - startTime;
+                apiCallTracker.logCall({
+                    timestamp: Date.now(),
+                    provider: 'gemini',
+                    model: 'gemini-2.5-flash',
+                    duration,
+                    success: true
+                });
+
+                responseText = response.text || "I couldn't generate a response.";
+                
+                // Append Search Sources if any
+                const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+                if (chunks) {
+                    const links = chunks
+                        .map((c: any) => c.web?.uri ? `[${c.web.title}](${c.web.uri})` : null)
+                        .filter(Boolean)
+                        .join(', ');
+                    if (links) responseText += `\n\n**Sources:** ${links}`;
+                }
+            } catch (error: any) {
+                const duration = performance.now() - startTime;
+                apiCallTracker.logCall({
+                    timestamp: Date.now(),
+                    provider: 'gemini',
+                    model: 'gemini-2.5-flash',
+                    duration,
+                    success: false,
+                    error: error.message
+                });
+                throw error;
             }
         }
 
@@ -261,6 +294,17 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
   // --- Live API Handler (Gemini only - doesn't work with Groq) ---
   const connectLive = async () => {
       if (isLiveConnected || isLiveConnecting) return;
+      
+      // Check if AI Voice is enabled
+      if (credentials.aiLabEnabled === false) {
+          setMessages(prev => [...prev, { 
+              role: 'model', 
+              text: 'AI is disabled for AI Lab screen. Enable it in Settings > AI Usage tab.', 
+              isError: true 
+          }]);
+          return;
+      }
+
       setIsLiveConnecting(true);
 
       try {

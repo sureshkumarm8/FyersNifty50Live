@@ -17,6 +17,11 @@ export interface FyersCredentials {
   geminiModel?: string;
   claudeModel?: string;
   
+  // AI Feature Switches by Screen/Component
+  aiAutoTradeEnabled?: boolean;     // SniperScope in AutoTrade
+  aiLabEnabled?: boolean;           // AI Lab (Chat + Voice)
+  aiHistoryEnabled?: boolean;       // Sentiment Analysis in History
+  
   // PayTM Money Integration
   dataProvider?: 'fyers' | 'paytm';
   paytmAccessToken?: string;

@@ -5,15 +5,16 @@
  * Provides BUY/SELL/HOLD signals with confidence scores
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Brain, TrendingUp, TrendingDown, Target, Shield, 
   Zap, Activity, AlertTriangle, CheckCircle, Crosshair,
   BarChart3, Clock, Layers, Scale, ArrowUpCircle, ArrowDownCircle,
-  Minus, Info, RefreshCw, Play, Pause, Bot
+  Minus, Info, RefreshCw, Play, Pause, Bot, Upload
 } from 'lucide-react';
 import { EnrichedFyersQuote, MarketSnapshot } from '../types';
 import { dbService } from '../services/db';
+import { importCSVFile } from '../services/csv';
 
 interface AILabProps {
   currentSnapshot: MarketSnapshot | null;
@@ -58,6 +59,9 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize agents
   useEffect(() => {
@@ -114,7 +118,7 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
     if (isActive && currentSnapshot && historyLog.length > 0) {
       runAnalysis();
     }
-  }, [currentSnapshot, isActive]);
+  }, [currentSnapshot, isActive, historyLog.length]);
 
   // Agent 1: Pattern Recognition
   const patternAgent = useMemo(() => {
@@ -364,39 +368,39 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
 
   // Run full analysis
   const runAnalysis = async () => {
-    if (isAnalyzing) return;
+    if (isAnalyzing || agents.length === 0) return;
     
     setIsAnalyzing(true);
     
     // Update agent states
     const updatedAgents = [...agents];
     
-    if (patternAgent) {
+    if (patternAgent && updatedAgents[0]) {
       updatedAgents[0].decision = patternAgent;
       updatedAgents[0].status = 'ready';
     }
     
-    if (sentimentAgent) {
+    if (sentimentAgent && updatedAgents[1]) {
       updatedAgents[1].decision = sentimentAgent;
       updatedAgents[1].status = 'ready';
     }
     
-    if (momentumAgent) {
+    if (momentumAgent && updatedAgents[2]) {
       updatedAgents[2].decision = momentumAgent;
       updatedAgents[2].status = 'ready';
     }
     
-    if (levelsAgent) {
+    if (levelsAgent && updatedAgents[3]) {
       updatedAgents[3].decision = levelsAgent;
       updatedAgents[3].status = 'ready';
     }
     
-    if (riskAgent) {
+    if (riskAgent && updatedAgents[4]) {
       updatedAgents[4].decision = riskAgent;
       updatedAgents[4].status = 'ready';
     }
     
-    if (ensembleDecision) {
+    if (ensembleDecision && updatedAgents[5]) {
       updatedAgents[5].decision = ensembleDecision;
       updatedAgents[5].status = 'ready';
     }
@@ -445,6 +449,160 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
     return <Minus size={20} />;
   };
 
+  const handleImportCSV = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsImporting(true);
+    setImportMessage(`Importing ${files.length} file(s)...`);
+
+    try {
+      let importedCount = 0;
+      let totalSnapshots = 0;
+      
+      console.log(`🔄 AI Lab: Importing ${files.length} file(s) for future model building`);
+      
+      // Process each file separately - each file = one date
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        console.log(`📄 Processing: ${file.name}`);
+        
+        const data = await importCSVFile(file);
+        if (data.length === 0) {
+          console.warn(`⚠️ No data in ${file.name}`);
+          continue;
+        }
+
+        console.log(`  ✓ Found ${data.length} rows`);
+
+        // Try to extract date from filename
+        let extractedDate: Date | null = null;
+        const datePatterns = [
+          /(\d{4})-(\d{2})-(\d{2})/, // YYYY-MM-DD
+          /(\d{2})-(\d{2})-(\d{4})/, // DD-MM-YYYY
+          /(\d{4})_(\d{2})_(\d{2})/, // YYYY_MM_DD
+          /(\d{2})_(\d{2})_(\d{4})/, // DD_MM_YYYY
+        ];
+        
+        for (const pattern of datePatterns) {
+          const match = file.name.match(pattern);
+          if (match) {
+            if (match[1].length === 4) {
+              extractedDate = new Date(`${match[1]}-${match[2]}-${match[3]}`);
+            } else {
+              extractedDate = new Date(`${match[3]}-${match[2]}-${match[1]}`);
+            }
+            if (!isNaN(extractedDate.getTime())) {
+              console.log(`  📅 Extracted date from filename: ${extractedDate.toDateString()}`);
+              break;
+            }
+          }
+        }
+
+        // Convert CSV to snapshots with proper field mapping
+        const snapshots: MarketSnapshot[] = data.map((row: any, idx: number) => {
+          let timestamp: number;
+          const timeStr = row.timestamp || row.time;
+          
+          if (timeStr) {
+            const parsed = new Date(timeStr);
+            if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 2000) {
+              timestamp = parsed.getTime();
+            } else if (extractedDate) {
+              const timeMatch = String(timeStr).match(/(\d{2}):(\d{2}):(\d{2})/);
+              if (timeMatch) {
+                const dateWithTime = new Date(extractedDate);
+                dateWithTime.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2]), parseInt(timeMatch[3]));
+                timestamp = dateWithTime.getTime();
+              } else {
+                timestamp = extractedDate.getTime() + (idx * 60000);
+              }
+            } else {
+              timestamp = Date.now() + (idx * 60000);
+            }
+          } else if (extractedDate) {
+            timestamp = extractedDate.getTime() + (idx * 60000);
+          } else {
+            timestamp = Date.now() + (idx * 60000);
+          }
+          
+          return {
+            timestamp,
+            niftyLtp: Number(row.niftyLTP || row.niftyLtp || 0),
+            niftyChange: Number(row.change || row.niftyChange || 0),
+            niftyChangePercent: Number(row.changePercent || row.niftyChangePercent || 0),
+            overallSent: Number(row.sentiment || row.overallSent || 0),
+            stockSent: Number(row.momentum || row.stockSent || 0),
+            optionsSent: Number(row.pcr ? (row.pcr > 1 ? 60 : 40) : 50),
+            pcr: Number(row.pcr || 0),
+            callOI: Number(row.callOI || 0),
+            putOI: Number(row.putOI || 0),
+            vix: Number(row.vix || 0),
+            bullishCount: Number(row.bullishStocks || row.bullishCount || 0),
+            bearishCount: Number(row.bearishStocks || row.bearishCount || 0),
+            ptsChg: Number(row.change || row.ptsChg || 0)
+          };
+        });
+
+        snapshots.sort((a, b) => a.timestamp - b.timestamp);
+        const date = extractedDate 
+          ? extractedDate.toDateString() 
+          : new Date(snapshots[0].timestamp).toDateString();
+        console.log(`  📅 Date: ${date} (${snapshots.length} snapshots)`);
+        
+        // Only archive for Pattern Dashboard - DO NOT save to TODAY_SNAPSHOTS
+        // Keep imported data separate from live trading data for model building
+        const existingArchive = await dbService.getArchive(date);
+        if (!existingArchive) {
+          const prices = snapshots.map(s => s.niftyLtp);
+          await dbService.archiveDailyData(date, {
+            date,
+            snapshots,
+            sessionData: {},
+            summary: {
+              open: snapshots[0].niftyLtp,
+              high: Math.max(...prices),
+              low: Math.min(...prices),
+              close: snapshots[snapshots.length - 1].niftyLtp,
+              totalVolume: 0,
+              dominantSentiment: snapshots.reduce((sum, s) => sum + s.overallSent, 0) / snapshots.length,
+              avgPCR: snapshots.reduce((sum, s) => sum + s.pcr, 0) / snapshots.length,
+              topPerformer: '',
+              worstPerformer: '',
+              range: Math.max(...prices) - Math.min(...prices),
+              volatility: 0
+            },
+            metadata: { totalTrades: 0, pnl: 0, winRate: 0, patterns: [] }
+          });
+          console.log(`  ✅ Archived to DAILY_ARCHIVES for model training`);
+        } else {
+          console.log(`  ⏭️ Archive already exists for ${date}`);
+        }
+        
+        totalSnapshots += snapshots.length;
+        importedCount++;
+      }
+
+      if (importedCount > 0) {
+        setImportMessage(`✅ Imported ${importedCount} day(s) with ${totalSnapshots} snapshots for model building!`);
+      } else {
+        setImportMessage('⚠️ No new data imported');
+      }
+      
+    } catch (error) {
+      console.error('❌ Import error:', error);
+      setImportMessage(`❌ Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsImporting(false);
+      setTimeout(() => {
+        setImportMessage(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }, 5000);
+    }
+  };
+
   return (
     <div className="h-full bg-slate-950 overflow-auto custom-scrollbar">
       {/* Header */}
@@ -461,6 +619,27 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
           </div>
           
           <div className="flex items-center gap-2">
+            {/* Hidden file input - Always render */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              multiple
+              onChange={handleImportCSV}
+              className="hidden"
+              key={isImporting ? 'importing' : 'ready'}
+            />
+            
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isImporting}
+              className="p-2 bg-slate-800 border border-white/10 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-all disabled:opacity-50"
+              title="Import CSV Data"
+              type="button"
+            >
+              <Upload size={16} className={isImporting ? 'animate-pulse' : ''} />
+            </button>
+            
             <button
               onClick={() => setIsActive(!isActive)}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${
@@ -483,6 +662,17 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
           </div>
         </div>
         
+        {/* Import Message */}
+        {importMessage && (
+          <div className={`mt-3 text-sm px-3 py-2 rounded-lg border ${
+            importMessage.startsWith('✅') 
+              ? 'bg-green-500/10 border-green-500/30 text-green-400' 
+              : 'bg-red-500/10 border-red-500/30 text-red-400'
+          }`}>
+            {importMessage}
+          </div>
+        )}
+        
         {lastUpdate && (
           <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
             <Clock size={12} />
@@ -492,7 +682,20 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
       </div>
 
       <div className="p-4 sm:p-6 space-y-6">
+        {/* No Data Message */}
+        {historyLog.length === 0 && (
+          <div className="glass-panel rounded-xl p-8 text-center">
+            <Bot size={48} className="mx-auto mb-4 text-slate-600" />
+            <h3 className="text-lg font-bold text-white mb-2">No Live Data Available</h3>
+            <p className="text-sm text-slate-400 mb-4">
+              Import historical CSV files to Pattern Dashboard for model training.<br/>
+              AI Lab will analyze live market data when available.
+            </p>
+          </div>
+        )}
+        
         {/* Agent Grid */}
+        {historyLog.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {agents.slice(0, 5).map((agent, idx) => (
             <div
@@ -542,9 +745,10 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
             </div>
           ))}
         </div>
+        )}
 
         {/* Ensemble Decision */}
-        {agents[5]?.decision && (
+        {historyLog.length > 0 && agents[5]?.decision && (
           <div className="glass-panel rounded-xl p-6 border-2 border-indigo-500/50 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-3 bg-indigo-600 rounded-xl">
@@ -606,7 +810,7 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
         )}
 
         {/* Trading Recommendation */}
-        {recommendation && recommendation.action !== 'HOLD' && (
+        {historyLog.length > 0 && recommendation && recommendation.action !== 'HOLD' && (
           <div className={`glass-panel rounded-xl p-6 border-2 ${
             recommendation.action === 'BUY' ? 'border-green-500/50' : 'border-red-500/50'
           }`}>

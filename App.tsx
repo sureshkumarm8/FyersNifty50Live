@@ -35,6 +35,10 @@ const App: React.FC = () => {
       };
       if (parsed.aiEnabled === undefined) parsed.aiEnabled = true;
       if (parsed.dataProvider === undefined) parsed.dataProvider = 'paytm';
+      // Default all AI features to enabled by screen
+      if (parsed.aiAutoTradeEnabled === undefined) parsed.aiAutoTradeEnabled = true;
+      if (parsed.aiLabEnabled === undefined) parsed.aiLabEnabled = true;
+      if (parsed.aiHistoryEnabled === undefined) parsed.aiHistoryEnabled = true;
       return parsed;
     } catch (e) {
       return { 
@@ -42,7 +46,10 @@ const App: React.FC = () => {
         accessToken: '', 
         refreshInterval: REFRESH_OPTIONS[3].value, 
         aiEnabled: true,
-        dataProvider: 'paytm'
+        dataProvider: 'paytm',
+        aiAutoTradeEnabled: true,
+        aiLabEnabled: true,
+        aiHistoryEnabled: true
       };
     }
   });
@@ -68,6 +75,8 @@ const App: React.FC = () => {
   // Data States
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
   const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>({});
+  const [quantHistory, setQuantHistory] = useState<any[]>([]);
+  const [quantAnalysis, setQuantAnalysis] = useState<any>(null);
 
   const [apiStats, setApiStats] = useState<APIStats>({
     lastMinute: 0,

@@ -103,6 +103,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   // Live Trading Control
   const [liveOrdersEnabled, setLiveOrdersEnabled] = useState(currentCreds.liveOrdersEnabled || false);
   
+  // AI Screen Switches
+  const [aiAutoTradeEnabled, setAiAutoTradeEnabled] = useState(currentCreds.aiAutoTradeEnabled !== false);
+  const [aiLabEnabled, setAiLabEnabled] = useState(currentCreds.aiLabEnabled !== false);
+  const [aiHistoryEnabled, setAiHistoryEnabled] = useState(currentCreds.aiHistoryEnabled !== false);
+  
   // AI Usage Stats
   const [apiStats, setApiStats] = useState<APIStats>(apiCallTracker.getStats());
   
@@ -164,7 +169,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       aiProvider: selectedAiProvider,
       dataProvider,
       paytmAccessToken,
-      liveOrdersEnabled
+      liveOrdersEnabled,
+      aiAutoTradeEnabled,
+      aiLabEnabled,
+      aiHistoryEnabled
     });
     onBack();
   };
@@ -1388,6 +1396,105 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
         {activeTab === 'ai-usage' && (
             <div className="max-w-6xl mx-auto animate-in slide-in-from-bottom-4 duration-300 pb-20">
+                {/* AI Feature Controls by Screen */}
+                <div className="glass-panel p-6 rounded-xl mb-6 border border-blue-500/30">
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <Zap size={20} className="text-blue-400" />
+                        AI Controls by Screen
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* AutoTrade Screen */}
+                        <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                            <div>
+                                <div className="font-bold text-white flex items-center gap-2">
+                                    🎯 AutoTrade Screen
+                                </div>
+                                <div className="text-xs text-slate-400 mt-1">Sniper Scope signals</div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const newValue = !aiAutoTradeEnabled;
+                                    setAiAutoTradeEnabled(newValue);
+                                    // Save immediately
+                                    onSave({ 
+                                        ...currentCreds,
+                                        aiAutoTradeEnabled: newValue
+                                    });
+                                }}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                    aiAutoTradeEnabled ? 'bg-green-500' : 'bg-slate-600'
+                                }`}
+                            >
+                                <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                        aiAutoTradeEnabled ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                />
+                            </button>
+                        </div>
+
+                        {/* AI Lab Screen */}
+                        <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                            <div>
+                                <div className="font-bold text-white flex items-center gap-2">
+                                    ✨ AI Lab Screen
+                                </div>
+                                <div className="text-xs text-slate-400 mt-1">Chat + Voice assistant</div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const newValue = !aiLabEnabled;
+                                    setAiLabEnabled(newValue);
+                                    // Save immediately
+                                    onSave({ 
+                                        ...currentCreds,
+                                        aiLabEnabled: newValue
+                                    });
+                                }}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                    aiLabEnabled ? 'bg-green-500' : 'bg-slate-600'
+                                }`}
+                            >
+                                <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                        aiLabEnabled ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                />
+                            </button>
+                        </div>
+
+                        {/* History Screen */}
+                        <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                            <div>
+                                <div className="font-bold text-white flex items-center gap-2">
+                                    📊 History Screen
+                                </div>
+                                <div className="text-xs text-slate-400 mt-1">Sentiment analysis</div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const newValue = !aiHistoryEnabled;
+                                    setAiHistoryEnabled(newValue);
+                                    // Save immediately
+                                    onSave({ 
+                                        ...currentCreds,
+                                        aiHistoryEnabled: newValue
+                                    });
+                                }}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                    aiHistoryEnabled ? 'bg-green-500' : 'bg-slate-600'
+                                }`}
+                            >
+                                <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                        aiHistoryEnabled ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Header Stats */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                     <div className="glass-panel p-4 rounded-xl border border-purple-500/20">

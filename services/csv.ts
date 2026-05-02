@@ -35,3 +35,73 @@ export const downloadCSV = (data: any[], filename: string) => {
   a.click();
   document.body.removeChild(a);
 };
+
+export const parseCSV = (csvText: string): any[] => {
+  const lines = csvText.split('\n').filter(line => line.trim());
+  if (lines.length === 0) return [];
+  
+  // Better CSV parsing that handles quotes and commas
+  const parseLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+  
+  const headers = parseLine(lines[0]);
+  const data: any[] = [];
+  
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseLine(lines[i]);
+    const row: any = {};
+    
+    headers.forEach((header, index) => {
+      const value = values[index] || '';
+      // Try to parse as number
+      const numValue = parseFloat(value);
+      row[header] = isNaN(numValue) ? value : numValue;
+    });
+    
+    data.push(row);
+  }
+  
+  return data;
+};
+
+export const importCSVFile = (file: File): Promise<any[]> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      try {
+        const csvText = e.target?.result as string;
+        const data = parseCSV(csvText);
+        resolve(data);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
+};

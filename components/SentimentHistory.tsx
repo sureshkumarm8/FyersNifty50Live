@@ -127,6 +127,15 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
       const userMsg = overrideInput || input;
       if (!userMsg.trim() || isLoading) return;
       
+      // Check if AI History is enabled
+      if (credentials.aiHistoryEnabled === false) {
+          setMessages(prev => [...prev, { 
+              role: 'model', 
+              text: 'AI is disabled for History screen. Enable it in Settings > AI Usage tab.' 
+          }]);
+          return;
+      }
+
       if (!overrideInput) setInput('');
       setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
       setIsLoading(true);
