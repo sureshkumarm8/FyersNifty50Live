@@ -10,7 +10,7 @@ import {
   Brain, TrendingUp, TrendingDown, Target, Shield, 
   Zap, Activity, AlertTriangle, CheckCircle, Crosshair,
   BarChart3, Clock, Layers, Scale, ArrowUpCircle, ArrowDownCircle,
-  Minus, Info, RefreshCw, Play, Pause, Bot, Upload
+  Minus, Info, RefreshCw, Play, Pause, Bot, Upload, Sparkles
 } from 'lucide-react';
 import { EnrichedFyersQuote, MarketSnapshot } from '../types';
 import { dbService } from '../services/db';
@@ -53,15 +53,23 @@ interface Recommendation {
   validUntil: Date;
 }
 
-// Predicted snapshot type
+// Predicted snapshot type - matching history view structure
 interface PredictedSnapshot {
   time: string;
   niftyLtp: number;
   ptsChg: number;
   overallSent: number;
+  adv: number;
+  dec: number;
   stockSent: number;
-  optionsSent: number;
+  callSent: number;
+  putSent: number;
   pcr: number;
+  optionsSent: number;
+  callsBuyQty: number;
+  callsSellQty: number;
+  putsBuyQty: number;
+  putsSellQty: number;
   confidence: number;
 }
 
@@ -489,12 +497,24 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
       const pcrTrend = currentSnapshot.pcr - 
         (recentHistory.slice(0, 5).reduce((sum, s) => sum + s.pcr, 0) / 5);
 
+      // Calculate advance/decline trends
+      const avgAdv = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.adv || s.bullishCount || 25), 0) / 5;
+      const avgDec = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.dec || s.bearishCount || 25), 0) / 5;
+
+      // Calculate option volumes
+      const avgCallBuy = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.callsBuyQty || 5000000), 0) / 5;
+      const avgCallSell = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.callsSellQty || 5000000), 0) / 5;
+      const avgPutBuy = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.putsBuyQty || 5000000), 0) / 5;
+      const avgPutSell = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.putsSellQty || 5000000), 0) / 5;
+
       // Generate predictions for next 6 intervals (30 minutes if 5-min intervals)
       const newPredictions: PredictedSnapshot[] = [];
       const currentTime = new Date();
       let lastPrice = currentSnapshot.niftyLtp;
       let lastSentiment = currentSnapshot.overallSent;
       let lastPcr = currentSnapshot.pcr;
+      let lastAdv = currentSnapshot.adv || currentSnapshot.bullishCount || 25;
+      let lastDec = currentSnapshot.dec || currentSnapshot.bearishCount || 25;
 
       for (let i = 1; i <= 6; i++) {
         // Prediction time
@@ -516,10 +536,23 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
         const pcrDelta = pcrTrend * Math.pow(0.8, i);
         const predictedPcr = Math.max(0.5, Math.min(2.0, lastPcr + pcrDelta));
 
+        // Advance/Decline prediction
+        const advDecDrift = (lastAdv - lastDec) * 0.3;
+        const predictedAdv = Math.max(0, Math.min(50, Math.round(lastAdv + advDecDrift * (Math.random() - 0.5))));
+        const predictedDec = Math.max(0, Math.min(50, 50 - predictedAdv));
+
         // Derive other metrics
         const predictedStockSent = predictedSentiment * (0.8 + Math.random() * 0.4);
-        const predictedOptionsSent = (predictedPcr > 1 ? 1 : -1) * 
-          (30 + Math.abs(predictedPcr - 1) * 50);
+        const predictedCallSent = (predictedPcr < 1 ? 1 : -1) * (20 + Math.abs(1 - predictedPcr) * 40);
+        const predictedPutSent = (predictedPcr > 1 ? 1 : -1) * (20 + Math.abs(predictedPcr - 1) * 40);
+        const predictedOptionsSent = predictedCallSent - predictedPutSent;
+
+        // Option volumes with random walk
+        const volumeVariation = 0.9 + Math.random() * 0.2; // ±10% variation
+        const predictedCallBuy = avgCallBuy * volumeVariation;
+        const predictedCallSell = avgCallSell * volumeVariation;
+        const predictedPutBuy = avgPutBuy * volumeVariation;
+        const predictedPutSell = avgPutSell * volumeVariation;
 
         // Confidence decreases over time
         const confidence = Math.max(40, 85 - i * 8);
@@ -533,15 +566,25 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
           niftyLtp: predictedPrice,
           ptsChg: predictedPrice - lastPrice,
           overallSent: predictedSentiment,
+          adv: predictedAdv,
+          dec: predictedDec,
           stockSent: predictedStockSent,
-          optionsSent: predictedOptionsSent,
+          callSent: predictedCallSent,
+          putSent: predictedPutSent,
           pcr: predictedPcr,
+          optionsSent: predictedOptionsSent,
+          callsBuyQty: predictedCallBuy,
+          callsSellQty: predictedCallSell,
+          putsBuyQty: predictedPutBuy,
+          putsSellQty: predictedPutSell,
           confidence
         });
 
         lastPrice = predictedPrice;
         lastSentiment = predictedSentiment;
         lastPcr = predictedPcr;
+        lastAdv = predictedAdv;
+        lastDec = predictedDec;
       }
 
       setPredictions(newPredictions);
@@ -1010,61 +1053,90 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
             {showPredictions && predictions.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-center border-collapse">
-                  <thead className="text-slate-400 uppercase text-[10px] font-bold tracking-widest border-b border-white/10">
+                  <thead className="sticky top-0 glass-header text-slate-500 uppercase text-[9px] sm:text-[10px] font-bold tracking-widest">
                     <tr>
-                      <th className="px-4 py-3 text-left">Time</th>
-                      <th className="px-2 py-3">Nifty LTP</th>
-                      <th className="px-2 py-3">Pts Chg</th>
-                      <th className="px-2 py-3 border-l border-white/5">Overall Sent</th>
-                      <th className="px-2 py-3">Stock Sent</th>
-                      <th className="px-2 py-3">Option Sent</th>
-                      <th className="px-2 py-3 border-l border-white/5">PCR</th>
-                      <th className="px-2 py-3 border-l border-white/5">Confidence</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left">Time</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Nifty LTP</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Pts Chg</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Overall Sent.</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Adv/Dec</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Stk Str</th>
+                      
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Call Str</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Put Str</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">PCR</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 bg-white/5">Opt Str</th>
+                      
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Calls Buy/Sell (M)</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Puts Buy/Sell (M)</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 bg-purple-500/10">Conf</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-white/5 bg-slate-900/20">
                     {predictions.map((pred, idx) => (
-                      <tr key={idx} className="hover:bg-white/5 transition-colors">
-                        <td className="px-4 py-3 text-left font-bold text-purple-400 text-xs font-mono">
+                      <tr key={idx} className="hover:bg-white/5 transition-colors group">
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-left font-bold text-purple-400 text-[10px] sm:text-sm font-mono border-r border-white/5 bg-slate-900/30 group-hover:text-purple-300">
                           {pred.time}
                         </td>
-                        <td className="px-2 py-3 font-mono text-sm text-white">
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm text-slate-400 group-hover:text-white">
                           {pred.niftyLtp.toFixed(2)}
                         </td>
-                        <td className={`px-2 py-3 font-mono text-sm font-bold ${
-                          pred.ptsChg >= 0 ? 'text-green-400' : 'text-red-400'
+                        <td className={`px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm font-bold ${
+                          pred.ptsChg >= 0 ? 'text-bull' : 'text-bear'
                         }`}>
                           {pred.ptsChg > 0 ? '+' : ''}{pred.ptsChg.toFixed(1)}
                         </td>
-                        <td className="px-2 py-3 border-l border-white/5 font-bold text-sm">
-                          <span className={pred.overallSent >= 0 ? 'text-green-400' : 'text-red-400'}>
+                        
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 font-bold text-[10px] sm:text-sm bg-white/5">
+                          <span className={pred.overallSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
                             {pred.overallSent > 0 ? '+' : ''}{pred.overallSent.toFixed(1)}%
                           </span>
                         </td>
-                        <td className="px-2 py-3 text-sm">
-                          <span className={pred.stockSent >= 0 ? 'text-green-400' : 'text-red-400'}>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm">
+                          <span className="text-bull font-bold">{pred.adv}</span> / <span className="text-bear font-bold">{pred.dec}</span>
+                        </td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 text-[10px] sm:text-sm">
+                          <span className={pred.stockSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
                             {pred.stockSent > 0 ? '+' : ''}{pred.stockSent.toFixed(1)}%
                           </span>
                         </td>
-                        <td className="px-2 py-3 text-sm">
-                          <span className={pred.optionsSent >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            {pred.optionsSent > 0 ? '+' : ''}{pred.optionsSent.toFixed(1)}%
+                        
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 text-[10px] sm:text-sm">
+                          <span className={pred.callSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
+                            {pred.callSent > 0 ? '+' : ''}{pred.callSent.toFixed(1)}%
                           </span>
                         </td>
-                        <td className={`px-2 py-3 border-l border-white/5 font-mono text-sm font-bold ${
-                          pred.pcr > 1 ? 'text-green-400' : pred.pcr < 0.7 ? 'text-red-400' : 'text-blue-300'
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 text-[10px] sm:text-sm">
+                          <span className={pred.putSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
+                            {pred.putSent > 0 ? '+' : ''}{pred.putSent.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className={`px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm font-bold ${
+                          pred.pcr > 1 ? 'text-bull' : pred.pcr < 0.7 ? 'text-bear' : 'text-blue-200'
                         }`}>
                           {pred.pcr.toFixed(2)}
                         </td>
-                        <td className="px-2 py-3 border-l border-white/5">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-slate-800 rounded-full h-2 overflow-hidden">
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 font-bold text-[10px] sm:text-sm bg-white/5 border-l border-white/5">
+                          <span className={pred.optionsSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
+                            {pred.optionsSent > 0 ? '+' : ''}{pred.optionsSent.toFixed(1)}%
+                          </span>
+                        </td>
+                        
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 font-mono text-[9px] sm:text-xs opacity-80">
+                          <span className="text-bull">{(pred.callsBuyQty / 1000000).toFixed(2)}M</span> <span className="text-slate-600">/</span> <span className="text-bear">{(pred.callsSellQty / 1000000).toFixed(2)}M</span>
+                        </td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[9px] sm:text-xs opacity-80">
+                          <span className="text-bull">{(pred.putsBuyQty / 1000000).toFixed(2)}M</span> <span className="text-slate-600">/</span> <span className="text-bear">{(pred.putsSellQty / 1000000).toFixed(2)}M</span>
+                        </td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 bg-purple-500/10">
+                          <div className="flex items-center gap-1 justify-center">
+                            <div className="w-12 bg-slate-800 rounded-full h-1.5 overflow-hidden">
                               <div
                                 className="h-full bg-purple-500 transition-all"
                                 style={{ width: `${pred.confidence}%` }}
                               />
                             </div>
-                            <span className="text-xs font-bold text-purple-400 min-w-[35px]">
+                            <span className="text-[9px] font-bold text-purple-400 min-w-[25px]">
                               {pred.confidence}%
                             </span>
                           </div>
