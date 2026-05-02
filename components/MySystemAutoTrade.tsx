@@ -628,7 +628,7 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {(() => {
-                const latest = historyLog[historyLog.length - 1];
+                const latest = historyLog[0];
                 return (
                   <>
                     <div className="bg-slate-800/50 rounded-lg p-2 text-center">

@@ -328,9 +328,10 @@ const App: React.FC = () => {
   useEffect(() => {
       if (!isDbLoaded || historyLog.length === 0) return;
       
-      const lastSnap = historyLog[historyLog.length - 1];
-      if (lastSnap) {
-          dbService.saveSnapshot(lastSnap).catch(e => console.error("Failed to save snapshot", e));
+      // Save the latest snapshot (now at index 0 since data is newest-first)
+      const latestSnap = historyLog[0];
+      if (latestSnap) {
+          dbService.saveSnapshot(latestSnap).catch(e => console.error("Failed to save snapshot", e));
       }
   }, [historyLog, isDbLoaded]);
 
@@ -1266,7 +1267,7 @@ const App: React.FC = () => {
             <div className="flex-1 overflow-y-auto custom-scrollbar">
                <CumulativeView 
                   data={stocks} 
-                  latestSnapshot={historyLog[historyLog.length-1]}
+                  latestSnapshot={historyLog[0]}
                   historyLog={historyLog}
                   onNavigate={handleSetViewMode}
                   onSelectStock={setSelectedStock}
@@ -1404,7 +1405,7 @@ const App: React.FC = () => {
         {viewMode === 'patterns' && (
             <div className="flex flex-col h-full overflow-hidden">
                 <PatternDashboard 
-                   currentSnapshot={historyLog[historyLog.length - 1] || null}
+                   currentSnapshot={historyLog[0] || null}
                    niftyLtp={niftyLtp}
                    credentials={credentials}
                 />

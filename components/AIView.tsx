@@ -184,7 +184,7 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
   const getMarketContext = () => {
       if (stocks.length === 0) return "Market data is currently loading.";
 
-      const snapshot = historyLog[historyLog.length - 1];
+      const snapshot = historyLog[0];
       const gainers = [...stocks].sort((a,b) => (b.chp || 0) - (a.chp || 0)).slice(0, 3).map(s => `${s.short_name} (+${s.chp.toFixed(1)}%)`);
       const losers = [...stocks].sort((a,b) => (a.chp || 0) - (b.chp || 0)).slice(0, 3).map(s => `${s.short_name} (${s.chp.toFixed(1)}%)`);
       

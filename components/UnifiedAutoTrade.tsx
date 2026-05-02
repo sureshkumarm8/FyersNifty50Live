@@ -233,7 +233,7 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
     
     if (!nifty || !engineRef.current) return;
 
-    const latest = history[history.length - 1];
+    const latest = history[0];
     if (!latest) return;
 
     addLog('🔍 Running Momentum analysis...');
@@ -411,7 +411,7 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
       lastAICallRef.current = now;
       // console.log('[AutoTrade] Making AI prediction calls at', new Date().toLocaleTimeString());
       
-      const latest = history[history.length - 1];
+      const latest = history[0];
       
       try {
         // Next-minute prediction
@@ -461,8 +461,8 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({
         marketContext: {
           time: currentTime,
           niftyLtp: nifty,
-          sentiment: history[history.length - 1]?.overallSent || 0,
-          pcr: history[history.length - 1]?.pcr || 1,
+          sentiment: history[0]?.overallSent || 0,
+          pcr: history[0]?.pcr || 1,
           volatility: 0
         }
       }).then(prob => {

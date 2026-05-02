@@ -286,7 +286,7 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
   const windowAnalysis = useMemo(() => {
       if (historyLog.length < 2) return null;
       
-      const currentSnap = historyLog[historyLog.length - 1];
+      const currentSnap = historyLog[0];
       const currentTs = currentSnap.timestamp || parseTime(currentSnap.time).getTime();
       
       // Target time we want to find

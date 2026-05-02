@@ -214,7 +214,7 @@ Keep response to 2-3 lines max, focus on actionable insights.`
 
     try {
       const now = Date.now();
-      const latest = historyLog[historyLog.length - 1];
+      const latest = historyLog[0];
       const oneHourAgo = historyLog[Math.max(0, historyLog.length - 60)];
       const thirtyMinsAgo = historyLog[Math.max(0, historyLog.length - 30)];
 
