@@ -91,17 +91,22 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
   useEffect(() => {
     const loadArchivedData = async () => {
       try {
-        const archives = await dbService.getArchives(3); // Last 3 days
+        console.log('🔄 AI Lab: Loading archived data...');
+        const archives = await dbService.getAllArchives(); // Get ALL archives, not just last 3
+        console.log(`📦 Fetched ${archives.length} daily archives`);
+        
         const allSnapshots: MarketSnapshot[] = [];
         archives.forEach(archive => {
+          console.log(`  - ${archive.date}: ${archive.snapshots.length} snapshots`);
           allSnapshots.push(...archive.snapshots);
         });
+        
         // Sort by timestamp descending (newest first)
         allSnapshots.sort((a, b) => b.timestamp - a.timestamp);
         setArchivedSnapshots(allSnapshots);
-        console.log(`📊 AI Lab loaded ${allSnapshots.length} archived snapshots for predictions`);
+        console.log(`✅ AI Lab loaded ${allSnapshots.length} archived snapshots for predictions`);
       } catch (error) {
-        console.error('Failed to load archived data:', error);
+        console.error('❌ Failed to load archived data:', error);
       }
     };
     loadArchivedData();
@@ -1076,6 +1081,17 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
                 )}
               </button>
             </div>
+            
+            {/* Debug Info */}
+            {archivedSnapshots.length === 0 && historyLog.length === 0 && (
+              <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                <p className="text-sm text-yellow-400 font-bold mb-1">⚠️ No data available for predictions</p>
+                <p className="text-xs text-slate-400">
+                  Import historical data to Pattern Dashboard or wait for live market data.
+                  Current: {archivedSnapshots.length} archived + {historyLog.length} live snapshots
+                </p>
+              </div>
+            )}
 
             {showPredictions && predictions.length > 0 && (
               <div className="overflow-x-auto">
