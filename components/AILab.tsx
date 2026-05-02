@@ -84,7 +84,28 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
   const [predictions, setPredictions] = useState<PredictedSnapshot[]>([]);
   const [isPredicting, setIsPredicting] = useState(false);
   const [showPredictions, setShowPredictions] = useState(false);
+  const [archivedSnapshots, setArchivedSnapshots] = useState<MarketSnapshot[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load archived data on mount for predictions
+  useEffect(() => {
+    const loadArchivedData = async () => {
+      try {
+        const archives = await dbService.getArchives(3); // Last 3 days
+        const allSnapshots: MarketSnapshot[] = [];
+        archives.forEach(archive => {
+          allSnapshots.push(...archive.snapshots);
+        });
+        // Sort by timestamp descending (newest first)
+        allSnapshots.sort((a, b) => b.timestamp - a.timestamp);
+        setArchivedSnapshots(allSnapshots);
+        console.log(`📊 AI Lab loaded ${allSnapshots.length} archived snapshots for predictions`);
+      } catch (error) {
+        console.error('Failed to load archived data:', error);
+      }
+    };
+    loadArchivedData();
+  }, []);
 
   // Initialize agents
   useEffect(() => {
@@ -474,15 +495,19 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
 
   // Generate AI predictions for next 15-30 minutes
   const generatePredictions = async () => {
-    if (!currentSnapshot || historyLog.length < 10) {
-      alert('Need at least 10 historical snapshots to generate predictions');
+    // Use archived data if live data is not available
+    const dataSource = historyLog.length > 0 ? historyLog : archivedSnapshots;
+    const latestSnapshot = dataSource.length > 0 ? dataSource[0] : currentSnapshot;
+    
+    if (!latestSnapshot || dataSource.length < 10) {
+      alert(`Need at least 10 snapshots to generate predictions. Currently have: ${dataSource.length}`);
       return;
     }
 
     setIsPredicting(true);
     try {
       // Calculate trends from recent history
-      const recentHistory = historyLog.slice(0, 20); // Last 20 snapshots
+      const recentHistory = dataSource.slice(0, 20); // Last 20 snapshots
       
       // Calculate average momentum
       const avgMomentum = recentHistory.slice(0, 10).reduce((sum, snap, idx) => {
@@ -491,10 +516,10 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
       }, 0) / 10;
 
       // Calculate sentiment trends
-      const sentimentTrend = currentSnapshot.overallSent - 
+      const sentimentTrend = latestSnapshot.overallSent - 
         (recentHistory.slice(0, 5).reduce((sum, s) => sum + s.overallSent, 0) / 5);
       
-      const pcrTrend = currentSnapshot.pcr - 
+      const pcrTrend = latestSnapshot.pcr - 
         (recentHistory.slice(0, 5).reduce((sum, s) => sum + s.pcr, 0) / 5);
 
       // Calculate advance/decline trends
@@ -510,11 +535,11 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
       // Generate predictions for next 6 intervals (30 minutes if 5-min intervals)
       const newPredictions: PredictedSnapshot[] = [];
       const currentTime = new Date();
-      let lastPrice = currentSnapshot.niftyLtp;
-      let lastSentiment = currentSnapshot.overallSent;
-      let lastPcr = currentSnapshot.pcr;
-      let lastAdv = currentSnapshot.adv || currentSnapshot.bullishCount || 25;
-      let lastDec = currentSnapshot.dec || currentSnapshot.bearishCount || 25;
+      let lastPrice = latestSnapshot.niftyLtp;
+      let lastSentiment = latestSnapshot.overallSent;
+      let lastPcr = latestSnapshot.pcr;
+      let lastAdv = latestSnapshot.adv || latestSnapshot.bullishCount || 25;
+      let lastDec = latestSnapshot.dec || latestSnapshot.bearishCount || 25;
 
       for (let i = 1; i <= 6; i++) {
         // Prediction time
@@ -1019,7 +1044,7 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
         </div>
 
         {/* AI Prediction Table */}
-        {historyLog.length > 0 && (
+        {(historyLog.length > 0 || archivedSnapshots.length > 0) && (
           <div className="glass-panel rounded-xl p-6 border border-purple-500/30 bg-purple-500/5">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
@@ -1028,12 +1053,14 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-white">AI Predictions</h2>
-                  <p className="text-xs text-slate-400">Next 30 minutes forecast</p>
+                  <p className="text-xs text-slate-400">
+                    Next 30 minutes forecast • {historyLog.length > 0 ? historyLog.length : archivedSnapshots.length} snapshots available
+                  </p>
                 </div>
               </div>
               <button
                 onClick={generatePredictions}
-                disabled={isPredicting || historyLog.length < 10}
+                disabled={isPredicting || (historyLog.length < 10 && archivedSnapshots.length < 10)}
                 className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 transition-all text-sm"
               >
                 {isPredicting ? (
@@ -1160,8 +1187,14 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
               <div className="text-center py-8 text-slate-500">
                 <Brain size={48} className="mx-auto mb-4 opacity-50" />
                 <p className="text-sm">Click "Generate Predictions" to forecast next 30 minutes</p>
-                <p className="text-xs mt-2 text-slate-600">
-                  Requires at least 10 historical snapshots
+                <p className="text-xs mt-2">
+                  {historyLog.length > 0 ? (
+                    <span className="text-green-400">✓ Using {historyLog.length} live snapshots</span>
+                  ) : archivedSnapshots.length > 0 ? (
+                    <span className="text-blue-400">✓ Using {archivedSnapshots.length} archived snapshots</span>
+                  ) : (
+                    <span className="text-slate-600">Need at least 10 snapshots</span>
+                  )}
                 </p>
               </div>
             )}
