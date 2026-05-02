@@ -40,6 +40,8 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
   const [filterConfidence, setFilterConfidence] = useState(0);
   const [isLoadingArchives, setIsLoadingArchives] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationMessage, setMigrationMessage] = useState<string | null>(null);
 
   // Load initial data
   useEffect(() => {
@@ -183,6 +185,33 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
       alert('❌ Pattern scan failed');
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const handleMigrateData = async () => {
+    if (!confirm('🔄 This will migrate all historical snapshots to daily archives. Continue?')) {
+      return;
+    }
+
+    setIsMigrating(true);
+    setMigrationMessage('Starting migration...');
+
+    try {
+      const result = await lifecycleManager.migrateHistoricalData();
+      
+      if (result.success) {
+        setMigrationMessage(`✅ ${result.message}`);
+        // Reload archives
+        await loadAllArchives();
+        await loadArchiveStats();
+      } else {
+        setMigrationMessage(`❌ ${result.message}`);
+      }
+    } catch (error) {
+      setMigrationMessage(`❌ Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsMigrating(false);
+      setTimeout(() => setMigrationMessage(null), 5000);
     }
   };
 
@@ -942,10 +971,42 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
               </div>
             ) : (
               <div className="flex items-center justify-center h-64">
-                <div className="text-center text-slate-500">
-                  <Calendar size={48} className="mx-auto mb-4 opacity-50" />
-                  <p className="text-sm">No archives found</p>
-                  <p className="text-xs mt-2">Data will be archived daily at 3:45 PM IST</p>
+                <div className="text-center max-w-md">
+                  <Calendar size={48} className="mx-auto mb-4 opacity-50 text-slate-500" />
+                  <p className="text-sm text-slate-400 mb-2">No archives found</p>
+                  <p className="text-xs text-slate-500 mb-6">
+                    {migrationMessage ? (
+                      <span className={migrationMessage.startsWith('✅') ? 'text-green-400' : 'text-red-400'}>
+                        {migrationMessage}
+                      </span>
+                    ) : (
+                      'Data will be archived daily at 3:45 PM IST'
+                    )}
+                  </p>
+                  
+                  {/* Migration Button */}
+                  <div className="space-y-3">
+                    <button
+                      onClick={handleMigrateData}
+                      disabled={isMigrating}
+                      className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 mx-auto transition-all shadow-lg"
+                    >
+                      {isMigrating ? (
+                        <>
+                          <Activity className="animate-spin" size={16} />
+                          Migrating Data...
+                        </>
+                      ) : (
+                        <>
+                          <Download size={16} />
+                          Migrate Historical Data
+                        </>
+                      )}
+                    </button>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                      If you have existing snapshots in IndexedDB, click here to convert them to daily archives
+                    </p>
+                  </div>
                 </div>
               </div>
             )}

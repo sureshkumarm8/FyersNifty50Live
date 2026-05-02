@@ -361,6 +361,103 @@ export class DataLifecycleManager {
       totalSnapshots
     };
   }
+
+  /**
+   * MIGRATION UTILITY: Convert existing snapshots to daily archives
+   * This helps restore historical data that was collected before the archive system
+   */
+  async migrateHistoricalData(): Promise<{
+    success: boolean;
+    archivedDays: number;
+    totalSnapshots: number;
+    message: string;
+  }> {
+    console.log('🔄 Starting historical data migration...');
+    
+    try {
+      // Get all existing snapshots
+      const allSnapshots = await dbService.getTodaySnapshots();
+      
+      if (allSnapshots.length === 0) {
+        return {
+          success: false,
+          archivedDays: 0,
+          totalSnapshots: 0,
+          message: 'No snapshots found to migrate'
+        };
+      }
+
+      console.log(`📊 Found ${allSnapshots.length} snapshots to process`);
+      
+      // Group snapshots by date
+      const snapshotsByDate: Record<string, MarketSnapshot[]> = {};
+      
+      allSnapshots.forEach(snapshot => {
+        const date = new Date(snapshot.timestamp).toDateString();
+        if (!snapshotsByDate[date]) {
+          snapshotsByDate[date] = [];
+        }
+        snapshotsByDate[date].push(snapshot);
+      });
+
+      const dates = Object.keys(snapshotsByDate).sort((a, b) => 
+        new Date(a).getTime() - new Date(b).getTime()
+      );
+
+      console.log(`📅 Processing ${dates.length} days of data...`);
+      
+      let migratedDays = 0;
+      let migratedSnapshots = 0;
+
+      for (const date of dates) {
+        const snapshots = snapshotsByDate[date];
+        
+        // Check if archive already exists
+        const existingArchive = await dbService.getArchive(date);
+        if (existingArchive) {
+          console.log(`⏭️  Skipping ${date} - already archived`);
+          continue;
+        }
+
+        // Sort snapshots by timestamp
+        snapshots.sort((a, b) => a.timestamp - b.timestamp);
+
+        // Create archive for this date
+        const archive = await this.createDailyArchive(
+          date,
+          snapshots,
+          {} // Empty session history for historical data
+        );
+
+        // Save to daily archives
+        await dbService.archiveDailyData(date, archive);
+        
+        migratedDays++;
+        migratedSnapshots += snapshots.length;
+        
+        console.log(`✅ Archived ${date}: ${snapshots.length} snapshots`);
+      }
+
+      const message = `Migration complete! Archived ${migratedDays} days with ${migratedSnapshots} total snapshots`;
+      console.log(`✅ ${message}`);
+
+      return {
+        success: true,
+        archivedDays: migratedDays,
+        totalSnapshots: migratedSnapshots,
+        message
+      };
+
+    } catch (error) {
+      console.error('❌ Migration failed:', error);
+      return {
+        success: false,
+        archivedDays: 0,
+        totalSnapshots: 0,
+        message: `Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }
 }
 
 // Singleton instance
