@@ -10,7 +10,7 @@ import {
   Brain, TrendingUp, TrendingDown, Target, Shield, 
   Zap, Activity, AlertTriangle, CheckCircle, Crosshair,
   BarChart3, Clock, Layers, Scale, ArrowUpCircle, ArrowDownCircle,
-  Minus, Info, RefreshCw, Play, Pause, Bot, Upload, Sparkles, X
+  Minus, Info, RefreshCw, Play, Pause, Bot, Upload, Sparkles, X, Download
 } from 'lucide-react';
 import { EnrichedFyersQuote, MarketSnapshot } from '../types';
 import { dbService } from '../services/db';
@@ -93,28 +93,30 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
 
   // Load archived data on mount for predictions
   useEffect(() => {
-    const loadArchivedData = async () => {
-      try {
-        console.log('🔄 AI Lab: Loading archived data...');
-        const archives = await dbService.getAllArchives(); // Get ALL archives, not just last 3
-        console.log(`📦 Fetched ${archives.length} daily archives`);
-        
-        const allSnapshots: MarketSnapshot[] = [];
-        archives.forEach(archive => {
-          console.log(`  - ${archive.date}: ${archive.snapshots.length} snapshots`);
-          allSnapshots.push(...archive.snapshots);
-        });
-        
-        // Sort by timestamp descending (newest first)
-        allSnapshots.sort((a, b) => b.timestamp - a.timestamp);
-        setArchivedSnapshots(allSnapshots);
-        console.log(`✅ AI Lab loaded ${allSnapshots.length} archived snapshots for predictions`);
-      } catch (error) {
-        console.error('❌ Failed to load archived data:', error);
-      }
-    };
     loadArchivedData();
   }, []);
+
+  const loadArchivedData = async () => {
+    try {
+      console.log('🔄 AI Lab: Loading archived data...');
+      await dbService.init(); // Ensure DB is initialized
+      const archives = await dbService.getAllArchives(); // Get ALL archives, not just last 3
+      console.log(`📦 Fetched ${archives.length} daily archives`);
+      
+      const allSnapshots: MarketSnapshot[] = [];
+      archives.forEach(archive => {
+        console.log(`  - ${archive.date}: ${archive.snapshots.length} snapshots`);
+        allSnapshots.push(...archive.snapshots);
+      });
+      
+      // Sort by timestamp descending (newest first)
+      allSnapshots.sort((a, b) => b.timestamp - a.timestamp);
+      setArchivedSnapshots(allSnapshots);
+      console.log(`✅ AI Lab loaded ${allSnapshots.length} archived snapshots for predictions`);
+    } catch (error) {
+      console.error('❌ Failed to load archived data:', error);
+    }
+  };
 
   // Initialize agents
   useEffect(() => {
@@ -1152,9 +1154,30 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
               onClick={runAnalysis}
               disabled={isAnalyzing}
               className="p-2 bg-slate-800 border border-white/10 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-all disabled:opacity-50"
+              title="Refresh Analysis"
             >
               <RefreshCw size={16} className={isAnalyzing ? 'animate-spin' : ''} />
             </button>
+            
+            <button
+              onClick={loadArchivedData}
+              className="p-2 bg-slate-800 border border-white/10 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-all"
+              title="Reload Archived Data"
+            >
+              <Download size={16} />
+            </button>
+          </div>
+        </div>
+        
+        {/* Data Status */}
+        <div className="mt-2 flex items-center gap-4 text-xs">
+          <div className="flex items-center gap-2 text-slate-500">
+            <Activity size={12} />
+            <span>Live: {historyLog.length} snapshots</span>
+          </div>
+          <div className="flex items-center gap-2 text-slate-500">
+            <Download size={12} />
+            <span>Archived: {archivedSnapshots.length} snapshots</span>
           </div>
         </div>
         
@@ -1166,6 +1189,40 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
               : 'bg-red-500/10 border-red-500/30 text-red-400'
           }`}>
             {importMessage}
+          </div>
+        )}
+        
+        {/* Debug: No archived data warning */}
+        {archivedSnapshots.length === 0 && historyLog.length === 0 && (
+          <div className="mt-3 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+            <p className="text-sm text-red-400 font-bold mb-2">⚠️ No Data Available for AI Analysis</p>
+            <p className="text-xs text-slate-400 mb-3">
+              AI Lab needs historical data to work. Current status:
+            </p>
+            <ul className="text-xs text-slate-400 space-y-1 mb-3">
+              <li>• Live snapshots: {historyLog.length}</li>
+              <li>• Archived snapshots: {archivedSnapshots.length}</li>
+              <li>• Required: At least 10 snapshots</li>
+            </ul>
+            <div className="flex gap-2">
+              <button
+                onClick={loadArchivedData}
+                className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-all flex items-center gap-2"
+              >
+                <Download size={12} />
+                Reload Archives
+              </button>
+              <button
+                onClick={() => {
+                  // Switch to Pattern Dashboard Archives tab
+                  alert('Please go to Pattern Dashboard → Archives tab to import CSV files');
+                }}
+                className="px-3 py-2 bg-green-600 hover:bg-green-500 text-white text-xs rounded-lg transition-all flex items-center gap-2"
+              >
+                <Upload size={12} />
+                Import Data
+              </button>
+            </div>
           </div>
         )}
         
