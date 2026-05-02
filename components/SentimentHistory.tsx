@@ -209,7 +209,7 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
                    </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5 bg-slate-900/20">
-                   {history.slice().reverse().map((snap, idx) => (
+                   {history.map((snap, idx) => (
                      <tr key={idx} className="hover:bg-white/5 transition-colors group">
                         <td className="px-4 py-3 text-left font-bold text-slate-300 font-mono border-r border-white/5 bg-slate-900/30 group-hover:text-blue-400">{snap.time}</td>
                         <td className="px-2 py-3 font-mono text-slate-400 group-hover:text-white">{formatNumber(snap.niftyLtp)}</td>
