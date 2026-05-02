@@ -109,6 +109,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   // Data Management State
   const [clearingHistory, setClearingHistory] = useState(false);
   const [clearMessage, setClearMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  const [adminSecret, setAdminSecret] = useState(() => {
+    return localStorage.getItem('admin_secret') || '';
+  });
   
   // Protocol State
   const [protocolData, setProtocolData] = useState<TradingSystemProtocol>(() => {
@@ -191,6 +194,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   // Data Management Functions
   const handleClearHistory = async (action: 'all' | 'today' | 'old') => {
+    if (!adminSecret) {
+      setClearMessage({
+        type: 'error',
+        text: 'Admin secret is required. Please enter it in the Admin Secret field below.'
+      });
+      setTimeout(() => setClearMessage(null), 5000);
+      return;
+    }
+
     const confirmMessages = {
       all: '⚠️ This will delete ALL historical data from Redis. Continue?',
       today: '⚠️ This will delete today\'s data from Redis. Continue?',
@@ -208,7 +220,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         : '/api/clear-history';
       
       const response = await fetch(`${apiUrl}?action=${action}`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${adminSecret}`
+        }
       });
 
       const result = await response.json();
@@ -218,6 +233,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           type: 'success',
           text: result.message || `Successfully cleared ${action} data`
         });
+        // Save admin secret if successful
+        localStorage.setItem('admin_secret', adminSecret);
       } else {
         setClearMessage({
           type: 'error',
@@ -1552,6 +1569,34 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                         </div>
                     </div>
                 )}
+
+                {/* Admin Secret Input */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
+                    <div className="px-6 py-4 bg-purple-900/20 border-b border-purple-500/20 flex items-center gap-3">
+                        <Lock size={20} className="text-purple-400" />
+                        <h2 className="text-lg font-bold text-purple-400">Admin Authentication</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Enter your admin secret to authorize data management operations. This is the <span className="font-bold text-white">ADMIN_SECRET</span> or <span className="font-bold text-white">CRON_SECRET</span> environment variable from your Vercel deployment.
+                        </p>
+                        <div className="space-y-2">
+                            <label className="block text-sm font-medium text-slate-300">
+                                Admin Secret
+                            </label>
+                            <input
+                                type="password"
+                                value={adminSecret}
+                                onChange={(e) => setAdminSecret(e.target.value)}
+                                placeholder="Enter admin secret..."
+                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            />
+                            <p className="text-xs text-slate-500">
+                                This secret is stored locally and used to authenticate data deletion requests.
+                            </p>
+                        </div>
+                    </div>
+                </div>
 
                 {/* Clear All History */}
                 <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
