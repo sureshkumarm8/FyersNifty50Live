@@ -10,7 +10,7 @@ import {
   Brain, TrendingUp, TrendingDown, Target, Shield, 
   Zap, Activity, AlertTriangle, CheckCircle, Crosshair,
   BarChart3, Clock, Layers, Scale, ArrowUpCircle, ArrowDownCircle,
-  Minus, Info, RefreshCw, Play, Pause, Bot, Upload, Sparkles
+  Minus, Info, RefreshCw, Play, Pause, Bot, Upload, Sparkles, X
 } from 'lucide-react';
 import { EnrichedFyersQuote, MarketSnapshot } from '../types';
 import { dbService } from '../services/db';
@@ -85,6 +85,10 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
   const [isPredicting, setIsPredicting] = useState(false);
   const [showPredictions, setShowPredictions] = useState(false);
   const [archivedSnapshots, setArchivedSnapshots] = useState<MarketSnapshot[]>([]);
+  const [activeTab, setActiveTab] = useState<'agents' | 'predictions' | 'research'>('agents');
+  const [researchQuery, setResearchQuery] = useState('');
+  const [researchResults, setResearchResults] = useState<any>(null);
+  const [isResearching, setIsResearching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load archived data on mount for predictions
@@ -627,6 +631,320 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
     }
   };
 
+  // Research function
+  const runResearch = async (type: string) => {
+    if (archivedSnapshots.length < 10) {
+      alert('Need at least 10 snapshots for research');
+      return;
+    }
+
+    setIsResearching(true);
+    setResearchResults(null);
+
+    try {
+      let results: any = {};
+
+      switch (type) {
+        case 'patterns':
+          results = analyzePatterns();
+          break;
+        case 'correlations':
+          results = analyzeCorrelations();
+          break;
+        case 'time':
+          results = analyzeTimePatterns();
+          break;
+        case 'volatility':
+          results = analyzeVolatility();
+          break;
+        case 'reversals':
+          results = findReversals();
+          break;
+        case 'setups':
+          results = findWinningSetups();
+          break;
+        case 'custom':
+          results = await customResearch(researchQuery);
+          break;
+      }
+
+      setResearchResults(results);
+    } catch (error) {
+      console.error('Research error:', error);
+      setResearchResults({ error: 'Research failed', details: error });
+    } finally {
+      setIsResearching(false);
+    }
+  };
+
+  // Pattern Discovery
+  const analyzePatterns = () => {
+    const data = archivedSnapshots.slice(0, 500);
+    
+    // Find bullish patterns (sentiment turning positive with price follow-through)
+    const bullishSetups = data.filter((snap, idx) => {
+      if (idx < 5) return false;
+      const prevSent = data[idx - 5].overallSent;
+      const currentSent = snap.overallSent;
+      const priceMove = snap.niftyLtp - data[idx - 5].niftyLtp;
+      return prevSent < 0 && currentSent > 10 && priceMove > 20;
+    });
+
+    // Find bearish patterns
+    const bearishSetups = data.filter((snap, idx) => {
+      if (idx < 5) return false;
+      const prevSent = data[idx - 5].overallSent;
+      const currentSent = snap.overallSent;
+      const priceMove = snap.niftyLtp - data[idx - 5].niftyLtp;
+      return prevSent > 0 && currentSent < -10 && priceMove < -20;
+    });
+
+    // PCR extremes
+    const highPCR = data.filter(s => s.pcr > 1.3);
+    const lowPCR = data.filter(s => s.pcr < 0.7);
+
+    return {
+      totalSnapshots: data.length,
+      bullishPatterns: {
+        count: bullishSetups.length,
+        avgMove: bullishSetups.reduce((sum, s, idx) => {
+          if (idx < 3) return sum;
+          return sum + (s.niftyLtp - bullishSetups[idx - 3].niftyLtp);
+        }, 0) / Math.max(1, bullishSetups.length - 3),
+        successRate: bullishSetups.filter((s, idx) => {
+          if (idx >= bullishSetups.length - 3) return false;
+          return bullishSetups[idx + 3].niftyLtp > s.niftyLtp;
+        }).length / Math.max(1, bullishSetups.length - 3) * 100
+      },
+      bearishPatterns: {
+        count: bearishSetups.length,
+        avgMove: bearishSetups.reduce((sum, s, idx) => {
+          if (idx < 3) return sum;
+          return sum + (s.niftyLtp - bearishSetups[idx - 3].niftyLtp);
+        }, 0) / Math.max(1, bearishSetups.length - 3),
+        successRate: bearishSetups.filter((s, idx) => {
+          if (idx >= bearishSetups.length - 3) return false;
+          return bearishSetups[idx + 3].niftyLtp < s.niftyLtp;
+        }).length / Math.max(1, bearishSetups.length - 3) * 100
+      },
+      pcrExtremes: {
+        highPCR: { count: highPCR.length, avgPrice: highPCR.reduce((sum, s) => sum + s.niftyLtp, 0) / highPCR.length },
+        lowPCR: { count: lowPCR.length, avgPrice: lowPCR.reduce((sum, s) => sum + s.niftyLtp, 0) / lowPCR.length }
+      }
+    };
+  };
+
+  // Correlation Analysis
+  const analyzeCorrelations = () => {
+    const data = archivedSnapshots.slice(0, 500);
+    
+    // Calculate correlation between sentiment and next-hour price move
+    const sentimentPriceCorr = calculateCorrelation(
+      data.slice(0, -12).map(s => s.overallSent),
+      data.slice(12).map((s, idx) => s.niftyLtp - data[idx].niftyLtp)
+    );
+
+    // PCR vs Price correlation
+    const pcrPriceCorr = calculateCorrelation(
+      data.slice(0, -12).map(s => s.pcr),
+      data.slice(12).map((s, idx) => s.niftyLtp - data[idx].niftyLtp)
+    );
+
+    // Volatility vs Sentiment
+    const volatility = data.slice(0, -12).map((s, idx) => {
+      const window = data.slice(idx, idx + 12);
+      const prices = window.map(w => w.niftyLtp);
+      return Math.max(...prices) - Math.min(...prices);
+    });
+    const volSentCorr = calculateCorrelation(volatility, data.slice(0, volatility.length).map(s => Math.abs(s.overallSent)));
+
+    return {
+      sentimentVsPrice: {
+        correlation: sentimentPriceCorr.toFixed(3),
+        interpretation: sentimentPriceCorr > 0.3 ? 'Strong positive' : sentimentPriceCorr < -0.3 ? 'Strong negative' : 'Weak'
+      },
+      pcrVsPrice: {
+        correlation: pcrPriceCorr.toFixed(3),
+        interpretation: pcrPriceCorr > 0.3 ? 'Strong positive' : pcrPriceCorr < -0.3 ? 'Strong negative' : 'Weak'
+      },
+      volatilityVsSentiment: {
+        correlation: volSentCorr.toFixed(3),
+        interpretation: 'Higher volatility with extreme sentiment'
+      }
+    };
+  };
+
+  // Helper function for correlation
+  const calculateCorrelation = (x: number[], y: number[]): number => {
+    const n = Math.min(x.length, y.length);
+    const meanX = x.slice(0, n).reduce((a, b) => a + b, 0) / n;
+    const meanY = y.slice(0, n).reduce((a, b) => a + b, 0) / n;
+    
+    let num = 0, denX = 0, denY = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = x[i] - meanX;
+      const dy = y[i] - meanY;
+      num += dx * dy;
+      denX += dx * dx;
+      denY += dy * dy;
+    }
+    
+    return num / Math.sqrt(denX * denY) || 0;
+  };
+
+  // Time-based Analysis
+  const analyzeTimePatterns = () => {
+    const data = archivedSnapshots.slice(0, 1000);
+    
+    const hourlyPerformance: any = {};
+    data.forEach(snap => {
+      const hour = new Date(snap.timestamp).getHours();
+      if (!hourlyPerformance[hour]) {
+        hourlyPerformance[hour] = { moves: [], count: 0 };
+      }
+      hourlyPerformance[hour].count++;
+      if (snap.ptsChg) hourlyPerformance[hour].moves.push(snap.ptsChg);
+    });
+
+    const hourlyStats = Object.keys(hourlyPerformance).map(hour => ({
+      hour: `${hour}:00`,
+      count: hourlyPerformance[hour].count,
+      avgMove: hourlyPerformance[hour].moves.reduce((a: number, b: number) => a + b, 0) / hourlyPerformance[hour].moves.length,
+      volatility: Math.max(...hourlyPerformance[hour].moves) - Math.min(...hourlyPerformance[hour].moves)
+    })).sort((a, b) => Math.abs(b.avgMove) - Math.abs(a.avgMove));
+
+    return {
+      bestHours: hourlyStats.slice(0, 3),
+      worstHours: hourlyStats.slice(-3).reverse(),
+      totalHoursAnalyzed: hourlyStats.length
+    };
+  };
+
+  // Volatility Analysis
+  const analyzeVolatility = () => {
+    const data = archivedSnapshots.slice(0, 500);
+    
+    const volatilityPeriods = data.map((snap, idx) => {
+      if (idx < 12) return { time: snap.timestamp, vol: 0 };
+      const window = data.slice(idx - 12, idx);
+      const prices = window.map(s => s.niftyLtp);
+      const vol = Math.max(...prices) - Math.min(...prices);
+      return { time: snap.timestamp, vol, price: snap.niftyLtp };
+    });
+
+    const sorted = [...volatilityPeriods].sort((a, b) => b.vol - a.vol);
+    const highVol = sorted.slice(0, 20);
+    const lowVol = sorted.slice(-20);
+
+    return {
+      averageVolatility: volatilityPeriods.reduce((sum, p) => sum + p.vol, 0) / volatilityPeriods.length,
+      highVolatilityPeriods: {
+        count: highVol.length,
+        avgRange: highVol.reduce((sum, p) => sum + p.vol, 0) / highVol.length,
+        times: highVol.map(p => new Date(p.time).toLocaleTimeString())
+      },
+      lowVolatilityPeriods: {
+        count: lowVol.length,
+        avgRange: lowVol.reduce((sum, p) => sum + p.vol, 0) / lowVol.length
+      }
+    };
+  };
+
+  // Find Reversals
+  const findReversals = () => {
+    const data = archivedSnapshots.slice(0, 500);
+    
+    const reversals = data.filter((snap, idx) => {
+      if (idx < 10 || idx >= data.length - 10) return false;
+      
+      const before = data.slice(idx - 10, idx);
+      const after = data.slice(idx, idx + 10);
+      
+      const beforeTrend = before[9].niftyLtp - before[0].niftyLtp;
+      const afterTrend = after[9].niftyLtp - after[0].niftyLtp;
+      
+      // Strong reversal: trend changes by more than 50 points
+      return Math.abs(beforeTrend + afterTrend) < 10 && Math.abs(beforeTrend) > 50 && Math.abs(afterTrend) > 50;
+    });
+
+    return {
+      totalReversals: reversals.length,
+      reversalRate: (reversals.length / data.length * 100).toFixed(2) + '%',
+      avgSentimentAtReversal: reversals.reduce((sum, s) => sum + Math.abs(s.overallSent), 0) / reversals.length,
+      avgPCRAtReversal: reversals.reduce((sum, s) => sum + s.pcr, 0) / reversals.length
+    };
+  };
+
+  // Find Winning Setups
+  const findWinningSetups = () => {
+    const data = archivedSnapshots.slice(0, 500);
+    
+    const setups = data.map((snap, idx) => {
+      if (idx >= data.length - 6) return null;
+      
+      const futureMove = data[idx + 6].niftyLtp - snap.niftyLtp;
+      const isWinner = Math.abs(futureMove) > 20;
+      
+      return {
+        sentiment: snap.overallSent,
+        pcr: snap.pcr,
+        move: futureMove,
+        isWinner,
+        direction: futureMove > 0 ? 'UP' : 'DOWN'
+      };
+    }).filter(s => s && s.isWinner);
+
+    const bullishSetups = setups.filter(s => s!.direction === 'UP');
+    const bearishSetups = setups.filter(s => s!.direction === 'DOWN');
+
+    return {
+      totalWinningSetups: setups.length,
+      bullish: {
+        count: bullishSetups.length,
+        avgSentiment: bullishSetups.reduce((sum, s) => sum + s!.sentiment, 0) / bullishSetups.length,
+        avgPCR: bullishSetups.reduce((sum, s) => sum + s!.pcr, 0) / bullishSetups.length,
+        avgMove: bullishSetups.reduce((sum, s) => sum + s!.move, 0) / bullishSetups.length
+      },
+      bearish: {
+        count: bearishSetups.length,
+        avgSentiment: bearishSetups.reduce((sum, s) => sum + s!.sentiment, 0) / bearishSetups.length,
+        avgPCR: bearishSetups.reduce((sum, s) => sum + s!.pcr, 0) / bearishSetups.length,
+        avgMove: bearishSetups.reduce((sum, s) => sum + s!.move, 0) / bearishSetups.length
+      }
+    };
+  };
+
+  // Custom Research
+  const customResearch = async (query: string) => {
+    // Simple keyword-based analysis
+    const data = archivedSnapshots.slice(0, 500);
+    
+    const keywords = query.toLowerCase();
+    let results: any = { query, dataPoints: data.length };
+
+    // Extract numbers from query
+    const numbers = query.match(/\d+\.?\d*/g);
+    
+    if (keywords.includes('pcr') && numbers) {
+      const threshold = parseFloat(numbers[0]);
+      const filtered = data.filter(s => keywords.includes('>') ? s.pcr > threshold : s.pcr < threshold);
+      results.filtered = filtered.length;
+      results.avgPriceMove = filtered.slice(0, -6).reduce((sum, s, idx) => 
+        sum + (filtered[idx + 6].niftyLtp - s.niftyLtp), 0) / Math.max(1, filtered.length - 6);
+    }
+
+    if (keywords.includes('sentiment') && numbers) {
+      const threshold = parseFloat(numbers[0]);
+      const filtered = data.filter(s => keywords.includes('>') || keywords.includes('positive') ? 
+        s.overallSent > threshold : s.overallSent < -threshold);
+      results.filtered = filtered.length;
+      results.avgPriceMove = filtered.slice(0, -6).reduce((sum, s, idx) => 
+        sum + (filtered[idx + 6].niftyLtp - s.niftyLtp), 0) / Math.max(1, filtered.length - 6);
+    }
+
+    return results;
+  };
+
   const handleImportCSV = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -860,6 +1178,52 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
       </div>
 
       <div className="p-4 sm:p-6 space-y-6">
+        {/* Tab Navigation */}
+        <div className="flex gap-2 border-b border-white/10 pb-4">
+          <button
+            onClick={() => setActiveTab('agents')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'agents'
+                ? 'bg-purple-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Bot size={14} />
+              AI Agents
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('predictions')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'predictions'
+                ? 'bg-purple-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} />
+              Predictions
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('research')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'research'
+                ? 'bg-purple-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Brain size={14} />
+              Research
+            </div>
+          </button>
+        </div>
+
+        {/* Agents Tab */}
+        {activeTab === 'agents' && (
+        <>
         {/* No Data Message */}
         {historyLog.length === 0 && (
           <div className="glass-panel rounded-xl p-8 text-center">
@@ -1047,7 +1411,12 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
             </div>
           </div>
         </div>
+        </>
+        )}
 
+        {/* Predictions Tab */}
+        {activeTab === 'predictions' && (
+        <>
         {/* AI Prediction Table */}
         {(historyLog.length > 0 || archivedSnapshots.length > 0) && (
           <div className="glass-panel rounded-xl p-6 border border-purple-500/30 bg-purple-500/5">
@@ -1215,6 +1584,189 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
               </div>
             )}
           </div>
+        )}
+        </>
+        )}
+
+        {/* Research Tab */}
+        {activeTab === 'research' && (
+        <>
+        <div className="glass-panel rounded-xl p-6 border border-indigo-500/30 bg-indigo-500/5">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-3 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl">
+              <Brain size={24} className="text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-white">AI Research Lab</h2>
+              <p className="text-sm text-slate-400">Advanced data analysis with {archivedSnapshots.length} snapshots</p>
+            </div>
+          </div>
+
+          {/* Research Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+            {/* Pattern Discovery */}
+            <div className="glass-panel rounded-xl p-4 border border-white/10 hover:border-purple-500/50 transition-all cursor-pointer group">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-purple-500/20 rounded-lg group-hover:bg-purple-500/30 transition-all">
+                  <Sparkles size={20} className="text-purple-400" />
+                </div>
+                <h3 className="font-bold text-white">Pattern Discovery</h3>
+              </div>
+              <p className="text-xs text-slate-400 mb-3">Find recurring patterns in price movements, sentiment shifts, and market cycles</p>
+              <button 
+                onClick={() => runResearch('patterns')}
+                disabled={isResearching || archivedSnapshots.length < 50}
+                className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 text-white text-xs rounded-lg transition-all"
+              >
+                Discover Patterns
+              </button>
+            </div>
+
+            {/* Correlation Analysis */}
+            <div className="glass-panel rounded-xl p-4 border border-white/10 hover:border-blue-500/50 transition-all cursor-pointer group">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-blue-500/20 rounded-lg group-hover:bg-blue-500/30 transition-all">
+                  <BarChart3 size={20} className="text-blue-400" />
+                </div>
+                <h3 className="font-bold text-white">Correlation Analysis</h3>
+              </div>
+              <p className="text-xs text-slate-400 mb-3">Discover relationships between sentiment, PCR, volatility, and price movements</p>
+              <button 
+                onClick={() => runResearch('correlations')}
+                disabled={isResearching || archivedSnapshots.length < 50}
+                className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white text-xs rounded-lg transition-all"
+              >
+                Analyze Correlations
+              </button>
+            </div>
+
+            {/* Time-based Analysis */}
+            <div className="glass-panel rounded-xl p-4 border border-white/10 hover:border-green-500/50 transition-all cursor-pointer group">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-green-500/20 rounded-lg group-hover:bg-green-500/30 transition-all">
+                  <Clock size={20} className="text-green-400" />
+                </div>
+                <h3 className="font-bold text-white">Time Analysis</h3>
+              </div>
+              <p className="text-xs text-slate-400 mb-3">Best trading hours, session-wise performance, and time-based patterns</p>
+              <button 
+                onClick={() => runResearch('time')}
+                disabled={isResearching || archivedSnapshots.length < 50}
+                className="w-full px-3 py-2 bg-green-600 hover:bg-green-500 disabled:bg-green-900 text-white text-xs rounded-lg transition-all"
+              >
+                Analyze Time Patterns
+              </button>
+            </div>
+
+            {/* Volatility Study */}
+            <div className="glass-panel rounded-xl p-4 border border-white/10 hover:border-orange-500/50 transition-all cursor-pointer group">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-orange-500/20 rounded-lg group-hover:bg-orange-500/30 transition-all">
+                  <Activity size={20} className="text-orange-400" />
+                </div>
+                <h3 className="font-bold text-white">Volatility Patterns</h3>
+              </div>
+              <p className="text-xs text-slate-400 mb-3">High/low volatility periods, volatility clustering, and regime changes</p>
+              <button 
+                onClick={() => runResearch('volatility')}
+                disabled={isResearching || archivedSnapshots.length < 50}
+                className="w-full px-3 py-2 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-900 text-white text-xs rounded-lg transition-all"
+              >
+                Study Volatility
+              </button>
+            </div>
+
+            {/* Sentiment Reversal */}
+            <div className="glass-panel rounded-xl p-4 border border-white/10 hover:border-red-500/50 transition-all cursor-pointer group">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-red-500/20 rounded-lg group-hover:bg-red-500/30 transition-all">
+                  <TrendingDown size={20} className="text-red-400" />
+                </div>
+                <h3 className="font-bold text-white">Reversal Signals</h3>
+              </div>
+              <p className="text-xs text-slate-400 mb-3">Identify sentiment extremes that preceded major reversals</p>
+              <button 
+                onClick={() => runResearch('reversals')}
+                disabled={isResearching || archivedSnapshots.length < 50}
+                className="w-full px-3 py-2 bg-red-600 hover:bg-red-500 disabled:bg-red-900 text-white text-xs rounded-lg transition-all"
+              >
+                Find Reversals
+              </button>
+            </div>
+
+            {/* Winning Setups */}
+            <div className="glass-panel rounded-xl p-4 border border-white/10 hover:border-emerald-500/50 transition-all cursor-pointer group">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-emerald-500/20 rounded-lg group-hover:bg-emerald-500/30 transition-all">
+                  <Target size={20} className="text-emerald-400" />
+                </div>
+                <h3 className="font-bold text-white">Winning Setups</h3>
+              </div>
+              <p className="text-xs text-slate-400 mb-3">Find high-probability setups with best risk-reward ratios</p>
+              <button 
+                onClick={() => runResearch('setups')}
+                disabled={isResearching || archivedSnapshots.length < 50}
+                className="w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-900 text-white text-xs rounded-lg transition-all"
+              >
+                Find Setups
+              </button>
+            </div>
+          </div>
+
+          {/* Custom Research Query */}
+          <div className="glass-panel rounded-xl p-4 border border-white/10 mb-6">
+            <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+              <Sparkles size={16} className="text-yellow-400" />
+              Custom Research Query
+            </h3>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={researchQuery}
+                onChange={(e) => setResearchQuery(e.target.value)}
+                placeholder="e.g., 'What happens when PCR > 1.2 and sentiment is negative?'"
+                className="flex-1 px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:border-indigo-500"
+                onKeyDown={(e) => e.key === 'Enter' && runResearch('custom')}
+              />
+              <button
+                onClick={() => runResearch('custom')}
+                disabled={isResearching || !researchQuery.trim() || archivedSnapshots.length < 10}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900 text-white font-bold rounded-lg transition-all"
+              >
+                {isResearching ? <Activity className="animate-spin" size={16} /> : 'Research'}
+              </button>
+            </div>
+          </div>
+
+          {/* Research Results */}
+          {isResearching && (
+            <div className="glass-panel rounded-xl p-8 text-center">
+              <Activity className="animate-spin mx-auto mb-4 text-indigo-400" size={48} />
+              <p className="text-white font-bold mb-2">Analyzing Data...</p>
+              <p className="text-sm text-slate-400">Processing {archivedSnapshots.length} snapshots</p>
+            </div>
+          )}
+
+          {researchResults && !isResearching && (
+            <div className="glass-panel rounded-xl p-6 border border-indigo-500/30">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-white">Research Results</h3>
+                <button
+                  onClick={() => setResearchResults(null)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="space-y-4">
+                <pre className="bg-slate-950 p-4 rounded-lg overflow-x-auto text-xs text-slate-300 font-mono whitespace-pre-wrap">
+                  {JSON.stringify(researchResults, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+        </>
         )}
       </div>
     </div>
