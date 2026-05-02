@@ -615,15 +615,21 @@ const App: React.FC = () => {
       let stockData: FyersQuote[];
       let niftyLtpVal = 0;
       
+      console.log(`📊 [Mobile Debug] Starting data fetch - Provider: ${credentials.dataProvider}`);
+      
       if (credentials.dataProvider === 'paytm') {
-        // console.log('[App] Using PayTM Money API');
+        console.log('[App] Using PayTM Money API');
         stockData = await fetchPayTMStocks(credentials);
+        console.log(`📊 [Mobile Debug] Fetched ${stockData.length} stocks from PayTM`);
         niftyLtpVal = await fetchNiftyIndexLTP(credentials);
+        console.log(`📊 [Mobile Debug] Nifty LTP: ${niftyLtpVal}`);
       } else {
-        // console.log('[App] Using Fyers API');
+        console.log('[App] Using Fyers API');
         stockData = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
+        console.log(`📊 [Mobile Debug] Fetched ${stockData.length} stocks from Fyers`);
         
         if (stockData.length === 0) {
+          console.error('❌ [Mobile Debug] No stock data returned!');
           setIsLoading(false);
           return;
         }
@@ -635,6 +641,7 @@ const App: React.FC = () => {
       setNiftyLtp(niftyLtpVal);
 
       const enrichedStocks = enrichData(stockData, prevStocksRef, initialStocksRef, true);
+      console.log(`📊 [Mobile Debug] Enriched ${enrichedStocks.length} stocks, setting state...`);
       setStocks(enrichedStocks);
       updateSessionHistory(enrichedStocks);
 
@@ -772,9 +779,13 @@ const App: React.FC = () => {
       ? credentials.paytmAccessToken 
       : (credentials.appId && credentials.accessToken);
       
+    console.log(`📊 [Mobile Debug] Auto-fetch check - isDbLoaded: ${isDbLoaded}, hasValidCreds: ${hasValidCreds}, isPaused: ${isPaused}, provider: ${credentials.dataProvider}`);
+      
     if (isDbLoaded && hasValidCreds && !isPaused) {
       // Get market time info
       const marketInfo = getMarketTimeInfo();
+      
+      console.log(`📊 [Mobile Debug] Market info - isBeforeStart: ${marketInfo.isBeforeMarketStart}, bypassMarketHours: ${credentials.bypassMarketHours}`);
       
       // Don't call API before 9:17 AM IST unless bypass is enabled
       if (marketInfo.isBeforeMarketStart && !credentials.bypassMarketHours) {
@@ -1307,6 +1318,13 @@ const App: React.FC = () => {
                     </div>
                 </div>
                 <div className="flex-1 overflow-hidden">
+                    {stocks.length === 0 && !isLoading && (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-4">
+                            <AlertCircle size={48} />
+                            <p>No stock data available</p>
+                            <p className="text-xs">Check browser console for errors</p>
+                        </div>
+                    )}
                     <StockTable 
                         data={sortedStocks} 
                         sortConfig={sortConfig} 
