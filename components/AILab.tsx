@@ -506,8 +506,8 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
 
   // Generate AI predictions for next 15-30 minutes
   const generatePredictions = async () => {
-    // Use archived data if live data is not available
-    const dataSource = historyLog.length > 0 ? historyLog : archivedSnapshots;
+    // Use the larger dataset (prefer archived if it has more data)
+    const dataSource = archivedSnapshots.length >= 10 ? archivedSnapshots : historyLog;
     const latestSnapshot = dataSource.length > 0 ? dataSource[0] : currentSnapshot;
     
     console.log(`🔮 Prediction check: historyLog=${historyLog.length}, archived=${archivedSnapshots.length}, dataSource=${dataSource.length}`);
@@ -1496,7 +1496,7 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
                   console.log(`🎯 Button clicked: historyLog=${historyLog.length}, archived=${archivedSnapshots.length}`);
                   generatePredictions();
                 }}
-                disabled={isPredicting || (historyLog.length < 10 && archivedSnapshots.length < 10)}
+                disabled={isPredicting || (archivedSnapshots.length < 10 && historyLog.length < 10)}
                 className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 transition-all text-sm"
               >
                 {isPredicting ? (
@@ -1635,12 +1635,12 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
                 <Brain size={48} className="mx-auto mb-4 opacity-50" />
                 <p className="text-sm">Click "Generate Predictions" to forecast next 30 minutes</p>
                 <p className="text-xs mt-2">
-                  {historyLog.length > 0 ? (
-                    <span className="text-green-400">✓ Using {historyLog.length} live snapshots</span>
-                  ) : archivedSnapshots.length > 0 ? (
+                  {archivedSnapshots.length >= 10 ? (
                     <span className="text-blue-400">✓ Using {archivedSnapshots.length} archived snapshots</span>
+                  ) : historyLog.length >= 10 ? (
+                    <span className="text-green-400">✓ Using {historyLog.length} live snapshots</span>
                   ) : (
-                    <span className="text-slate-600">Need at least 10 snapshots</span>
+                    <span className="text-slate-600">Need at least 10 snapshots (Have: Live={historyLog.length}, Archived={archivedSnapshots.length})</span>
                   )}
                 </p>
               </div>
