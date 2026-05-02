@@ -512,9 +512,6 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
                              </div>
                              <h2 className="text-xs font-bold text-indigo-200 uppercase tracking-widest">AI Quant Insight</h2>
                         </div>
-                        {quantAnalysis && (
-                             <span className="text-[10px] text-slate-500 font-mono">Last: {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                        )}
                     </div>
                 </div>
            </div>

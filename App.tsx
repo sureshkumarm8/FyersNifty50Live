@@ -50,6 +50,7 @@ const App: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
   const [error, setError] = useState<string | null>(null);
+  const [quantError, setQuantError] = useState<string | null>(null);
   const [marketStatusMsg, setMarketStatusMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isDbLoaded, setIsDbLoaded] = useState(false); // New flag for DB hydration

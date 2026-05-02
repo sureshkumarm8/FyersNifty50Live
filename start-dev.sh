@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Enable local mode for development (uses in-memory storage, no Redis needed)
+export LOCAL_MODE=true
+export NODE_ENV=development
+
 # Start the backend server in the background
 node server.js &
 SERVER_PID=$!

@@ -3,6 +3,15 @@ import http from 'http';
 import { URL } from 'url';
 
 const PORT = 5001; 
+const LOCAL_MODE = process.env.LOCAL_MODE === 'true' || process.env.NODE_ENV === 'development';
+
+// In-memory storage for local testing
+const localStore = {
+  history: [],
+  sessionHistory: {},
+  config: null,
+  latestSnapshot: null
+};
 
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -21,10 +30,147 @@ const server = http.createServer(async (req, res) => {
   
   const authHeader = req.headers['authorization'];
 
-  if (!authHeader) {
+  // Skip auth check in local mode or for local testing endpoints
+  const isLocalEndpoint = reqUrl.pathname.startsWith('/api/get-history') || 
+                          reqUrl.pathname.startsWith('/api/save-history') ||
+                          reqUrl.pathname.startsWith('/api/get-config') ||
+                          reqUrl.pathname.startsWith('/api/save-config') ||
+                          reqUrl.pathname.startsWith('/api/clear-history');
+
+  if (!LOCAL_MODE && !isLocalEndpoint && !authHeader) {
      res.writeHead(401, { 'Content-Type': 'application/json' });
      res.end(JSON.stringify({ error: 'Missing Authorization header' }));
      return;
+  }
+
+  // --- LOCAL TESTING ENDPOINTS ---
+  
+  // Get history from local storage
+  if (reqUrl.pathname === '/api/get-history' && req.method === 'GET') {
+    try {
+      const { limit = 500, latest = false } = Object.fromEntries(reqUrl.searchParams);
+      
+      console.log(`[Local] Get history request - limit: ${limit}, latest: ${latest}`);
+
+      if (latest === 'true') {
+        if (!localStore.latestSnapshot) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'No data available yet' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, data: localStore.latestSnapshot }));
+        return;
+      }
+
+      if (localStore.history.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'No historical data available' }));
+        return;
+      }
+
+      const limitNum = Math.min(parseInt(limit), 1000);
+      const data = localStore.history.slice(0, limitNum);
+      
+      console.log(`[Local] Returning ${data.length} history items`);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count: data.length, data }));
+    } catch (err) {
+      console.error('[Local] Get history error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // Save history to local storage
+  if (reqUrl.pathname === '/api/save-history' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        
+        // Add to history (keep newest first)
+        localStore.history.unshift(data);
+        localStore.latestSnapshot = data;
+        
+        // Keep only last 1000 items
+        if (localStore.history.length > 1000) {
+          localStore.history = localStore.history.slice(0, 1000);
+        }
+        
+        console.log(`[Local] Saved snapshot - total history: ${localStore.history.length}`);
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, count: localStore.history.length }));
+      } catch (err) {
+        console.error('[Local] Save history error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // Clear history
+  if (reqUrl.pathname === '/api/clear-history' && req.method === 'POST') {
+    try {
+      const count = localStore.history.length;
+      localStore.history = [];
+      localStore.sessionHistory = {};
+      localStore.latestSnapshot = null;
+      
+      console.log(`[Local] Cleared ${count} history items`);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: `Cleared ${count} items` }));
+    } catch (err) {
+      console.error('[Local] Clear history error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // Get config
+  if (reqUrl.pathname === '/api/get-config' && req.method === 'GET') {
+    try {
+      if (!localStore.config) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'No config found' }));
+        return;
+      }
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, data: localStore.config }));
+    } catch (err) {
+      console.error('[Local] Get config error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // Save config
+  if (reqUrl.pathname === '/api/save-config' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        localStore.config = JSON.parse(body);
+        console.log('[Local] Saved config');
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        console.error('[Local] Save config error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
   }
 
   // --- QUOTES ROUTE (Using Quotes API - supports multiple symbols) ---
@@ -201,4 +347,11 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n🚀 Local Server running at http://localhost:${PORT}`);
+  if (LOCAL_MODE) {
+    console.log(`🔧 LOCAL MODE ENABLED - Using in-memory storage for testing`);
+    console.log(`   • No Redis required`);
+    console.log(`   • History stored in memory (resets on restart)`);
+    console.log(`   • Authentication relaxed for testing`);
+  }
+  console.log();
 });
