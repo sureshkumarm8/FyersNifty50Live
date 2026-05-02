@@ -144,8 +144,8 @@ const AdvancedChart: React.FC<{
 
 // --- History Mini Table (Expanded with all columns) ---
 const HistorySnippet: React.FC<{ history: MarketSnapshot[] }> = ({ history }) => {
-    // Show last 5 reversed
-    const last5 = [...history].reverse().slice(0, 5);
+    // Show last 5 (data is already newest first)
+    const last5 = history.slice(0, 5);
 
     return (
         <div className="w-full overflow-x-auto custom-scrollbar">

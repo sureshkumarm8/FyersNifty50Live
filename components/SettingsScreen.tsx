@@ -593,8 +593,21 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                         <Lock size={16} />
                                     </div>
                                     <textarea 
-                                        value={paytmAccessToken} 
-                                        onChange={(e) => setPaytmAccessToken(e.target.value)} 
+                                        value={paytmAccessToken ? '•'.repeat(Math.min(paytmAccessToken.length, 100)) : ''} 
+                                        onChange={(e) => {
+                                            // Allow editing by clearing the masked value
+                                            if (e.target.value === '') {
+                                                setPaytmAccessToken('');
+                                            }
+                                        }}
+                                        onFocus={(e) => {
+                                            // Show actual value when focused for editing
+                                            e.target.value = paytmAccessToken;
+                                        }}
+                                        onBlur={(e) => {
+                                            // Save the actual value and re-mask
+                                            setPaytmAccessToken(e.target.value);
+                                        }}
                                         placeholder="Paste your PayTM Money access token here..."
                                         rows={2}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono resize-none"

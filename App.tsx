@@ -138,7 +138,9 @@ const App: React.FC = () => {
               }
             }
             
+            console.log('🔧 Initializing database...');
             await dbService.init();
+            console.log('✅ Database initialized');
             
             // Load historical data from Redis (if available)
             console.log('🔍 Attempting to load history from Redis...');
@@ -236,16 +238,25 @@ const App: React.FC = () => {
             lifecycleManager.setupAutoArchive();
             
         } catch (e) {
-            console.error("DB Init Failed", e);
+            console.error("❌ DB Init Failed", e);
             setError("Database initialization failed");
         } finally {
+            console.log('✅ Setting isDbLoaded = true');
             setIsDbLoaded(true);
         }
     };
-    initData();
+    
+    // Add timeout safety - ensure loading screen doesn't hang forever
+    const timeoutId = setTimeout(() => {
+        console.warn('⚠️ Init timeout - forcing isDbLoaded = true');
+        setIsDbLoaded(true);
+    }, 5000); // 5 second timeout
+    
+    initData().finally(() => clearTimeout(timeoutId));
     
     // Cleanup on unmount
     return () => {
+        clearTimeout(timeoutId);
         lifecycleManager.stopAutoArchive();
     };
   }, []);
