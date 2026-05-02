@@ -1,8 +1,49 @@
 # 🗑️ Redis Data Management
 
-## Clear Historical Data from Redis
+## Overview
 
-Use the `/api/clear-history` endpoint to manage stored snapshots.
+Manage your Redis/Upstash historical data using:
+1. **UI (Recommended)** - Settings → Data Management tab
+2. **API/curl** - Direct API calls
+
+---
+
+## 🎨 Using the UI (New!)
+
+### Step 1: Navigate to Data Management
+1. Open your app
+2. Click **Settings** (gear icon)
+3. Select **Data Management** tab
+
+### Step 2: Enter Admin Secret
+1. Go to Vercel Dashboard → Project → Settings → Environment Variables
+2. Copy your `ADMIN_SECRET` or `CRON_SECRET`
+3. Paste it in the "Admin Authentication" field
+4. Secret is saved locally for future use
+
+### Step 3: Clear Data
+Choose from three options:
+
+#### 🔴 Clear All History
+- Deletes ALL historical snapshots
+- Use for complete database reset
+- ⚠️ Permanent and irreversible
+
+#### 🟠 Clear Today's Data
+- Deletes last 8 hours of data
+- Use for clearing test data
+- Preserves previous days' history
+
+#### 🔵 Clear Old Data
+- Keeps latest 100 snapshots
+- Deletes everything older
+- Recommended for regular maintenance
+
+### Features
+- ✅ Visual feedback with success/error messages
+- ✅ Confirmation dialogs before deletion
+- ✅ Loading states during operations
+- ✅ Detailed operation descriptions
 
 ---
 
