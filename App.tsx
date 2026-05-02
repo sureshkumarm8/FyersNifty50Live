@@ -185,28 +185,21 @@ const App: React.FC = () => {
                     redisSnapshots[i].ptsChg = redisSnapshots[i].niftyLtp - redisSnapshots[i-1].niftyLtp;
                   }
                   
-                  // Merge with existing data if any
-                  setHistoryLog(prev => {
-                    const combined = [...redisSnapshots, ...prev];
-                    // Remove duplicates by timestamp
-                    const unique = combined.filter((v, i, a) => 
-                      a.findIndex(t => t.timestamp === v.timestamp) === i
-                    );
-                    return unique.sort((a, b) => a.timestamp - b.timestamp);
-                  });
+                  // Set Redis data as the source of truth (replace, don't merge)
+                  setHistoryLog(redisSnapshots);
                   
-                  console.log(`✅ Restored ${redisSnapshots.length} historical snapshots`);
+                  console.log(`✅ Restored ${redisSnapshots.length} historical snapshots from Redis`);
                 }
               }
             } catch (err) {
               console.log('ℹ️ No Redis history available yet:', err);
             }
             
-            // Check if new trading day
+            // Check if new trading day for archival purposes only
             const isNewDay = await lifecycleManager.isNewTradingDay();
             
             if (isNewDay) {
-                // NEW DAY: Run morning setup
+                // NEW DAY: Run morning setup (archives previous day)
                 console.log('🌅 New trading day detected');
                 const setupResult = await lifecycleManager.morningSetup();
                 
@@ -219,20 +212,10 @@ const App: React.FC = () => {
                     );
                     setTimeout(() => setMarketStatusMsg(null), 5000);
                 }
-                
-                // Start fresh
-                setHistoryLog([]);
-                setSessionHistory({});
-            } else {
-                // SAME DAY: Restore state (page refresh)
-                console.log('📂 Same trading day - Restoring session');
-                const snaps = await dbService.getTodaySnapshots();
-                const sessions = await dbService.getTodaySession();
-                setHistoryLog(snaps);
-                setSessionHistory(sessions);
-                
-                console.log(`Restored ${snaps.length} snapshots`);
             }
+            
+            // Note: historyLog already populated from Redis above
+            // All users see the same Redis data - no local IndexedDB override
             
             // Setup auto-archive (runs at 3:45 PM)
             lifecycleManager.setArchiveCallback((message) => {
