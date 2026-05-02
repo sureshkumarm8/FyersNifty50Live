@@ -2,8 +2,8 @@
 import { Redis } from '@upstash/redis';
 
 const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  url: process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN,
 });
 
 export default async function handler(req, res) {
@@ -22,17 +22,21 @@ export default async function handler(req, res) {
   try {
     const { limit = 500, latest = false } = req.query;
 
+    console.log('[History API] Request:', { limit, latest, method: req.method });
+
     // If only latest snapshot requested
     if (latest === 'true') {
       const latestSnapshot = await redis.get('snapshot:latest');
       
       if (!latestSnapshot) {
+        console.log('[History API] No latest snapshot found');
         return res.status(404).json({
           success: false,
           error: 'No data available yet'
         });
       }
 
+      console.log('[History API] Returning latest snapshot');
       return res.status(200).json({
         success: true,
         data: typeof latestSnapshot === 'string' ? JSON.parse(latestSnapshot) : latestSnapshot
@@ -41,6 +45,8 @@ export default async function handler(req, res) {
 
     // Get all snapshots from sorted set
     const timestamps = await redis.zrange('snapshots:index', 0, -1, { rev: true });
+    
+    console.log('[History API] Found timestamps:', timestamps?.length || 0);
     
     if (!timestamps || timestamps.length === 0) {
       return res.status(404).json({
@@ -52,6 +58,8 @@ export default async function handler(req, res) {
     // Limit the number of snapshots
     const limitNum = Math.min(parseInt(limit), 1000);
     const timestampsToFetch = timestamps.slice(0, limitNum);
+
+    console.log('[History API] Fetching', timestampsToFetch.length, 'snapshots');
 
     // Fetch all snapshots
     const pipeline = redis.pipeline();
@@ -65,6 +73,8 @@ export default async function handler(req, res) {
     const history = snapshots
       .filter(s => s !== null)
       .map(s => typeof s === 'string' ? JSON.parse(s) : s);
+
+    console.log('[History API] Returning', history.length, 'snapshots');
 
     return res.status(200).json({
       success: true,

@@ -141,10 +141,15 @@ const App: React.FC = () => {
             await dbService.init();
             
             // Load historical data from Redis (if available)
+            console.log('🔍 Attempting to load history from Redis...');
             try {
               const historyResponse = await fetch('/api/get-history?limit=500');
+              console.log('📡 Redis API response status:', historyResponse.status);
+              
               if (historyResponse.ok) {
                 const historyData = await historyResponse.json();
+                console.log('📦 Redis response:', historyData);
+                
                 if (historyData.success && historyData.data?.length > 0) {
                   console.log(`📥 Loaded ${historyData.data.length} snapshots from Redis`);
                   
@@ -180,6 +185,8 @@ const App: React.FC = () => {
                     };
                   });
                   
+                  console.log('🔄 Converted snapshots:', redisSnapshots.length, 'First:', redisSnapshots[0]);
+                  
                   // Calculate ptsChg between snapshots
                   for (let i = 1; i < redisSnapshots.length; i++) {
                     redisSnapshots[i].ptsChg = redisSnapshots[i].niftyLtp - redisSnapshots[i-1].niftyLtp;
@@ -189,10 +196,14 @@ const App: React.FC = () => {
                   setHistoryLog(redisSnapshots);
                   
                   console.log(`✅ Restored ${redisSnapshots.length} historical snapshots from Redis`);
+                } else {
+                  console.log('⚠️ Redis response successful but no data:', historyData);
                 }
+              } else {
+                console.log('❌ Redis API returned non-OK status:', historyResponse.status);
               }
             } catch (err) {
-              console.log('ℹ️ No Redis history available yet:', err);
+              console.error('❌ Redis history load error:', err);
             }
             
             // Check if new trading day for archival purposes only
