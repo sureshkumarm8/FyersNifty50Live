@@ -53,6 +53,18 @@ interface Recommendation {
   validUntil: Date;
 }
 
+// Predicted snapshot type
+interface PredictedSnapshot {
+  time: string;
+  niftyLtp: number;
+  ptsChg: number;
+  overallSent: number;
+  stockSent: number;
+  optionsSent: number;
+  pcr: number;
+  confidence: number;
+}
+
 const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, historyLog }) => {
   const [isActive, setIsActive] = useState(true);
   const [agents, setAgents] = useState<AgentState[]>([]);
@@ -61,6 +73,9 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [predictions, setPredictions] = useState<PredictedSnapshot[]>([]);
+  const [isPredicting, setIsPredicting] = useState(false);
+  const [showPredictions, setShowPredictions] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize agents
@@ -447,6 +462,96 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
     if (action === 'BUY') return <ArrowUpCircle size={20} />;
     if (action === 'SELL') return <ArrowDownCircle size={20} />;
     return <Minus size={20} />;
+  };
+
+  // Generate AI predictions for next 15-30 minutes
+  const generatePredictions = async () => {
+    if (!currentSnapshot || historyLog.length < 10) {
+      alert('Need at least 10 historical snapshots to generate predictions');
+      return;
+    }
+
+    setIsPredicting(true);
+    try {
+      // Calculate trends from recent history
+      const recentHistory = historyLog.slice(0, 20); // Last 20 snapshots
+      
+      // Calculate average momentum
+      const avgMomentum = recentHistory.slice(0, 10).reduce((sum, snap, idx) => {
+        if (idx === 0) return 0;
+        return sum + (snap.niftyLtp - recentHistory[idx - 1].niftyLtp);
+      }, 0) / 10;
+
+      // Calculate sentiment trends
+      const sentimentTrend = currentSnapshot.overallSent - 
+        (recentHistory.slice(0, 5).reduce((sum, s) => sum + s.overallSent, 0) / 5);
+      
+      const pcrTrend = currentSnapshot.pcr - 
+        (recentHistory.slice(0, 5).reduce((sum, s) => sum + s.pcr, 0) / 5);
+
+      // Generate predictions for next 6 intervals (30 minutes if 5-min intervals)
+      const newPredictions: PredictedSnapshot[] = [];
+      const currentTime = new Date();
+      let lastPrice = currentSnapshot.niftyLtp;
+      let lastSentiment = currentSnapshot.overallSent;
+      let lastPcr = currentSnapshot.pcr;
+
+      for (let i = 1; i <= 6; i++) {
+        // Prediction time
+        const predTime = new Date(currentTime.getTime() + i * 5 * 60000); // 5 min intervals
+        
+        // Price prediction with momentum decay
+        const momentumDecay = 0.85; // Momentum reduces over time
+        const priceDelta = avgMomentum * Math.pow(momentumDecay, i);
+        const predictedPrice = lastPrice + priceDelta;
+
+        // Sentiment prediction with mean reversion
+        const sentimentMeanReversion = 0.7;
+        const sentimentDelta = sentimentTrend * Math.pow(sentimentMeanReversion, i);
+        const predictedSentiment = Math.max(-100, Math.min(100, 
+          lastSentiment + sentimentDelta
+        ));
+
+        // PCR prediction
+        const pcrDelta = pcrTrend * Math.pow(0.8, i);
+        const predictedPcr = Math.max(0.5, Math.min(2.0, lastPcr + pcrDelta));
+
+        // Derive other metrics
+        const predictedStockSent = predictedSentiment * (0.8 + Math.random() * 0.4);
+        const predictedOptionsSent = (predictedPcr > 1 ? 1 : -1) * 
+          (30 + Math.abs(predictedPcr - 1) * 50);
+
+        // Confidence decreases over time
+        const confidence = Math.max(40, 85 - i * 8);
+
+        newPredictions.push({
+          time: predTime.toLocaleTimeString('en-IN', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false 
+          }),
+          niftyLtp: predictedPrice,
+          ptsChg: predictedPrice - lastPrice,
+          overallSent: predictedSentiment,
+          stockSent: predictedStockSent,
+          optionsSent: predictedOptionsSent,
+          pcr: predictedPcr,
+          confidence
+        });
+
+        lastPrice = predictedPrice;
+        lastSentiment = predictedSentiment;
+        lastPcr = predictedPcr;
+      }
+
+      setPredictions(newPredictions);
+      setShowPredictions(true);
+    } catch (error) {
+      console.error('Prediction error:', error);
+      alert('Failed to generate predictions');
+    } finally {
+      setIsPredicting(false);
+    }
   };
 
   const handleImportCSV = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -869,6 +974,127 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
             </div>
           </div>
         </div>
+
+        {/* AI Prediction Table */}
+        {historyLog.length > 0 && (
+          <div className="glass-panel rounded-xl p-6 border border-purple-500/30 bg-purple-500/5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-purple-600 rounded-lg">
+                  <Sparkles size={20} className="text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white">AI Predictions</h2>
+                  <p className="text-xs text-slate-400">Next 30 minutes forecast</p>
+                </div>
+              </div>
+              <button
+                onClick={generatePredictions}
+                disabled={isPredicting || historyLog.length < 10}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 transition-all text-sm"
+              >
+                {isPredicting ? (
+                  <>
+                    <Activity className="animate-spin" size={14} />
+                    Predicting...
+                  </>
+                ) : (
+                  <>
+                    <Brain size={14} />
+                    Generate Predictions
+                  </>
+                )}
+              </button>
+            </div>
+
+            {showPredictions && predictions.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-center border-collapse">
+                  <thead className="text-slate-400 uppercase text-[10px] font-bold tracking-widest border-b border-white/10">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Time</th>
+                      <th className="px-2 py-3">Nifty LTP</th>
+                      <th className="px-2 py-3">Pts Chg</th>
+                      <th className="px-2 py-3 border-l border-white/5">Overall Sent</th>
+                      <th className="px-2 py-3">Stock Sent</th>
+                      <th className="px-2 py-3">Option Sent</th>
+                      <th className="px-2 py-3 border-l border-white/5">PCR</th>
+                      <th className="px-2 py-3 border-l border-white/5">Confidence</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {predictions.map((pred, idx) => (
+                      <tr key={idx} className="hover:bg-white/5 transition-colors">
+                        <td className="px-4 py-3 text-left font-bold text-purple-400 text-xs font-mono">
+                          {pred.time}
+                        </td>
+                        <td className="px-2 py-3 font-mono text-sm text-white">
+                          {pred.niftyLtp.toFixed(2)}
+                        </td>
+                        <td className={`px-2 py-3 font-mono text-sm font-bold ${
+                          pred.ptsChg >= 0 ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {pred.ptsChg > 0 ? '+' : ''}{pred.ptsChg.toFixed(1)}
+                        </td>
+                        <td className="px-2 py-3 border-l border-white/5 font-bold text-sm">
+                          <span className={pred.overallSent >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {pred.overallSent > 0 ? '+' : ''}{pred.overallSent.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="px-2 py-3 text-sm">
+                          <span className={pred.stockSent >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {pred.stockSent > 0 ? '+' : ''}{pred.stockSent.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="px-2 py-3 text-sm">
+                          <span className={pred.optionsSent >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {pred.optionsSent > 0 ? '+' : ''}{pred.optionsSent.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className={`px-2 py-3 border-l border-white/5 font-mono text-sm font-bold ${
+                          pred.pcr > 1 ? 'text-green-400' : pred.pcr < 0.7 ? 'text-red-400' : 'text-blue-300'
+                        }`}>
+                          {pred.pcr.toFixed(2)}
+                        </td>
+                        <td className="px-2 py-3 border-l border-white/5">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-slate-800 rounded-full h-2 overflow-hidden">
+                              <div
+                                className="h-full bg-purple-500 transition-all"
+                                style={{ width: `${pred.confidence}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-bold text-purple-400 min-w-[35px]">
+                              {pred.confidence}%
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                
+                <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-start gap-3">
+                  <AlertTriangle size={16} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs text-slate-300">
+                    <p className="font-bold text-yellow-400 mb-1">Prediction Disclaimer</p>
+                    <p>These are AI-generated forecasts based on recent trends and patterns. Actual market movements may vary significantly. Use for reference only.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!showPredictions && (
+              <div className="text-center py-8 text-slate-500">
+                <Brain size={48} className="mx-auto mb-4 opacity-50" />
+                <p className="text-sm">Click "Generate Predictions" to forecast next 30 minutes</p>
+                <p className="text-xs mt-2 text-slate-600">
+                  Requires at least 10 historical snapshots
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
