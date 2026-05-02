@@ -149,12 +149,41 @@ const App: React.FC = () => {
                   console.log(`📥 Loaded ${historyData.data.length} snapshots from Redis`);
                   
                   // Convert Redis data to MarketSnapshot format
-                  const redisSnapshots = historyData.data.map((snap: any) => ({
-                    timestamp: snap.timestamp,
-                    timeStr: new Date(snap.timestamp).toLocaleTimeString(),
-                    niftyLtp: snap.niftyLTP,
-                    // Add other fields as needed from your snapshot format
-                  }));
+                  const redisSnapshots: MarketSnapshot[] = historyData.data.map((snap: any) => {
+                    const stocks = snap.stocks || [];
+                    const niftyLTP = snap.niftyLTP || 0;
+                    
+                    // Calculate metrics from stock data
+                    const adv = stocks.filter((s: any) => s.ch > 0).length;
+                    const dec = stocks.filter((s: any) => s.ch < 0).length;
+                    
+                    // Create proper MarketSnapshot
+                    return {
+                      timestamp: snap.timestamp,
+                      time: new Date(snap.timestamp).toLocaleTimeString('en-IN', { hour12: false }),
+                      niftyLtp: niftyLTP,
+                      ptsChg: 0, // Will be recalculated
+                      overallSent: 0,
+                      adv,
+                      dec,
+                      stockSent: 0,
+                      callSent: 0,
+                      putSent: 0,
+                      pcr: 0,
+                      optionsSent: 0,
+                      callsBuyQty: 0,
+                      callsSellQty: 0,
+                      putsBuyQty: 0,
+                      putsSellQty: 0,
+                      callsOI: 0,
+                      putsOI: 0
+                    };
+                  });
+                  
+                  // Calculate ptsChg between snapshots
+                  for (let i = 1; i < redisSnapshots.length; i++) {
+                    redisSnapshots[i].ptsChg = redisSnapshots[i].niftyLtp - redisSnapshots[i-1].niftyLtp;
+                  }
                   
                   // Merge with existing data if any
                   setHistoryLog(prev => {
@@ -165,10 +194,12 @@ const App: React.FC = () => {
                     );
                     return unique.sort((a, b) => a.timestamp - b.timestamp);
                   });
+                  
+                  console.log(`✅ Restored ${redisSnapshots.length} historical snapshots`);
                 }
               }
             } catch (err) {
-              console.log('ℹ️ No Redis history available yet');
+              console.log('ℹ️ No Redis history available yet:', err);
             }
             
             // Check if new trading day
@@ -699,7 +730,9 @@ const App: React.FC = () => {
                   callsBuyQty,
                   callsSellQty,
                   putsBuyQty,
-                  putsSellQty
+                  putsSellQty,
+                  callsOI,
+                  putsOI
               };
               setHistoryLog(prev => [...prev, snapshot]);
           }

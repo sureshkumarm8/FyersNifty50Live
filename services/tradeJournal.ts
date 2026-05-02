@@ -98,9 +98,9 @@ export class TradeJournal {
   private async loadFromDB() {
     try {
       await dbService.init();
-      const stored = await dbService.getItem(this.dbKey);
+      const stored = await dbService.getMeta(this.dbKey);
       if (stored) {
-        this.trades = JSON.parse(stored);
+        this.trades = stored;
       }
     } catch (e) {
       console.error('Failed to load trade journal:', e);
@@ -112,7 +112,7 @@ export class TradeJournal {
    */
   private async saveToDB() {
     try {
-      await dbService.setItem(this.dbKey, JSON.stringify(this.trades));
+      await dbService.setMeta(this.dbKey, this.trades);
     } catch (e) {
       console.error('Failed to save trade journal:', e);
     }

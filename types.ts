@@ -264,6 +264,8 @@ export interface MarketSnapshot {
   callsSellQty: number;
   putsBuyQty: number;
   putsSellQty: number;
+  callsOI: number;
+  putsOI: number;
 }
 
 // Local Session History for individual stocks
