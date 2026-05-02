@@ -43,7 +43,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // Get all snapshots from sorted set
+    // Get all snapshots from sorted set (newest first for display)
     const timestamps = await redis.zrange('snapshots:index', 0, -1, { rev: true });
     
     console.log('[History API] Found timestamps:', timestamps?.length || 0);

@@ -703,7 +703,8 @@ const App: React.FC = () => {
           const putSent = putSellDelta !== 0 ? ((putBuyDelta - putSellDelta) / Math.abs(putSellDelta)) * 100 : 0;
           const optionsSent = callSent - putSent;
 
-          const lastLogTime = historyLog.length > 0 ? historyLog[historyLog.length - 1].time : '';
+          // Check if we need to add a new snapshot (newest first, so check [0])
+          const lastLogTime = historyLog.length > 0 ? historyLog[0].time : '';
           const currentMin = timeStr.substring(0, 5); 
           const lastLogMin = lastLogTime.substring(0, 5);
 
@@ -728,7 +729,8 @@ const App: React.FC = () => {
                   callsOI,
                   putsOI
               };
-              setHistoryLog(prev => [...prev, snapshot]);
+              // Add new snapshot at the beginning (newest first)
+              setHistoryLog(prev => [snapshot, ...prev]);
           }
       }
 
