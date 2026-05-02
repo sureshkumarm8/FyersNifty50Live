@@ -510,8 +510,10 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
     const dataSource = historyLog.length > 0 ? historyLog : archivedSnapshots;
     const latestSnapshot = dataSource.length > 0 ? dataSource[0] : currentSnapshot;
     
+    console.log(`🔮 Prediction check: historyLog=${historyLog.length}, archived=${archivedSnapshots.length}, dataSource=${dataSource.length}`);
+    
     if (!latestSnapshot || dataSource.length < 10) {
-      alert(`Need at least 10 snapshots to generate predictions. Currently have: ${dataSource.length}`);
+      alert(`Need at least 10 snapshots to generate predictions. Currently have: ${dataSource.length} (Live: ${historyLog.length}, Archived: ${archivedSnapshots.length})`);
       return;
     }
 
@@ -1490,7 +1492,10 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
                 </div>
               </div>
               <button
-                onClick={generatePredictions}
+                onClick={() => {
+                  console.log(`🎯 Button clicked: historyLog=${historyLog.length}, archived=${archivedSnapshots.length}`);
+                  generatePredictions();
+                }}
                 disabled={isPredicting || (historyLog.length < 10 && archivedSnapshots.length < 10)}
                 className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 transition-all text-sm"
               >
