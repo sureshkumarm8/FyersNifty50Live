@@ -272,3 +272,51 @@ export const fetchNiftyIndexLTP = async (credentials: FyersCredentials): Promise
     return 0;
   }
 };
+
+// Fetch data from Redis (stored by cron job)
+// This avoids making duplicate API calls and uses pre-fetched data
+export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], niftyLTP: number } | null> => {
+  try {
+    const response = await fetch('/api/get-redis-data');
+    
+    if (!response.ok) {
+      console.warn('[PayTM Redis] No data available:', response.status);
+      return null;
+    }
+    
+    const result = await response.json();
+    
+    if (!result.success || !result.data) {
+      console.warn('[PayTM Redis] Invalid response structure');
+      return null;
+    }
+    
+    const snapshot = result.data;
+    
+    // Convert raw PayTM data to FyersQuote format
+    const stocks: FyersQuote[] = [];
+    if (snapshot.stocks && Array.isArray(snapshot.stocks)) {
+      snapshot.stocks.forEach((paytmQuote: any) => {
+        try {
+          if (paytmQuote.found !== false) {
+            const quote = convertPayTMToFyersQuote(paytmQuote);
+            stocks.push(quote);
+          }
+        } catch (err) {
+          console.error('[PayTM Redis] Error converting quote:', err);
+        }
+      });
+    }
+    
+    console.log(`[PayTM Redis] ✅ Loaded ${stocks.length} stocks from Redis (Timestamp: ${new Date(snapshot.timestamp).toLocaleTimeString()})`);
+    
+    return {
+      stocks,
+      niftyLTP: snapshot.niftyLTP || 0
+    };
+    
+  } catch (error) {
+    console.error('[PayTM Redis] Fetch error:', error);
+    return null;
+  }
+};

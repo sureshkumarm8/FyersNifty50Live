@@ -15,7 +15,7 @@ import UnifiedAutoTrade from './components/UnifiedAutoTrade';
 import PatternDashboard from './components/PatternDashboard';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
-import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP } from './services/paytmService';
+import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP, fetchPayTMFromRedis } from './services/paytmService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
 import { dbService } from './services/db';
 import { lifecycleManager } from './services/lifecycleManager';
@@ -583,10 +583,23 @@ const App: React.FC = () => {
       
       if (credentials.dataProvider === 'paytm') {
         console.log('[App] Using PayTM Money API');
-        stockData = await fetchPayTMStocks(credentials);
-        console.log(`📊 [Mobile Debug] Fetched ${stockData.length} stocks from PayTM`);
-        niftyLtpVal = await fetchNiftyIndexLTP(credentials);
-        console.log(`📊 [Mobile Debug] Nifty LTP: ${niftyLtpVal}`);
+        
+        // Try to fetch from Redis first (pre-fetched by cron job)
+        const redisData = await fetchPayTMFromRedis();
+        
+        if (redisData && redisData.stocks.length > 0) {
+          // Use Redis data (already fetched by cron job)
+          console.log(`✅ [PayTM] Using Redis data: ${redisData.stocks.length} stocks`);
+          stockData = redisData.stocks;
+          niftyLtpVal = redisData.niftyLTP;
+        } else {
+          // Fallback: Fetch directly from PayTM API
+          console.log('⚠️ [PayTM] No Redis data, fetching directly from API');
+          stockData = await fetchPayTMStocks(credentials);
+          console.log(`📊 [Mobile Debug] Fetched ${stockData.length} stocks from PayTM`);
+          niftyLtpVal = await fetchNiftyIndexLTP(credentials);
+          console.log(`📊 [Mobile Debug] Nifty LTP: ${niftyLtpVal}`);
+        }
       } else {
         console.log('[App] Using Fyers API');
         stockData = await fetchQuotes(NIFTY50_SYMBOLS, credentials);
