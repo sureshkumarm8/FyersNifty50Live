@@ -127,6 +127,15 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
       const userMsg = overrideInput || input;
       if (!userMsg.trim() || isLoading) return;
       
+      // Check if AI History is enabled
+      if (credentials.aiHistoryEnabled === false) {
+          setMessages(prev => [...prev, { 
+              role: 'model', 
+              text: 'AI is disabled for History screen. Enable it in Settings > AI Usage tab.' 
+          }]);
+          return;
+      }
+
       if (!overrideInput) setInput('');
       setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
       setIsLoading(true);
@@ -160,85 +169,87 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
       
       {/* --- Main Table Panel --- */}
       <div className={`flex flex-col h-full glass-panel rounded-2xl overflow-hidden shadow-2xl transition-all duration-300 ${isAiOpen ? 'w-[55%] hidden sm:flex' : 'w-full'}`}>
-          <div className="p-5 border-b border-white/10 glass-header flex items-center justify-between">
-              <h2 className="text-lg font-bold text-blue-400 flex items-center gap-3 uppercase tracking-wider">
-                 <Clock size={20} className="text-blue-500" />
-                 Day Sentiment & Momentum History
+          <div className="p-3 sm:p-5 border-b border-white/10 glass-header flex items-center justify-between">
+              <h2 className="text-sm sm:text-lg font-bold text-blue-400 flex items-center gap-2 sm:gap-3 uppercase tracking-wider">
+                 <Clock size={16} className="text-blue-500 sm:w-5 sm:h-5" />
+                 <span className="hidden sm:inline">Day Sentiment & Momentum History</span>
+                 <span className="sm:hidden">History</span>
               </h2>
-              <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-900/50 px-3 py-1 rounded-full border border-white/5">
+              <div className="flex items-center gap-1 sm:gap-3">
+                  <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 bg-slate-900/50 px-3 py-1 rounded-full border border-white/5">
                      <Activity size={14} className="animate-pulse text-green-500" />
                      Live Feed (1 min)
                   </div>
                   <button 
                       onClick={() => downloadCSV(history, 'market_history_log')}
-                      className="p-2 rounded-lg bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                      className="p-1.5 sm:p-2 rounded-lg bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
                       title="Export CSV"
                   >
-                      <Download size={16} />
+                      <Download size={14} className="sm:w-4 sm:h-4" />
                   </button>
                   <button 
                     onClick={() => setIsAiOpen(!isAiOpen)}
                     disabled={aiEnabled === false}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold ${aiEnabled === false ? 'opacity-50 cursor-not-allowed bg-slate-800 text-slate-500' : isAiOpen ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-white/10 hover:bg-slate-700 hover:text-white'}`}
+                    className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border transition-all text-[10px] sm:text-xs font-bold ${aiEnabled === false ? 'opacity-50 cursor-not-allowed bg-slate-800 text-slate-500' : isAiOpen ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-white/10 hover:bg-slate-700 hover:text-white'}`}
                   >
-                      {isAiOpen ? <ChevronRight size={14}/> : <Bot size={14} />}
-                      {aiEnabled === false ? 'AI Disabled' : isAiOpen ? 'Close AI' : 'Analyze with AI'}
+                      {isAiOpen ? <ChevronRight size={12} className="sm:w-3.5 sm:h-3.5"/> : <Bot size={12} className="sm:w-3.5 sm:h-3.5" />}
+                      <span className="hidden sm:inline">{aiEnabled === false ? 'AI Disabled' : isAiOpen ? 'Close AI' : 'Analyze with AI'}</span>
+                      <span className="sm:hidden">{aiEnabled === false ? 'Off' : isAiOpen ? 'AI' : 'AI'}</span>
                   </button>
               </div>
           </div>
           
           <div className="flex-1 overflow-auto custom-scrollbar">
              <table className="w-full text-sm text-center border-collapse">
-                <thead className="sticky top-0 glass-header text-slate-500 uppercase text-[10px] font-bold tracking-widest z-10">
+                <thead className="sticky top-0 glass-header text-slate-500 uppercase text-[9px] sm:text-[10px] font-bold tracking-widest z-10">
                    <tr>
-                      <th className="px-4 py-3 text-left">Time</th>
-                      <th className="px-2 py-3">Nifty LTP</th>
-                      <th className="px-2 py-3">Pts Chg</th>
-                      <th className="px-2 py-3 border-l border-white/5">Overall Sent.</th>
-                      <th className="px-2 py-3">Adv/Dec</th>
-                      <th className="px-2 py-3">Stk Str</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left">Time</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Nifty LTP</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Pts Chg</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Overall Sent.</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Adv/Dec</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Stk Str</th>
                       
-                      <th className="px-2 py-3 border-l border-white/5">Call Str</th>
-                      <th className="px-2 py-3">Put Str</th>
-                      <th className="px-2 py-3">PCR</th>
-                      <th className="px-2 py-3 bg-white/5">Opt Str</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Call Str</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Put Str</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">PCR</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 bg-white/5">Opt Str</th>
                       
-                      <th className="px-2 py-3 border-l border-white/5">Calls Buy/Sell (M)</th>
-                      <th className="px-2 py-3">Puts Buy/Sell (M)</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Calls Buy/Sell (M)</th>
+                      <th className="px-1 sm:px-2 py-2 sm:py-3">Puts Buy/Sell (M)</th>
                    </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5 bg-slate-900/20">
                    {history.map((snap, idx) => (
                      <tr key={idx} className="hover:bg-white/5 transition-colors group">
-                        <td className="px-4 py-3 text-left font-bold text-slate-300 font-mono border-r border-white/5 bg-slate-900/30 group-hover:text-blue-400">{snap.time}</td>
-                        <td className="px-2 py-3 font-mono text-slate-400 group-hover:text-white">{formatNumber(snap.niftyLtp)}</td>
-                        <td className={`px-2 py-3 font-mono font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-left font-bold text-slate-300 text-[10px] sm:text-sm font-mono border-r border-white/5 bg-slate-900/30 group-hover:text-blue-400">{snap.time}</td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm text-slate-400 group-hover:text-white">{formatNumber(snap.niftyLtp)}</td>
+                        <td className={`px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm font-bold ${snap.ptsChg >= 0 ? 'text-bull' : 'text-bear'}`}>
                            {snap.ptsChg > 0 ? '+' : ''}{snap.ptsChg.toFixed(1)}
                         </td>
                         
-                        <td className="px-2 py-3 border-l border-white/5 font-bold bg-white/5">{formatPercent(snap.overallSent)}</td>
-                        <td className="px-2 py-3 font-mono">
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 font-bold text-[10px] sm:text-sm bg-white/5">{formatPercent(snap.overallSent)}</td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm">
                            <span className="text-bull font-bold">{snap.adv}</span> / <span className="text-bear font-bold">{snap.dec}</span>
                         </td>
-                        <td className="px-2 py-3">{formatPercent(snap.stockSent)}</td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 text-[10px] sm:text-sm">{formatPercent(snap.stockSent)}</td>
                         
-                        <td className="px-2 py-3 border-l border-white/5">{formatPercent(snap.callSent)}</td>
-                        <td className="px-2 py-3">{formatPercent(snap.putSent)}</td>
-                        <td className={`px-2 py-3 font-mono font-bold ${snap.pcr > 1 ? 'text-bull' : snap.pcr < 0.7 ? 'text-bear' : 'text-blue-200'}`}>{snap.pcr.toFixed(2)}</td>
-                        <td className="px-2 py-3 font-bold bg-white/5 border-l border-white/5">{formatPercent(snap.optionsSent)}</td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 text-[10px] sm:text-sm">{formatPercent(snap.callSent)}</td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 text-[10px] sm:text-sm">{formatPercent(snap.putSent)}</td>
+                        <td className={`px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm font-bold ${snap.pcr > 1 ? 'text-bull' : snap.pcr < 0.7 ? 'text-bear' : 'text-blue-200'}`}>{snap.pcr.toFixed(2)}</td>
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 font-bold text-[10px] sm:text-sm bg-white/5 border-l border-white/5">{formatPercent(snap.optionsSent)}</td>
                         
-                        <td className="px-2 py-3 border-l border-white/5 font-mono text-xs opacity-80">
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 font-mono text-[9px] sm:text-xs opacity-80">
                            <span className="text-bull">{formatMillions(snap.callsBuyQty)}</span> <span className="text-slate-600">/</span> <span className="text-bear">{formatMillions(snap.callsSellQty)}</span>
                         </td>
-                        <td className="px-2 py-3 font-mono text-xs opacity-80">
+                        <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[9px] sm:text-xs opacity-80">
                            <span className="text-bull">{formatMillions(snap.putsBuyQty)}</span> <span className="text-slate-600">/</span> <span className="text-bear">{formatMillions(snap.putsSellQty)}</span>
                         </td>
                      </tr>
                    ))}
                    {history.length === 0 && (
                       <tr>
-                         <td colSpan={12} className="py-24 text-slate-600 font-mono uppercase tracking-widest text-xs">Waiting for Market Snapshot...</td>
+                         <td colSpan={12} className="py-12 sm:py-24 text-slate-600 font-mono uppercase tracking-widest text-[10px] sm:text-xs">Waiting for Market Snapshot...</td>
                       </tr>
                    )}
                 </tbody>

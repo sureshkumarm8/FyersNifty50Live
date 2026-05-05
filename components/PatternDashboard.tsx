@@ -8,17 +8,17 @@
  * - Historical comparison view
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   TrendingUp, TrendingDown, Clock, Target, BarChart3, Calendar,
   CheckCircle, AlertCircle, Search, Filter, ChevronRight, Zap,
-  Brain, Activity, ArrowRight, Eye, Sparkles, Download, History, X, Trash2
+  Brain, Activity, ArrowRight, Eye, Sparkles, Download, History, X, Trash2, Upload
 } from 'lucide-react';
 import { MarketSnapshot, Pattern, DailyArchive } from '../types';
 import { patternMiner } from '../services/patternMiner';
 import { lifecycleManager } from '../services/lifecycleManager';
 import { dbService } from '../services/db';
-import { downloadCSV } from '../services/csv';
+import { downloadCSV, importCSVFile } from '../services/csv';
 import { SentimentHistory } from './SentimentHistory';
 
 interface PatternDashboardProps {
@@ -40,6 +40,11 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
   const [filterConfidence, setFilterConfidence] = useState(0);
   const [isLoadingArchives, setIsLoadingArchives] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationMessage, setMigrationMessage] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load initial data
   useEffect(() => {
@@ -183,6 +188,202 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
       alert('❌ Pattern scan failed');
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const handleMigrateData = async () => {
+    if (!confirm('🔄 This will migrate all historical snapshots to daily archives. Continue?')) {
+      return;
+    }
+
+    setIsMigrating(true);
+    setMigrationMessage('Starting migration...');
+
+    try {
+      const result = await lifecycleManager.migrateHistoricalData();
+      
+      if (result.success) {
+        setMigrationMessage(`✅ ${result.message}`);
+        // Reload archives
+        await loadAllArchives();
+        await loadArchiveStats();
+      } else {
+        setMigrationMessage(`❌ ${result.message}`);
+      }
+    } catch (error) {
+      setMigrationMessage(`❌ Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsMigrating(false);
+      setTimeout(() => setMigrationMessage(null), 5000);
+    }
+  };
+
+  const handleImportCSV = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsImporting(true);
+    setImportMessage(`Importing ${files.length} file(s)...`);
+
+    try {
+      let importedCount = 0;
+      
+      console.log(`🔄 Importing ${files.length} file(s)`);
+      
+      // Process each file separately - each file = one date
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        console.log(`📄 Processing: ${file.name}`);
+        
+        const data = await importCSVFile(file);
+        if (data.length === 0) {
+          console.warn(`⚠️ No data in ${file.name}`);
+          continue;
+        }
+
+        console.log(`  ✓ Found ${data.length} rows`);
+
+        // Try to extract date from filename (e.g., "nifty_2024-01-15.csv" or "data_15-01-2024.csv")
+        let extractedDate: Date | null = null;
+        const datePatterns = [
+          /(\d{4})-(\d{2})-(\d{2})/, // YYYY-MM-DD
+          /(\d{2})-(\d{2})-(\d{4})/, // DD-MM-YYYY
+          /(\d{4})_(\d{2})_(\d{2})/, // YYYY_MM_DD
+          /(\d{2})_(\d{2})_(\d{4})/, // DD_MM_YYYY
+        ];
+        
+        for (const pattern of datePatterns) {
+          const match = file.name.match(pattern);
+          if (match) {
+            if (match[1].length === 4) {
+              // YYYY-MM-DD format
+              extractedDate = new Date(`${match[1]}-${match[2]}-${match[3]}`);
+            } else {
+              // DD-MM-YYYY format
+              extractedDate = new Date(`${match[3]}-${match[2]}-${match[1]}`);
+            }
+            if (!isNaN(extractedDate.getTime())) {
+              console.log(`  📅 Extracted date from filename: ${extractedDate.toDateString()}`);
+              break;
+            }
+          }
+        }
+
+        // Convert CSV rows to MarketSnapshot format
+        const snapshots: MarketSnapshot[] = data.map((row: any, idx: number) => {
+          // Parse timestamp - handle various formats
+          let timestamp: number;
+          const timeStr = row.timestamp || row.time;
+          
+          if (timeStr) {
+            const parsed = new Date(timeStr);
+            if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 2000) {
+              timestamp = parsed.getTime();
+            } else if (extractedDate) {
+              // Use extracted date + time from string
+              const timeMatch = String(timeStr).match(/(\d{2}):(\d{2}):(\d{2})/);
+              if (timeMatch) {
+                const dateWithTime = new Date(extractedDate);
+                dateWithTime.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2]), parseInt(timeMatch[3]));
+                timestamp = dateWithTime.getTime();
+              } else {
+                timestamp = extractedDate.getTime() + (idx * 60000); // Add minutes offset
+              }
+            } else {
+              timestamp = Date.now() + (idx * 60000);
+            }
+          } else if (extractedDate) {
+            timestamp = extractedDate.getTime() + (idx * 60000);
+          } else {
+            timestamp = Date.now() + (idx * 60000);
+          }
+          
+          return {
+            timestamp,
+            niftyLtp: Number(row.niftyLTP || row.niftyLtp || 0),
+            niftyChange: Number(row.change || row.niftyChange || 0),
+            niftyChangePercent: Number(row.changePercent || row.niftyChangePercent || 0),
+            overallSent: Number(row.sentiment || row.overallSent || 0),
+            pcr: Number(row.pcr || 0),
+            callOI: Number(row.callOI || 0),
+            putOI: Number(row.putOI || 0),
+            vix: Number(row.vix || 0),
+            bullishCount: Number(row.bullishStocks || row.bullishCount || 0),
+            bearishCount: Number(row.bearishStocks || row.bearishCount || 0),
+            stockSent: Number(row.momentum || row.stockSent || 0),
+            ptsChg: Number(row.change || row.ptsChg || 0)
+          };
+        });
+
+        // Sort by timestamp
+        snapshots.sort((a, b) => a.timestamp - b.timestamp);
+        
+        // Get date from first snapshot or extracted date
+        const date = extractedDate 
+          ? extractedDate.toDateString() 
+          : new Date(snapshots[0].timestamp).toDateString();
+        console.log(`  📅 Final date: ${date} (${snapshots.length} snapshots)`);
+        
+        // Check if already exists
+        const existingArchive = await dbService.getArchive(date);
+        if (existingArchive) {
+          console.log(`  ⏭️ Skipping - already exists`);
+          continue;
+        }
+        
+        // Create archive for this file/date
+        const prices = snapshots.map(s => s.niftyLtp);
+        const archive: DailyArchive = {
+          date,
+          snapshots,
+          sessionData: {},
+          summary: {
+            open: snapshots[0].niftyLtp,
+            high: Math.max(...prices),
+            low: Math.min(...prices),
+            close: snapshots[snapshots.length - 1].niftyLtp,
+            totalVolume: 0,
+            dominantSentiment: snapshots.reduce((sum, s) => sum + s.overallSent, 0) / snapshots.length,
+            avgPCR: snapshots.reduce((sum, s) => sum + s.pcr, 0) / snapshots.length,
+            topPerformer: '',
+            worstPerformer: '',
+            range: Math.max(...prices) - Math.min(...prices),
+            volatility: 0
+          },
+          metadata: {
+            totalTrades: 0,
+            pnl: 0,
+            winRate: 0,
+            patterns: []
+          }
+        };
+        
+        await dbService.archiveDailyData(date, archive);
+        console.log(`  ✅ Archived ${date}`);
+        importedCount++;
+      }
+
+      if (importedCount > 0) {
+        setImportMessage(`✅ Imported ${importedCount} day(s) of data!`);
+        // Reload archives to show new data
+        await loadAllArchives();
+        await loadArchiveStats();
+      } else {
+        setImportMessage('⚠️ No new data imported (may already exist)');
+      }
+      
+    } catch (error) {
+      console.error('❌ Import error:', error);
+      setImportMessage(`❌ Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsImporting(false);
+      setTimeout(() => {
+        setImportMessage(null);
+        // Reset file input to allow re-import
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }, 5000);
     }
   };
 
@@ -836,6 +1037,49 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
               )}
             </div>
 
+            {/* Show import button even when archives exist */}
+            <div className="mb-4 flex items-center justify-end gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                multiple
+                onChange={handleImportCSV}
+                className="hidden"
+                key={isImporting ? 'importing' : 'ready'}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImporting}
+                className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:bg-green-900 disabled:cursor-not-allowed text-white font-bold text-sm rounded-lg flex items-center gap-2 transition-all"
+                type="button"
+              >
+                {isImporting ? (
+                  <>
+                    <Activity className="animate-spin" size={14} />
+                    Importing...
+                  </>
+                ) : (
+                  <>
+                    <Upload size={14} />
+                    Import More
+                  </>
+                )}
+              </button>
+            </div>
+            
+            {importMessage && (
+              <div className={`mb-4 text-sm px-3 py-2 rounded-lg border ${
+                importMessage.startsWith('✅') 
+                  ? 'bg-green-500/10 border-green-500/30 text-green-400' 
+                  : importMessage.startsWith('⚠️')
+                  ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+                  : 'bg-red-500/10 border-red-500/30 text-red-400'
+              }`}>
+                {importMessage}
+              </div>
+            )}
+            
             {allArchives.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {allArchives.map((archive) => {
@@ -942,10 +1186,75 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
               </div>
             ) : (
               <div className="flex items-center justify-center h-64">
-                <div className="text-center text-slate-500">
-                  <Calendar size={48} className="mx-auto mb-4 opacity-50" />
-                  <p className="text-sm">No archives found</p>
-                  <p className="text-xs mt-2">Data will be archived daily at 3:45 PM IST</p>
+                <div className="text-center max-w-md">
+                  <Calendar size={48} className="mx-auto mb-4 opacity-50 text-slate-500" />
+                  <p className="text-sm text-slate-400 mb-2">No archives found</p>
+                  <p className="text-xs text-slate-500 mb-6">
+                    {migrationMessage || importMessage ? (
+                      <span className={(migrationMessage || importMessage)?.startsWith('✅') ? 'text-green-400' : 'text-red-400'}>
+                        {migrationMessage || importMessage}
+                      </span>
+                    ) : (
+                      'Data will be archived daily at 3:45 PM IST'
+                    )}
+                  </p>
+                  
+                  {/* Import & Migration Buttons */}
+                  <div className="space-y-3">
+                    {/* Hidden file input - Always render */}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".csv"
+                      multiple
+                      onChange={handleImportCSV}
+                      className="hidden"
+                      key={isImporting ? 'importing' : 'ready'}
+                    />
+                    
+                    <div className="flex gap-3 justify-center">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isImporting}
+                        className="px-6 py-3 bg-green-600 hover:bg-green-500 disabled:bg-green-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 transition-all shadow-lg"
+                        type="button"
+                      >
+                        {isImporting ? (
+                          <>
+                            <Activity className="animate-spin" size={16} />
+                            Importing...
+                          </>
+                        ) : (
+                          <>
+                            <Upload size={16} />
+                            Import CSV Data
+                          </>
+                        )}
+                      </button>
+                      
+                      <button
+                        onClick={handleMigrateData}
+                        disabled={isMigrating}
+                        className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 transition-all shadow-lg"
+                      >
+                        {isMigrating ? (
+                          <>
+                            <Activity className="animate-spin" size={16} />
+                            Migrating...
+                          </>
+                        ) : (
+                          <>
+                            <Download size={16} />
+                            Migrate Data
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                      Import CSV files with market data or migrate existing snapshots to archives
+                    </p>
+                  </div>
                 </div>
               </div>
             )}

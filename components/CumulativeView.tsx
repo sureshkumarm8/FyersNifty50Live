@@ -1,8 +1,8 @@
 
 
 import React, { useMemo, useState } from 'react';
-import { EnrichedFyersQuote, MarketSnapshot, ViewMode, StrategySignal, SectorMetric } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, Play, CheckCircle, ArrowUp, ArrowDown, Minus, BarChart3, ListFilter } from 'lucide-react';
+import { EnrichedFyersQuote, MarketSnapshot, ViewMode, SectorMetric } from '../types';
+import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, ArrowUp, ArrowDown, Minus, BarChart3, ListFilter } from 'lucide-react';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
@@ -12,9 +12,6 @@ interface CumulativeViewProps {
   onSelectStock: (symbol: string) => void;
   marketStatus?: string | null;
   // New AI Props
-  quantAnalysis?: StrategySignal | null;
-  isQuantAnalyzing?: boolean;
-  onRunQuantAnalysis?: () => void;
   sectors?: SectorMetric[];
   aiEnabled?: boolean;
 }
@@ -224,9 +221,6 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
     onNavigate, 
     onSelectStock, 
     marketStatus,
-    quantAnalysis,
-    isQuantAnalyzing,
-    onRunQuantAnalysis,
     sectors = [],
     aiEnabled
 }) => {
@@ -518,48 +512,8 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
                              </div>
                              <h2 className="text-xs font-bold text-indigo-200 uppercase tracking-widest">AI Quant Insight</h2>
                         </div>
-                        {quantAnalysis && (
-                             <span className="text-[10px] text-slate-500 font-mono">Last: {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                        )}
                     </div>
-
-                    {quantAnalysis ? (
-                        <div className="animate-in fade-in duration-300">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className={`text-2xl font-black tracking-tight ${quantAnalysis.signal === 'LONG' ? 'text-emerald-400' : quantAnalysis.signal === 'SHORT' ? 'text-rose-400' : 'text-yellow-400'}`}>
-                                    {quantAnalysis.signal}
-                                </span>
-                                <span className="text-xs font-bold text-slate-400 px-2 py-1 bg-slate-800/50 rounded border border-white/5">
-                                    {quantAnalysis.confidence_score}% Conf.
-                                </span>
-                            </div>
-                            <p className="text-xs text-slate-300 leading-relaxed line-clamp-2 mb-2">
-                                {quantAnalysis.primary_reason}
-                            </p>
-                            {quantAnalysis.suggested_trade && (
-                                <div className="flex items-center gap-2 text-[10px] text-slate-400">
-                                    <CheckCircle size={10} className="text-indigo-400" />
-                                    <span>Strategy: <span className="text-white">{quantAnalysis.suggested_trade.strategy_type.replace('_', ' ')}</span></span>
-                                </div>
-                            )}
-                        </div>
-                    ) : (
-                        <div className="text-center py-4">
-                            <p className="text-xs text-slate-500 mb-2">
-                                {aiEnabled === false ? "AI features are currently disabled." : "No AI analysis generated yet."}
-                            </p>
-                        </div>
-                    )}
                 </div>
-
-                <button 
-                    onClick={onRunQuantAnalysis}
-                    disabled={isQuantAnalyzing || aiEnabled === false}
-                    className={`mt-4 w-full py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all ${isQuantAnalyzing || aiEnabled === false ? 'bg-slate-800 text-slate-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
-                >
-                    {isQuantAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
-                    {aiEnabled === false ? 'AI Disabled' : isQuantAnalyzing ? 'Analyzing Market...' : 'Run AI Scan'}
-                </button>
            </div>
        </div>
 

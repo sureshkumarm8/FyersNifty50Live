@@ -1,7 +1,7 @@
 
 
 
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'quant' | 'premarket' | 'autotrade' | 'patterns';
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'premarket' | 'autotrade' | 'patterns';
 
 export interface FyersCredentials {
   appId: string;
@@ -16,6 +16,11 @@ export interface FyersCredentials {
   groqModel?: string;
   geminiModel?: string;
   claudeModel?: string;
+  
+  // AI Feature Switches by Screen/Component
+  aiAutoTradeEnabled?: boolean;     // SniperScope in AutoTrade
+  aiLabEnabled?: boolean;           // AI Lab (Chat + Voice)
+  aiHistoryEnabled?: boolean;       // Sentiment Analysis in History
   
   // PayTM Money Integration
   dataProvider?: 'fyers' | 'paytm';

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain, Sparkles } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
@@ -9,11 +9,11 @@ import { CumulativeView } from './components/CumulativeView';
 import { SentimentHistory } from './components/SentimentHistory';
 import { SettingsScreen } from './components/SettingsScreen';
 import { AIView } from './components/AIView';
-import { AIQuantDeck } from './components/AIQuantDeck';
+import AILab from './components/AILab';
 import { PreMarketAnalyzer } from './components/PreMarketAnalyzer';
 import UnifiedAutoTrade from './components/UnifiedAutoTrade';
 import PatternDashboard from './components/PatternDashboard';
-import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, AnalysisRecord, StrategySignal, SectorMetric, PivotPoints } from './types';
+import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP } from './services/paytmService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
@@ -35,6 +35,10 @@ const App: React.FC = () => {
       };
       if (parsed.aiEnabled === undefined) parsed.aiEnabled = true;
       if (parsed.dataProvider === undefined) parsed.dataProvider = 'paytm';
+      // Default all AI features to enabled by screen
+      if (parsed.aiAutoTradeEnabled === undefined) parsed.aiAutoTradeEnabled = true;
+      if (parsed.aiLabEnabled === undefined) parsed.aiLabEnabled = true;
+      if (parsed.aiHistoryEnabled === undefined) parsed.aiHistoryEnabled = true;
       return parsed;
     } catch (e) {
       return { 
@@ -42,7 +46,10 @@ const App: React.FC = () => {
         accessToken: '', 
         refreshInterval: REFRESH_OPTIONS[3].value, 
         aiEnabled: true,
-        dataProvider: 'paytm'
+        dataProvider: 'paytm',
+        aiAutoTradeEnabled: true,
+        aiLabEnabled: true,
+        aiHistoryEnabled: true
       };
     }
   });
@@ -51,6 +58,7 @@ const App: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
   const [error, setError] = useState<string | null>(null);
+  const [quantError, setQuantError] = useState<string | null>(null);
   const [marketStatusMsg, setMarketStatusMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isDbLoaded, setIsDbLoaded] = useState(false); // New flag for DB hydration
@@ -67,12 +75,8 @@ const App: React.FC = () => {
   // Data States
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
   const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>({});
-
-  // AI Quant State (Lifted)
-  const [quantAnalysis, setQuantAnalysis] = useState<StrategySignal | null>(null);
-  const [quantHistory, setQuantHistory] = useState<AnalysisRecord[]>([]);
-  const [isQuantAnalyzing, setIsQuantAnalyzing] = useState(false);
-  const [quantError, setQuantError] = useState<string | null>(null);
+  const [quantHistory, setQuantHistory] = useState<any[]>([]);
+  const [quantAnalysis, setQuantAnalysis] = useState<any>(null);
 
   const [apiStats, setApiStats] = useState<APIStats>({
     lastMinute: 0,
@@ -100,19 +104,6 @@ const App: React.FC = () => {
   
   const prevNiftyLtpRef = useRef<number | null>(null);
   const didFetchPivots = useRef(false);
-  
-  // Refs for Quant Analysis to prevent recreation
-  const historyLogRef = useRef(historyLog);
-  const stocksRefForQuant = useRef(stocks);
-  const niftyLtpRefForQuant = useRef(niftyLtp);
-  const pivotsRefForQuant = useRef(pivots);
-  
-  useEffect(() => {
-    historyLogRef.current = historyLog;
-    stocksRefForQuant.current = stocks;
-    niftyLtpRefForQuant.current = niftyLtp;
-    pivotsRefForQuant.current = pivots;
-  }, [historyLog, stocks, niftyLtp, pivots]);
 
   // --- 1. Database Hydration & Config Loading (On Mount) ---
   useEffect(() => {
@@ -272,23 +263,6 @@ const App: React.FC = () => {
     return unsubscribe;
   }, []);
 
-  // --- 1.1 Quant History Hydration ---
-  useEffect(() => {
-    const today = new Date().toDateString();
-    const key = `quant_history_${today}`;
-    try {
-        const saved = localStorage.getItem(key);
-        if (saved) {
-            const parsed = JSON.parse(saved);
-            setQuantHistory(parsed);
-            if (parsed.length > 0) {
-                setQuantAnalysis(parsed[0].signal);
-            }
-        }
-    } catch (e) {
-        console.error("Failed to load quant history", e);
-    }
-  }, []);
 
   // --- 1.2 Pivot Calculation (One-time) ---
   useEffect(() => {
@@ -350,16 +324,6 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [sessionHistory, isDbLoaded]);
 
-  // Save Quant History
-  useEffect(() => {
-      const today = new Date().toDateString();
-      const key = `quant_history_${today}`;
-      try {
-        localStorage.setItem(key, JSON.stringify(quantHistory));
-      } catch (e) {
-          console.error("Failed to save quant history", e);
-      }
-  }, [quantHistory]);
 
   const saveCredentials = (newCreds: FyersCredentials) => {
     setCredentials(newCreds); 
@@ -833,252 +797,6 @@ const App: React.FC = () => {
     }
   }, [isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval, credentials.bypassMarketHours]);
 
-  // --- Hybrid Quant Logic (AI + Local Heuristic) ---
-  const runQuantAnalysis = useCallback(async () => {
-    console.log('[Quant] runQuantAnalysis called, isAnalyzing:', isQuantAnalyzing);
-    if (isQuantAnalyzing) {
-      console.log('[Quant] Already analyzing, skipping...');
-      return;
-    }
-    
-    const history = historyLogRef.current;
-    const currentStocks = stocksRefForQuant.current;
-    const nifty = niftyLtpRefForQuant.current;
-    const currentPivots = pivotsRefForQuant.current;
-    
-    // Check local fallback condition - use provider-specific key check
-    const hasValidKey = credentials.aiProvider === 'groq' 
-      ? credentials.groqApiKey 
-      : credentials.googleApiKey;
-    const useLocalEngine = !credentials.aiEnabled || !hasValidKey;
-    
-    // DEBUG LOGS
-    const debugLog = {
-      timestamp: new Date().toISOString(),
-      aiEnabled: credentials.aiEnabled,
-      aiProvider: credentials.aiProvider || 'gemini (default)',
-      hasGroqKey: !!credentials.groqApiKey,
-      hasGeminiKey: !!credentials.googleApiKey,
-      hasValidKey,
-      useLocalEngine,
-      niftyLtp: nifty
-    };
-    console.log('%c🔍 QUANT ANALYSIS START', 'color: blue; font-weight: bold; font-size: 14px;');
-    console.table(debugLog);
-    
-    setIsQuantAnalyzing(true);
-    setQuantError(null);
-
-    try {
-      let result: StrategySignal;
-
-      if (useLocalEngine) {
-          // --- LOCAL HEURISTIC ENGINE ---
-          console.log('%c📊 Using LOCAL HEURISTIC ENGINE', 'color: orange; font-weight: bold; font-size: 12px;');
-          console.log('Reason:', {
-            aiDisabled: !credentials.aiEnabled,
-            noApiKey: !hasValidKey,
-            provider: credentials.aiProvider
-          });
-          
-          if (history.length < 5 || !nifty) {
-              throw new Error("Insufficient data for Local Analysis. Need at least 5 mins of history.");
-          }
-          
-          const latest = history[history.length - 1];
-          const fiveMinsAgo = history[Math.max(0, history.length - 5)];
-          
-          const priceChange = latest.niftyLtp - fiveMinsAgo.niftyLtp;
-          const flow = latest.optionsSent;
-          const pcr = latest.pcr;
-          
-          // Basic Trend Logic
-          let signal: "LONG" | "SHORT" | "NO_TRADE" = "NO_TRADE";
-          let confidence = 50;
-          let reason = "Market is consolidating.";
-          let marketCond: any = "SIDEWAYS";
-          
-          if (priceChange > 10 && flow > 10 && pcr > 0.8) {
-              signal = "LONG";
-              confidence = Math.min(60 + (priceChange), 95);
-              reason = `Strong Momentum (+${priceChange.toFixed(1)}pts) confirmed by Option Flow (+${flow.toFixed(1)}%).`;
-              marketCond = "TRENDING_UP";
-          } else if (priceChange < -10 && flow < -10 && pcr < 1.2) {
-              signal = "SHORT";
-              confidence = Math.min(60 + Math.abs(priceChange), 95);
-              reason = `Bearish Momentum (${priceChange.toFixed(1)}pts) confirmed by Put writing and flow.`;
-              marketCond = "TRENDING_DOWN";
-          } else if (Math.abs(priceChange) < 10 && Math.abs(flow) > 30) {
-              reason = "Divergence detected: Price is flat but Flow is aggressive.";
-              marketCond = "VOLATILE";
-          }
-
-          // Strike Selection Logic (Simple ATM +/-)
-          const strikeStep = 50;
-          const atm = Math.round(nifty / 50) * 50;
-          const targetStrike = signal === 'LONG' ? atm + 100 : signal === 'SHORT' ? atm - 100 : atm;
-          
-          result = {
-              market_condition: marketCond,
-              signal: signal,
-              confidence_score: Math.round(confidence),
-              primary_reason: reason,
-              risk_level: Math.abs(flow) > 50 ? "HIGH" : "MEDIUM",
-              suggested_trade: {
-                  instrument: "NIFTY OPTIONS",
-                  strategy_type: signal === 'LONG' ? 'BULL_CALL_SPREAD' : signal === 'SHORT' ? 'BEAR_PUT_SPREAD' : 'IRON_CONDOR',
-                  ideal_strike: `${targetStrike} ${signal === 'LONG' ? 'CE' : 'PE'}`,
-                  stop_loss_ref: signal === 'LONG' ? niftyLtp - 30 : niftyLtp + 30,
-                  target_ref: signal === 'LONG' ? niftyLtp + 60 : niftyLtp - 60
-              },
-              hidden_anomaly: {
-                  detected: Math.abs(priceChange) < 5 && Math.abs(flow) > 40,
-                  stock_symbol: "N/A",
-                  description: "Potential accumulation/distribution phase detected via Local Engine."
-              }
-          };
-          
-          // Fake delay for UX
-          await new Promise(resolve => setTimeout(resolve, 800));
-
-      } else {
-          // --- AI ENGINE (Gemini or Groq) ---
-          const provider = credentials.aiProvider || 'gemini';
-          console.log(`%c🤖 Using ${provider.toUpperCase()} AI ENGINE`, `color: ${provider === 'groq' ? 'purple' : 'green'}; font-weight: bold; font-size: 12px;`);
-          
-          const last15Mins = history.slice(-15);
-          const latest = last15Mins[last15Mins.length - 1];
-          
-          const topFlow = currentStocks
-              .sort((a,b) => (b.day_net_strength || 0) - (a.day_net_strength || 0))
-              .slice(0, 3)
-              .map(s => `${s.short_name}(NetStr:${s.day_net_strength?.toFixed(1)}%)`);
-
-          const dataContext = JSON.stringify({
-             nifty_ltp: nifty,
-             snapshot: {
-                time: latest?.time,
-                overall_sentiment_weighted: latest?.overallSent,
-                option_sentiment: latest?.optionsSent,
-                pcr: latest?.pcr,
-                net_call_flow: latest?.callsBuyQty - latest?.callsSellQty,
-                net_put_flow: latest?.putsBuyQty - latest?.putsSellQty
-             },
-             trend_history_last_15m: last15Mins.map(s => ({ t: s.time, ltp: s.niftyLtp, sent: s.overallSent })),
-             top_flow_stocks: topFlow,
-             pivot_levels: currentPivots ? `Pivot:${currentPivots.pivot}, R1:${currentPivots.r1}, S1:${currentPivots.s1}` : 'Unavailable'
-          });
-
-          const systemInstruction = `
-            You are an elite Algorithmic Trader. Analyze the JSON market data provided.
-            
-            RULES:
-            1. "overall_sentiment_weighted" is the most important metric. > 20 is Bullish, < -20 is Bearish.
-            2. "option_sentiment" confirms the trend. If Divergence exists (Price Up, Option Sent Down), signal caution.
-            3. PCR > 1.2 is Oversold/Support (Bullish), < 0.6 is Overbought/Resistance (Bearish) usually, but check trend.
-            4. Check Pivot levels. Buying below S1 is Contrarian. Buying above R1 is breakout.
-            
-            OUTPUT FORMAT:
-            Return ONLY valid JSON matching this schema:
-            {
-              "market_condition": "TRENDING_UP" | "TRENDING_DOWN" | "SIDEWAYS" | "VOLATILE",
-              "signal": "LONG" | "SHORT" | "NO_TRADE",
-              "confidence_score": number (0-100),
-              "primary_reason": "Short string explaining the main driver",
-              "risk_level": "LOW" | "MEDIUM" | "HIGH",
-              "suggested_trade": {
-                "instrument": "NIFTY OPTIONS",
-                "strategy_type": "BUY_CALL" | "BUY_PUT" | "BULL_SPREAD" | "BEAR_SPREAD" | "IRON_CONDOR",
-                "ideal_strike": "e.g., 24500 CE",
-                "stop_loss_ref": number (Nifty Spot Level),
-                "target_ref": number (Nifty Spot Level)
-              },
-              "hidden_anomaly": {
-                "detected": boolean,
-                "stock_symbol": "Stock Name or None",
-                "description": "Short description of flow divergence if any"
-              }
-            }
-          `;
-
-          // Use centralized callAI function (automatically tracks)
-          const responseText = await callAI(credentials, systemInstruction, `Analyze this market data: ${dataContext}`, { jsonMode: true });
-          
-          // Try to extract JSON from response
-          try {
-              result = JSON.parse(responseText);
-          } catch (e) {
-              const jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/) || responseText.match(/```\n?([\s\S]*?)\n?```/);
-              if (jsonMatch) {
-                  result = JSON.parse(jsonMatch[1]);
-              } else {
-                  throw new Error(`Could not parse AI response as JSON: ${responseText.substring(0, 200)}`);
-              }
-          }
-          console.log('%c📊 AI Analysis Result:', 'color: purple; font-weight: bold;', result);
-      }
-      
-      const newRecord: AnalysisRecord = {
-          id: Date.now().toString(),
-          timestamp: Date.now(),
-          timeStr: new Date().toLocaleTimeString(),
-          signal: result,
-          entryLtp: niftyLtp || 0
-      };
-
-      setQuantAnalysis(result);
-      setQuantHistory(prev => [newRecord, ...prev]);
-      
-      console.log('%c✅ QUANT ANALYSIS COMPLETE', 'color: blue; font-weight: bold; font-size: 14px;');
-      console.log('%c📈 Signal:', `color: ${result.signal === 'LONG' ? 'green' : result.signal === 'SHORT' ? 'red' : 'orange'}; font-weight: bold;`, result.signal);
-      console.log('%c🎯 Confidence:', 'color: cyan;', `${result.confidence_score}%`);
-      console.log('%c💡 Reason:', 'color: yellow;', result.primary_reason);
-
-    } catch (e: any) {
-        console.error('%c❌ QUANT ANALYSIS ERROR', 'color: red; font-weight: bold; font-size: 14px;', e.message);
-        setQuantError(e.message);
-    } finally {
-        setIsQuantAnalyzing(false);
-    }
-  }, [credentials.groqApiKey, credentials.googleApiKey, credentials.aiProvider, credentials.aiEnabled, isQuantAnalyzing]);
-
-  // --- Auto-Run Quant Analysis (Every 5 Mins) ---
-  useEffect(() => {
-      const checkAndRun = () => {
-          const history = historyLogRef.current;
-          
-          // Check if correct API key is present for the selected provider
-          const hasValidKey = credentials.aiProvider === 'groq' 
-            ? credentials.groqApiKey 
-            : credentials.googleApiKey;
-          const canRun = (credentials.aiEnabled && hasValidKey) || (!credentials.aiEnabled);
-          
-          if (!canRun || history.length === 0 || isQuantAnalyzing) return;
-
-          const lastRecord = quantHistory.length > 0 ? quantHistory[0] : null;
-          const lastTime = lastRecord ? lastRecord.timestamp : 0;
-          const now = Date.now();
-          
-          if (now - lastTime >= 300000) { // 5 minutes
-              const date = new Date();
-              const t = date.getHours() * 100 + date.getMinutes();
-              const isMarketHours = t >= 915 && t <= 1530;
-              
-              if (credentials.bypassMarketHours || isMarketHours) {
-                  console.log('[Quant] Auto-running analysis (5 min interval reached)');
-                  runQuantAnalysis();
-              }
-          }
-      };
-      
-      // Check every 30 seconds if we should run
-      const intervalId = setInterval(checkAndRun, 30000);
-      
-      // Also check immediately on mount
-      checkAndRun();
-      
-      return () => clearInterval(intervalId);
-  }, [quantHistory, isQuantAnalyzing, credentials, runQuantAnalysis]);
 
   const handleClearQuantHistory = () => {
     if(confirm("Clear today's analysis history?")) {
@@ -1181,9 +899,6 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('history')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'history' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Clock size={14} /> History
                </button>
-               <button onClick={() => handleSetViewMode('quant')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'quant' ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <BrainCircuit size={14} /> Quant
-               </button>
                <button onClick={() => handleSetViewMode('patterns')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'patterns' ? 'bg-purple-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Brain size={14} /> Patterns
                </button>
@@ -1193,8 +908,8 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('autotrade')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'autotrade' ? 'bg-purple-600 text-white shadow-md animate-pulse' : 'text-slate-400 hover:text-white'}`}>
                    <Layers size={14} /> AutoTrade
                </button>
-               <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <Bot size={14} /> Chat
+               <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Sparkles size={14} /> AI Lab
                </button>
            </div>
 
@@ -1283,9 +998,6 @@ const App: React.FC = () => {
                   onNavigate={handleSetViewMode}
                   onSelectStock={setSelectedStock}
                   marketStatus={marketStatusMsg}
-                  quantAnalysis={quantAnalysis}
-                  isQuantAnalyzing={isQuantAnalyzing}
-                  onRunQuantAnalysis={runQuantAnalysis}
                   sectors={sectors}
                   aiEnabled={credentials.aiEnabled}
                />
@@ -1369,31 +1081,14 @@ const App: React.FC = () => {
                 />
             </div>
         )}
-        
-        {viewMode === 'quant' && (
-            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
-                <AIQuantDeck 
-                   analysis={quantAnalysis}
-                   history={quantHistory}
-                   isAnalyzing={isQuantAnalyzing}
-                   onRunAnalysis={runQuantAnalysis}
-                   onClearHistory={handleClearQuantHistory}
-                   onSelectAnalysis={setQuantAnalysis}
-                   credentials={credentials}
-                   aiEnabled={credentials.aiEnabled}
-                />
-            </div>
-        )}
 
         {viewMode === 'ai' && (
-            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
-                <AIView 
-                   stocks={stocks}
+            <div className="flex flex-col h-full overflow-hidden">
+                <AILab 
+                   currentSnapshot={historyLog[0] || null}
                    niftyLtp={niftyLtp}
+                   stocks={stocks}
                    historyLog={historyLog}
-                   optionQuotes={optionQuotes}
-                   credentials={credentials}
-                   aiEnabled={credentials.aiEnabled}
                 />
             </div>
         )}

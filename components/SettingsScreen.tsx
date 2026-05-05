@@ -20,7 +20,7 @@ interface SettingsScreenProps {
   currentCreds: FyersCredentials;
 }
 
-type Tab = 'configs' | 'guide' | 'glossary' | 'review' | 'system' | 'ai-usage';
+type Tab = 'configs' | 'guide' | 'glossary' | 'review' | 'system' | 'ai-usage' | 'data-management';
 
 const DEFAULT_PROTOCOL: TradingSystemProtocol = {
   "name": "Nifty Sniper: The Office Protocol",
@@ -103,8 +103,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   // Live Trading Control
   const [liveOrdersEnabled, setLiveOrdersEnabled] = useState(currentCreds.liveOrdersEnabled || false);
   
+  // AI Screen Switches
+  const [aiAutoTradeEnabled, setAiAutoTradeEnabled] = useState(currentCreds.aiAutoTradeEnabled !== false);
+  const [aiLabEnabled, setAiLabEnabled] = useState(currentCreds.aiLabEnabled !== false);
+  const [aiHistoryEnabled, setAiHistoryEnabled] = useState(currentCreds.aiHistoryEnabled !== false);
+  
   // AI Usage Stats
   const [apiStats, setApiStats] = useState<APIStats>(apiCallTracker.getStats());
+  
+  // Data Management State
+  const [clearingHistory, setClearingHistory] = useState(false);
+  const [clearMessage, setClearMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  const [adminSecret, setAdminSecret] = useState(() => {
+    return localStorage.getItem('admin_secret') || '';
+  });
   
   // Protocol State
   const [protocolData, setProtocolData] = useState<TradingSystemProtocol>(() => {
@@ -157,7 +169,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       aiProvider: selectedAiProvider,
       dataProvider,
       paytmAccessToken,
-      liveOrdersEnabled
+      liveOrdersEnabled,
+      aiAutoTradeEnabled,
+      aiLabEnabled,
+      aiHistoryEnabled
     });
     onBack();
   };
@@ -182,6 +197,66 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         } catch (e) {
             alert("Failed to clear database. Please clear browser data manually.");
         }
+    }
+  };
+
+  // Data Management Functions
+  const handleClearHistory = async (action: 'all' | 'today' | 'old') => {
+    if (!adminSecret) {
+      setClearMessage({
+        type: 'error',
+        text: 'Admin secret is required. Please enter it in the Admin Secret field below.'
+      });
+      setTimeout(() => setClearMessage(null), 5000);
+      return;
+    }
+
+    const confirmMessages = {
+      all: '⚠️ This will delete ALL historical data from Redis. Continue?',
+      today: '⚠️ This will delete today\'s data from Redis. Continue?',
+      old: '⚠️ This will delete old data (keeping last 100 snapshots). Continue?'
+    };
+
+    if (!confirm(confirmMessages[action])) return;
+
+    setClearingHistory(true);
+    setClearMessage(null);
+
+    try {
+      const apiUrl = import.meta.env.PROD 
+        ? 'https://fyers-nifty50-live.vercel.app/api/clear-history'
+        : '/api/clear-history';
+      
+      const response = await fetch(`${apiUrl}?action=${action}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${adminSecret}`
+        }
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setClearMessage({
+          type: 'success',
+          text: result.message || `Successfully cleared ${action} data`
+        });
+        // Save admin secret if successful
+        localStorage.setItem('admin_secret', adminSecret);
+      } else {
+        setClearMessage({
+          type: 'error',
+          text: result.error || 'Failed to clear history'
+        });
+      }
+    } catch (error) {
+      setClearMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Network error occurred'
+      });
+    } finally {
+      setClearingHistory(false);
+      setTimeout(() => setClearMessage(null), 5000);
     }
   };
 
@@ -495,6 +570,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'ai-usage' ? 'border-purple-500 text-purple-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
             >
                 <Bot size={16} /> AI Usage
+            </button>
+            <button 
+                onClick={() => setActiveTab('data-management')}
+                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'data-management' ? 'border-red-500 text-red-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            >
+                <Trash2 size={16} /> Data Management
             </button>
         </div>
       </header>
@@ -1315,6 +1396,105 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
         {activeTab === 'ai-usage' && (
             <div className="max-w-6xl mx-auto animate-in slide-in-from-bottom-4 duration-300 pb-20">
+                {/* AI Feature Controls by Screen */}
+                <div className="glass-panel p-6 rounded-xl mb-6 border border-blue-500/30">
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <Zap size={20} className="text-blue-400" />
+                        AI Controls by Screen
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* AutoTrade Screen */}
+                        <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                            <div>
+                                <div className="font-bold text-white flex items-center gap-2">
+                                    🎯 AutoTrade Screen
+                                </div>
+                                <div className="text-xs text-slate-400 mt-1">Sniper Scope signals</div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const newValue = !aiAutoTradeEnabled;
+                                    setAiAutoTradeEnabled(newValue);
+                                    // Save immediately
+                                    onSave({ 
+                                        ...currentCreds,
+                                        aiAutoTradeEnabled: newValue
+                                    });
+                                }}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                    aiAutoTradeEnabled ? 'bg-green-500' : 'bg-slate-600'
+                                }`}
+                            >
+                                <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                        aiAutoTradeEnabled ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                />
+                            </button>
+                        </div>
+
+                        {/* AI Lab Screen */}
+                        <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                            <div>
+                                <div className="font-bold text-white flex items-center gap-2">
+                                    ✨ AI Lab Screen
+                                </div>
+                                <div className="text-xs text-slate-400 mt-1">Chat + Voice assistant</div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const newValue = !aiLabEnabled;
+                                    setAiLabEnabled(newValue);
+                                    // Save immediately
+                                    onSave({ 
+                                        ...currentCreds,
+                                        aiLabEnabled: newValue
+                                    });
+                                }}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                    aiLabEnabled ? 'bg-green-500' : 'bg-slate-600'
+                                }`}
+                            >
+                                <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                        aiLabEnabled ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                />
+                            </button>
+                        </div>
+
+                        {/* History Screen */}
+                        <div className="flex items-center justify-between p-4 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                            <div>
+                                <div className="font-bold text-white flex items-center gap-2">
+                                    📊 History Screen
+                                </div>
+                                <div className="text-xs text-slate-400 mt-1">Sentiment analysis</div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const newValue = !aiHistoryEnabled;
+                                    setAiHistoryEnabled(newValue);
+                                    // Save immediately
+                                    onSave({ 
+                                        ...currentCreds,
+                                        aiHistoryEnabled: newValue
+                                    });
+                                }}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                    aiHistoryEnabled ? 'bg-green-500' : 'bg-slate-600'
+                                }`}
+                            >
+                                <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                        aiHistoryEnabled ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Header Stats */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                     <div className="glass-panel p-4 rounded-xl border border-purple-500/20">
@@ -1455,6 +1635,223 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             <p className="text-xs mt-2">AI stats will appear when you use AI features</p>
                         </div>
                     )}
+                </div>
+            </div>
+        )}
+
+        {activeTab === 'data-management' && (
+            <div className="max-w-4xl mx-auto animate-in slide-in-from-bottom-4 duration-300 pb-20">
+                {/* Header Warning */}
+                <div className="glass-panel p-4 rounded-xl mb-6 bg-yellow-500/5 border border-yellow-500/20">
+                    <div className="flex items-start gap-3">
+                        <AlertTriangle size={20} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+                        <div>
+                            <h3 className="font-bold text-yellow-400 mb-1">Caution: Irreversible Operations</h3>
+                            <p className="text-sm text-slate-300">
+                                These operations will permanently delete data from your Redis/Upstash database. 
+                                Please be careful when using these features.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Status Message */}
+                {clearMessage && (
+                    <div className={`glass-panel p-4 rounded-xl mb-6 ${
+                        clearMessage.type === 'success' 
+                            ? 'bg-green-500/5 border-green-500/20' 
+                            : 'bg-red-500/5 border-red-500/20'
+                    }`}>
+                        <div className="flex items-center gap-3">
+                            {clearMessage.type === 'success' ? (
+                                <CheckCircle size={20} className="text-green-400 flex-shrink-0" />
+                            ) : (
+                                <AlertTriangle size={20} className="text-red-400 flex-shrink-0" />
+                            )}
+                            <p className={`text-sm font-medium ${
+                                clearMessage.type === 'success' ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                                {clearMessage.text}
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Admin Secret Input */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
+                    <div className="px-6 py-4 bg-purple-900/20 border-b border-purple-500/20 flex items-center gap-3">
+                        <Lock size={20} className="text-purple-400" />
+                        <h2 className="text-lg font-bold text-purple-400">Admin Authentication</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Enter your admin secret to authorize data management operations. This is the <span className="font-bold text-white">ADMIN_SECRET</span> or <span className="font-bold text-white">CRON_SECRET</span> environment variable from your Vercel deployment.
+                        </p>
+                        <div className="space-y-2">
+                            <label className="block text-sm font-medium text-slate-300">
+                                Admin Secret
+                            </label>
+                            <input
+                                type="password"
+                                value={adminSecret}
+                                onChange={(e) => setAdminSecret(e.target.value)}
+                                placeholder="Enter admin secret..."
+                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            />
+                            <p className="text-xs text-slate-500">
+                                This secret is stored locally and used to authenticate data deletion requests.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Clear All History */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
+                    <div className="px-6 py-4 bg-red-900/20 border-b border-red-500/20 flex items-center gap-3">
+                        <Trash2 size={20} className="text-red-400" />
+                        <h2 className="text-lg font-bold text-red-400">Clear All History</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Delete <span className="font-bold text-white">all historical snapshots</span> from Redis. 
+                            This will remove all market data collected across all sessions.
+                        </p>
+                        <div className="flex items-center gap-3 p-4 bg-red-500/5 rounded-lg border border-red-500/20">
+                            <AlertTriangle size={18} className="text-red-400 flex-shrink-0" />
+                            <span className="text-sm text-slate-300">
+                                This action cannot be undone. All historical data will be permanently deleted.
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => handleClearHistory('all')}
+                            disabled={clearingHistory}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-500 disabled:bg-red-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                        >
+                            {clearingHistory ? (
+                                <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                                    <span>Clearing...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 size={18} />
+                                    <span>Clear All History</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Clear Today's Data */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
+                    <div className="px-6 py-4 bg-orange-900/20 border-b border-orange-500/20 flex items-center gap-3">
+                        <Clock size={20} className="text-orange-400" />
+                        <h2 className="text-lg font-bold text-orange-400">Clear Today's Data</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Delete <span className="font-bold text-white">today's snapshots only</span> (last 8 hours). 
+                            Useful for clearing test data or resetting the current session.
+                        </p>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Scope:</span>
+                                <span className="text-white font-mono">Last 8 hours</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Preserves:</span>
+                                <span className="text-green-400">Historical data from previous days</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => handleClearHistory('today')}
+                            disabled={clearingHistory}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                        >
+                            {clearingHistory ? (
+                                <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                                    <span>Clearing...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Clock size={18} />
+                                    <span>Clear Today's Data</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Clear Old Data */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
+                    <div className="px-6 py-4 bg-blue-900/20 border-b border-blue-500/20 flex items-center gap-3">
+                        <Layers size={20} className="text-blue-400" />
+                        <h2 className="text-lg font-bold text-blue-400">Clear Old Data</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Delete old snapshots while keeping the <span className="font-bold text-white">latest 100 snapshots</span>. 
+                            Useful for managing storage without losing recent data.
+                        </p>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Keeps:</span>
+                                <span className="text-green-400 font-mono">Latest 100 snapshots</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Deletes:</span>
+                                <span className="text-red-400">All older snapshots</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Recommended:</span>
+                                <span className="text-yellow-400">For storage optimization</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => handleClearHistory('old')}
+                            disabled={clearingHistory}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                        >
+                            {clearingHistory ? (
+                                <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                                    <span>Clearing...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Layers size={18} />
+                                    <span>Clear Old Data</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Info Section */}
+                <div className="glass-panel p-6 rounded-xl border border-slate-800">
+                    <h3 className="font-bold text-white mb-3 flex items-center gap-2">
+                        <ShieldCheck size={18} className="text-blue-400" />
+                        Important Notes
+                    </h3>
+                    <ul className="space-y-2 text-sm text-slate-300">
+                        <li className="flex items-start gap-2">
+                            <span className="text-blue-400 mt-0.5">•</span>
+                            <span>These operations affect only your <strong>Redis/Upstash database</strong>, not local IndexedDB storage</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-blue-400 mt-0.5">•</span>
+                            <span>Local browser history in IndexedDB remains intact and can be cleared separately from Settings → Reset</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-blue-400 mt-0.5">•</span>
+                            <span>All operations require confirmation before execution</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-blue-400 mt-0.5">•</span>
+                            <span>Use "Clear Old Data" for regular maintenance to keep database size manageable</span>
+                        </li>
+                    </ul>
                 </div>
             </div>
         )}

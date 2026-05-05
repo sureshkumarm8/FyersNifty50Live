@@ -167,6 +167,12 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
         return;
     }
     
+    // Check if AI AutoTrade is enabled
+    if (credentials.aiAutoTradeEnabled === false) {
+        setError("AI is disabled for AutoTrade screen. Enable it in Settings > AI Usage.");
+        return;
+    }
+
     // Use Refs for data to ensure loop has latest values
     const snap = snapshotRef.current;
     const ltp = niftyLtpRef.current;
