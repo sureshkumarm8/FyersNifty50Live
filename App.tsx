@@ -144,7 +144,7 @@ const App: React.FC = () => {
               console.log('[Options]', expiryCheck.message);
               
               if (expiryCheck.needsUpdate) {
-                setStatusMessage('⚠️ Weekly options expired! Run: node scripts/generateWeeklyOptions.cjs');
+                setMarketStatusMsg('⚠️ Weekly options expired! Run: node scripts/generateWeeklyOptions.cjs');
               } else if (expiryCheck.daysUntilExpiry <= 2) {
                 console.warn('[Options] Expiring soon:', expiryCheck.message);
               }
@@ -172,11 +172,47 @@ const App: React.FC = () => {
                   // Convert Redis data to MarketSnapshot format
                   const redisSnapshots: MarketSnapshot[] = historyData.data.map((snap: any) => {
                     const stocks = snap.stocks || [];
+                    const options = snap.options || [];
                     const niftyLTP = snap.niftyLTP || 0;
                     
-                    // Calculate metrics from stock data
-                    const adv = stocks.filter((s: any) => s.ch > 0).length;
-                    const dec = stocks.filter((s: any) => s.ch < 0).length;
+                    // Calculate stock metrics
+                    const adv = stocks.filter((s: any) => (s.change_percent || 0) > 0).length;
+                    const dec = stocks.filter((s: any) => (s.change_percent || 0) < 0).length;
+                    
+                    // Calculate stock sentiment (buy vs sell pressure)
+                    let totalBuyQty = 0, totalSellQty = 0;
+                    stocks.forEach((s: any) => {
+                      totalBuyQty += s.total_buy_quantity || 0;
+                      totalSellQty += s.total_sell_quantity || 0;
+                    });
+                    const stockSent = totalSellQty !== 0 ? ((totalBuyQty - totalSellQty) / Math.abs(totalSellQty) * 100) : 0;
+                    
+                    // Calculate options metrics
+                    let callsBuyQty = 0, callsSellQty = 0, callsOI = 0;
+                    let putsBuyQty = 0, putsSellQty = 0, putsOI = 0;
+                    
+                    options.forEach((opt: any) => {
+                      const isCE = (opt.symbol || '').includes('CE');
+                      const isPE = (opt.symbol || '').includes('PE');
+                      
+                      if (isCE) {
+                        callsBuyQty += opt.total_buy_quantity || 0;
+                        callsSellQty += opt.total_sell_quantity || 0;
+                        callsOI += opt.oi || 0;
+                      } else if (isPE) {
+                        putsBuyQty += opt.total_buy_quantity || 0;
+                        putsSellQty += opt.total_sell_quantity || 0;
+                        putsOI += opt.oi || 0;
+                      }
+                    });
+                    
+                    const pcr = callsOI > 0 ? putsOI / callsOI : 0;
+                    const callSent = callsSellQty !== 0 ? ((callsBuyQty - callsSellQty) / Math.abs(callsSellQty) * 100) : 0;
+                    const putSent = putsSellQty !== 0 ? ((putsBuyQty - putsSellQty) / Math.abs(putsSellQty) * 100) : 0;
+                    const optionsSent = callSent - putSent;
+                    
+                    // Overall sentiment (weighted)
+                    const overallSent = (stockSent * 0.7) + (optionsSent * 0.3);
                     
                     // Create proper MarketSnapshot
                     return {
@@ -184,20 +220,20 @@ const App: React.FC = () => {
                       time: new Date(snap.timestamp).toLocaleTimeString('en-IN', { hour12: false }),
                       niftyLtp: niftyLTP,
                       ptsChg: 0, // Will be recalculated
-                      overallSent: 0,
+                      overallSent,
                       adv,
                       dec,
-                      stockSent: 0,
-                      callSent: 0,
-                      putSent: 0,
-                      pcr: 0,
-                      optionsSent: 0,
-                      callsBuyQty: 0,
-                      callsSellQty: 0,
-                      putsBuyQty: 0,
-                      putsSellQty: 0,
-                      callsOI: 0,
-                      putsOI: 0
+                      stockSent,
+                      callSent,
+                      putSent,
+                      pcr,
+                      optionsSent,
+                      callsBuyQty,
+                      callsSellQty,
+                      putsBuyQty,
+                      putsSellQty,
+                      callsOI,
+                      putsOI
                     };
                   });
                   
@@ -210,6 +246,43 @@ const App: React.FC = () => {
                   
                   // Set Redis data as the source of truth (replace, don't merge)
                   setHistoryLog(redisSnapshots);
+                  
+                  // Initialize session history and refs from the OLDEST snapshot (last in array since newest-first)
+                  if (redisSnapshots.length > 0 && historyData.data[historyData.data.length - 1]?.stocks) {
+                    const oldestSnapshot = historyData.data[historyData.data.length - 1];
+                    const oldestStocks = oldestSnapshot.stocks || [];
+                    const oldestOptions = oldestSnapshot.options || [];
+                    
+                    console.log(`🔧 Initializing refs from oldest snapshot with ${oldestStocks.length} stocks and ${oldestOptions.length} options`);
+                    
+                    // Initialize stock refs
+                    oldestStocks.forEach((stock: any) => {
+                      const symbol = stock.symbol;
+                      if (symbol) {
+                        initialStocksRef.current[symbol] = {
+                          symbol,
+                          lp: stock.lp || 0,
+                          total_buy_qty: stock.total_buy_quantity || 0,
+                          total_sell_qty: stock.total_sell_quantity || 0,
+                        } as FyersQuote;
+                      }
+                    });
+                    
+                    // Initialize options refs
+                    oldestOptions.forEach((option: any) => {
+                      const symbol = option.symbol;
+                      if (symbol) {
+                        initialOptionsRef.current[symbol] = {
+                          symbol,
+                          lp: option.lp || 0,
+                          total_buy_qty: option.total_buy_quantity || 0,
+                          total_sell_qty: option.total_sell_quantity || 0,
+                        } as FyersQuote;
+                      }
+                    });
+                    
+                    console.log(`✅ Initialized ${Object.keys(initialStocksRef.current).length} stock refs and ${Object.keys(initialOptionsRef.current).length} option refs`);
+                  }
                   
                   console.log(`✅ Restored ${redisSnapshots.length} historical snapshots from Redis`);
                 } else {
