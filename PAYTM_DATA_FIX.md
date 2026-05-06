@@ -1,134 +1,167 @@
-# PayTM Data Fix - Stock Names & Options Display
+# PayTM Data Structure Fix
 
-## Problem Summary
-- Few Nifty50 stock names showing as "UNKNOWN"  
-- Options chain not showing any data
-- Root cause: Incomplete data in cron-fetch.js and missing options fetching
+## Problem
+Stocks and Options screens showed **NO calculations** (all zeros) even after initializing refs from Redis.
 
-## Changes Made
+## Root Cause
+**Data Format Mismatch:**
 
-### 1. Fixed Stock Names (api/cron-fetch.js)
-**Issue**: Only 32 out of 50 Nifty stocks were being fetched by the cron job
-
-**Fix**: Updated `NIFTY50_SECURITY_IDS` array to include all 48 complete Nifty50 stocks:
-```javascript
-const NIFTY50_SECURITY_IDS = [
-  '3351',  // SUNPHARMA
-  '11536', // TCS
-  '10940', // DIVISLAB
-  // ... (complete list with 48 stocks)
-  '317'    // BAJFINANCE
-];
-```
-
-### 2. Added Options Data Fetching (api/cron-fetch.js)
-**Issue**: Cron job was only fetching stocks, not options data
-
-**Fix**: Added options fetching logic:
-- Calculates ATM strike based on Nifty LTP
-- Fetches ±1000 points range (20 strikes × 50 points)
-- Uses `NIFTY_WEEKLY_OPTIONS` from constants
-- Stores options data in Redis alongside stocks
-
-```javascript
-// Imports weekly options configuration
-const { NIFTY_WEEKLY_OPTIONS } = await import('../constants/niftyWeeklyOptions.js');
-
-// Filters relevant strikes and fetches data
-const filteredOptions = NIFTY_WEEKLY_OPTIONS.filter(opt => 
-  opt.strike >= minStrike && opt.strike <= maxStrike
-);
-```
-
-### 3. Updated Redis Data Structure
-**Before**:
+### Redis Data (Raw PayTM API)
 ```json
 {
-  "stocks": [...],
-  "niftyLTP": 23000,
-  "stockCount": 32
+  "security_id": 11536,        // ← Only identifier
+  "last_price": 2420.3,
+  "total_buy_quantity": 160646,
+  "total_sell_quantity": 230496
+  // NO "symbol" field!
 }
 ```
 
-**After**:
+### Live Data (After Conversion)
 ```json
 {
-  "stocks": [...],
-  "options": [...],
-  "niftyLTP": 23000,
-  "stockCount": 48,
-  "optionsCount": 80
+  "symbol": "NSE:TCS",         // ← Converted format
+  "lp": 2420.3,
+  "total_buy_qty": 160646,
+  "total_sell_qty": 230496
 }
 ```
 
-### 4. Enhanced Frontend to Use Options from Redis (App.tsx)
-**Issue**: Frontend was fetching options separately even when available in Redis
+### The Issue
+```typescript
+// Initialization (from Redis)
+initialStocksRef.current[stock.symbol] = { ... }  // ❌ stock.symbol = undefined!
 
-**Fix**: 
-- Added `__PAYTM_OPTIONS_CACHE__` to window object
-- Frontend now checks cache first before making API call
-- Falls back to direct API fetch only if cache is empty
+// Live data lookup (during enrichData)
+const initial = initialRef.current[curr.symbol];  // ❌ curr.symbol = "NSE:TCS"
+// Result: initial = undefined → calculations return zero!
+```
+
+## Solution
+**Convert `security_id` to `symbol` during initialization** using PayTM mappings.
+
+### Implementation
 
 ```typescript
-// Check if we have options from Redis cache first
-if (window.__PAYTM_OPTIONS_CACHE__ && window.__PAYTM_OPTIONS_CACHE__.length > 0) {
-  console.log(`[App] Using ${window.__PAYTM_OPTIONS_CACHE__.length} options from Redis cache`);
-  rawOptions = window.__PAYTM_OPTIONS_CACHE__;
-  delete window.__PAYTM_OPTIONS_CACHE__; // Clear cache after use
+// Import PayTM mappings
+const { PAYTM_NIFTY50_MAP } = await import('./constants/paytmMappings');
+const { NIFTY_WEEKLY_OPTIONS } = await import('./constants/niftyWeeklyOptions');
+
+// Convert stocks: security_id → NSE:SYMBOL
+oldestStocks.forEach((stock: any) => {
+  const securityIdStr = stock.security_id.toString();
+  const stockInfo = Object.values(PAYTM_NIFTY50_MAP)
+    .find(s => s.security_id === securityIdStr);
+  
+  if (stockInfo) {
+    const symbol = `NSE:${stockInfo.symbol}`;  // e.g., "NSE:TCS"
+    initialStocksRef.current[symbol] = {
+      symbol,
+      lp: stock.last_price || 0,
+      total_buy_qty: stock.total_buy_quantity || 0,
+      total_sell_qty: stock.total_sell_quantity || 0,
+    };
+  }
+});
+
+// Convert options: security_id → NSE:NIFTY-STRIKE-TYPE
+oldestOptions.forEach((option: any) => {
+  const securityIdStr = option.security_id.toString();
+  const optInfo = NIFTY_WEEKLY_OPTIONS
+    .find(o => o.security_id === securityIdStr);
+  
+  if (optInfo) {
+    const symbol = `NSE:NIFTY-${optInfo.strike}-${optInfo.type}`;
+    // e.g., "NSE:NIFTY-23500-CE"
+    initialOptionsRef.current[symbol] = { ... };
+  }
+});
+```
+
+## Mappings Used
+
+### PAYTM_NIFTY50_MAP
+Maps security_id to stock symbol:
+```typescript
+{
+  "11536": { security_id: "11536", symbol: "TCS", name: "Tata Consultancy Services" },
+  "2885": { security_id: "2885", symbol: "RELIANCE", name: "Reliance Industries" }
+  // ... 48 more
 }
 ```
 
-### 5. Updated PayTM Service (services/paytmService.ts)
-- Enhanced `fetchPayTMFromRedis()` return type to include options
-- Added error handling for options conversion
-- Improved logging to show both stocks and options counts
+### NIFTY_WEEKLY_OPTIONS
+Maps security_id to option contract:
+```typescript
+[
+  { security_id: "123456", strike: 23500, type: "CE", expiry: "2024-05-09" },
+  { security_id: "123457", strike: 23500, type: "PE", expiry: "2024-05-09" }
+  // ... all weekly options
+]
+```
 
-## Testing Checklist
+## Data Flow Comparison
 
-### Backend (Cron Job)
-- [ ] Visit `/api/cron-fetch` and verify response includes:
-  - `stockCount: 48` (or close to it)
-  - `optionsCount: 80+` (depends on Nifty LTP)
-- [ ] Check Redis data: `/api/get-redis-data`
-- [ ] Verify all stock names are present (no UNKNOWN)
+### Before Fix
+```
+Redis (security_id) → initialRef[undefined] = data  ❌
+Live (symbol) → initialRef["NSE:TCS"] = undefined  ❌
+Result: No calculations!
+```
 
-### Frontend
-- [ ] Open app and wait for data load
-- [ ] **Stocks tab**: All 48 stocks should show with proper names
-- [ ] **Options tab**: Should display CE/PE contracts with strikes
-- [ ] Check browser console for logs:
-  ```
-  ✅ [PayTM] Using Redis data: 48 stocks, 80 options
-  [App] Using 80 options from Redis cache
-  ```
+### After Fix
+```
+Redis (security_id) → Convert to symbol → initialRef["NSE:TCS"] = data  ✅
+Live (symbol) → initialRef["NSE:TCS"] = found!  ✅
+Result: Proper day-change calculations!
+```
 
-## Files Modified
-1. `/api/cron-fetch.js` - Complete Nifty50 list + Options fetching
-2. `/services/paytmService.ts` - Enhanced Redis data structure
-3. `/App.tsx` - Options cache implementation
-4. Built files regenerated in `/dist/`
+## Testing
 
-## Expected Results
-- ✅ All 48 Nifty50 stocks display with correct names
-- ✅ Options chain shows 80+ contracts (CE/PE pairs)
-- ✅ Single cron job fetch provides both stocks and options
-- ✅ Reduced API calls (data reused from Redis)
-- ✅ Faster load time (one Redis fetch vs multiple API calls)
+### Console Output (Expected)
+```
+🔧 Initializing refs from oldest snapshot with 50 stocks and 82 options
+✅ Initialized 50 stock refs and 82 option refs
+📝 Sample initialized symbols: ["NSE:TCS", "NSE:RELIANCE", "NSE:HDFCBANK"]
+```
 
-## Rollback Instructions
-If issues occur:
-1. Revert `/api/cron-fetch.js` to use old 32-stock list
-2. Remove options fetching code from cron job
-3. App will fall back to direct PayTM API calls
+### Stocks View
+Should now show:
+- ✅ Day % (change from session start)
+- ✅ Bid Day% (accumulation)
+- ✅ Ask Day% (distribution)
+- ✅ Day Strength (net pressure)
 
-## Notes
-- Ensure `PAYTM_ACCESS_TOKEN` is set in Vercel environment variables
-- Cron job runs every minute during market hours (9:17 AM - 3:15 PM IST)
-- Redis TTL is 24 hours, auto-cleanup keeps last 500 snapshots
-- Options expiry date in `constants/niftyWeeklyOptions.ts` needs weekly updates
+### Options View
+Should now show:
+- ✅ Day % for each strike
+- ✅ OI changes
+- ✅ Buy/Sell pressure
 
-## Next Steps
-1. Monitor cron job logs in Vercel
-2. Check Redis storage usage
-3. Consider auto-updating weekly options expiry date
-4. Add alerting if stock/options count drops unexpectedly
+## Related Files
+- `services/paytmService.ts` - Conversion logic (convertPayTMToFyersQuote)
+- `constants/paytmMappings.ts` - Stock mappings
+- `constants/niftyWeeklyOptions.ts` - Options mappings
+- `App.tsx` (lines 298-335) - Ref initialization with mapping
+
+## Commits
+1. `e08bfa1` - Calculate deltas from day start (History view fix)
+2. `c307459` - Map PayTM security_id to symbols (Stocks/Options fix)
+
+## Why This Architecture?
+
+### Redis Stores Raw Data
+- **Smaller size** - No duplicate symbol strings
+- **API compatibility** - Direct from PayTM Money API
+- **Flexibility** - Can change symbol format without re-processing
+
+### Frontend Converts on Load
+- **One-time cost** - Only during page load
+- **Consistent format** - All code uses standardized symbols
+- **Type safety** - FyersQuote interface with proper types
+
+## Key Takeaway
+**Data source format ≠ Application format**
+- Redis: Optimized for storage (raw API format)
+- Frontend: Optimized for processing (standardized format)
+- Conversion happens at the boundary
