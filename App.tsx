@@ -593,7 +593,10 @@ const App: React.FC = () => {
           stockData = redisData.stocks;
           niftyLtpVal = redisData.niftyLTP;
         } else {
-          // Fallback: Fetch directly from PayTM API
+          // Fallback: Fetch directly from PayTM API only if token is available
+          if (!credentials.paytmAccessToken) {
+            throw new Error('No Redis data available and PayTM Access Token is missing. Please check your configuration or wait for the cron job to populate data.');
+          }
           console.log('⚠️ [PayTM] No Redis data, fetching directly from API');
           stockData = await fetchPayTMStocks(credentials);
           console.log(`📊 [Mobile Debug] Fetched ${stockData.length} stocks from PayTM`);
@@ -634,8 +637,19 @@ const App: React.FC = () => {
           let rawOptions: FyersQuote[];
           
           if (credentials.dataProvider === 'paytm') {
-            rawOptions = await fetchPayTMOptions(niftyLtpVal, credentials);
-            // console.log(`[App] Fetched ${rawOptions.length} options from PayTM`);
+            // Only fetch options if we have a valid token, otherwise skip options data
+            if (credentials.paytmAccessToken) {
+              try {
+                rawOptions = await fetchPayTMOptions(niftyLtpVal, credentials);
+                console.log(`[App] Fetched ${rawOptions.length} options from PayTM`);
+              } catch (optError) {
+                console.warn('[App] Failed to fetch options data:', optError);
+                rawOptions = []; // Continue without options data
+              }
+            } else {
+              console.log('[App] Skipping options fetch - no PayTM token available');
+              rawOptions = []; // Skip options if no token
+            }
           } else {
             const optionSymbols = getNiftyOptionSymbols(niftyLtpVal);
             rawOptions = await fetchQuotes(optionSymbols, credentials);
