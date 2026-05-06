@@ -353,6 +353,118 @@ const App: React.FC = () => {
                     if (Object.keys(initialStocksRef.current).length > 0) {
                       console.log('📝 Sample initialized symbols:', Object.keys(initialStocksRef.current).slice(0, 3));
                     }
+                    
+                    // Build sessionHistory from ALL Redis snapshots
+                    console.log('📊 Building sessionHistory from Redis snapshots...');
+                    const sessionHistoryMap: SessionHistoryMap = {};
+                    
+                    // Process snapshots in chronological order (oldest to newest)
+                    for (let i = historyData.data.length - 1; i >= 0; i--) {
+                      const snap = historyData.data[i];
+                      const timeStr = new Date(snap.timestamp).toLocaleTimeString('en-IN', { hour12: false });
+                      const stocks = snap.stocks || [];
+                      const options = snap.options || [];
+                      
+                      // Process stocks
+                      stocks.forEach((stock: any) => {
+                        if (!stock.security_id || stock.found === false) return;
+                        
+                        const securityIdStr = stock.security_id.toString();
+                        const stockInfo = Object.values(PAYTM_NIFTY50_MAP).find((s: any) => s.security_id === securityIdStr);
+                        
+                        if (stockInfo) {
+                          const symbol = `NSE:${(stockInfo as any).symbol}`;
+                          
+                          if (!sessionHistoryMap[symbol]) {
+                            sessionHistoryMap[symbol] = [];
+                          }
+                          
+                          // Calculate day changes using initialRef
+                          const initial = initialStocksRef.current[symbol];
+                          const lp_chg_day_p = initial && initial.lp !== 0 
+                            ? ((stock.last_price - initial.lp) / initial.lp) * 100 
+                            : 0;
+                          const bid_chg_day_p = initial && initial.total_buy_qty !== 0
+                            ? ((stock.total_buy_quantity - initial.total_buy_qty) / initial.total_buy_qty) * 100
+                            : 0;
+                          const ask_chg_day_p = initial && initial.total_sell_qty !== 0
+                            ? ((stock.total_sell_quantity - initial.total_sell_qty) / initial.total_sell_qty) * 100
+                            : 0;
+                          const day_net_strength = bid_chg_day_p - ask_chg_day_p;
+                          
+                          sessionHistoryMap[symbol].push({
+                            time: timeStr,
+                            timestamp: snap.timestamp,
+                            lp: stock.last_price || 0,
+                            volume: stock.volume_traded || 0,
+                            chp: stock.change_percent || 0,
+                            lp_chg_1m_p: 0, // Not available from Redis
+                            lp_chg_day_p,
+                            total_buy_qty: stock.total_buy_quantity || 0,
+                            total_sell_qty: stock.total_sell_quantity || 0,
+                            bid_qty_chg_p: 0, // Not available from Redis
+                            bid_chg_day_p,
+                            ask_qty_chg_p: 0, // Not available from Redis
+                            ask_chg_day_p,
+                            net_strength_1m: 0, // Not available from Redis
+                            day_net_strength
+                          });
+                        }
+                      });
+                      
+                      // Process options
+                      options.forEach((option: any) => {
+                        if (!option.security_id || option.found === false) return;
+                        
+                        const securityIdStr = option.security_id.toString();
+                        const optInfo = NIFTY_WEEKLY_OPTIONS.find((o: any) => o.security_id === securityIdStr);
+                        
+                        if (optInfo) {
+                          const symbol = `NSE:NIFTY-${(optInfo as any).strike}-${(optInfo as any).type}`;
+                          
+                          if (!sessionHistoryMap[symbol]) {
+                            sessionHistoryMap[symbol] = [];
+                          }
+                          
+                          // Calculate day changes using initialRef
+                          const initial = initialOptionsRef.current[symbol];
+                          const lp_chg_day_p = initial && initial.lp !== 0 
+                            ? ((option.last_price - initial.lp) / initial.lp) * 100 
+                            : 0;
+                          const bid_chg_day_p = initial && initial.total_buy_qty !== 0
+                            ? ((option.total_buy_quantity - initial.total_buy_qty) / initial.total_buy_qty) * 100
+                            : 0;
+                          const ask_chg_day_p = initial && initial.total_sell_qty !== 0
+                            ? ((option.total_sell_quantity - initial.total_sell_qty) / initial.total_sell_qty) * 100
+                            : 0;
+                          const day_net_strength = bid_chg_day_p - ask_chg_day_p;
+                          
+                          sessionHistoryMap[symbol].push({
+                            time: timeStr,
+                            timestamp: snap.timestamp,
+                            lp: option.last_price || 0,
+                            volume: option.volume_traded || 0,
+                            chp: option.change_percent || 0,
+                            lp_chg_1m_p: 0,
+                            lp_chg_day_p,
+                            total_buy_qty: option.total_buy_quantity || 0,
+                            total_sell_qty: option.total_sell_quantity || 0,
+                            bid_qty_chg_p: 0,
+                            bid_chg_day_p,
+                            ask_qty_chg_p: 0,
+                            ask_chg_day_p,
+                            net_strength_1m: 0,
+                            day_net_strength
+                          });
+                        }
+                      });
+                    }
+                    
+                    setSessionHistory(sessionHistoryMap);
+                    const totalSymbols = Object.keys(sessionHistoryMap).length;
+                    const sampleSymbol = Object.keys(sessionHistoryMap)[0];
+                    const sampleCount = sessionHistoryMap[sampleSymbol]?.length || 0;
+                    console.log(`✅ Built sessionHistory: ${totalSymbols} symbols, ~${sampleCount} candles each`);
                   }
                   
                   console.log(`✅ Restored ${redisSnapshots.length} historical snapshots from Redis`);
