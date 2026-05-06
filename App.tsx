@@ -309,26 +309,40 @@ const App: React.FC = () => {
                     
                     console.log(`🔧 Initializing refs from oldest snapshot with ${oldestStocks.length} stocks and ${oldestOptions.length} options`);
                     
-                    // Initialize stock refs
+                    // Import PayTM mappings for conversion
+                    const { PAYTM_NIFTY50_MAP } = await import('./constants/paytmMappings');
+                    const { NIFTY_WEEKLY_OPTIONS } = await import('./constants/niftyWeeklyOptions');
+                    
+                    // Initialize stock refs - convert security_id to symbol
                     oldestStocks.forEach((stock: any) => {
-                      const symbol = stock.symbol;
-                      if (symbol) {
+                      if (!stock.security_id || stock.found === false) return;
+                      
+                      const securityIdStr = stock.security_id.toString();
+                      const stockInfo = Object.values(PAYTM_NIFTY50_MAP).find((s: any) => s.security_id === securityIdStr);
+                      
+                      if (stockInfo) {
+                        const symbol = `NSE:${(stockInfo as any).symbol}`;
                         initialStocksRef.current[symbol] = {
                           symbol,
-                          lp: stock.lp || 0,
+                          lp: stock.last_price || 0,
                           total_buy_qty: stock.total_buy_quantity || 0,
                           total_sell_qty: stock.total_sell_quantity || 0,
                         } as FyersQuote;
                       }
                     });
                     
-                    // Initialize options refs
+                    // Initialize options refs - convert security_id to symbol
                     oldestOptions.forEach((option: any) => {
-                      const symbol = option.symbol;
-                      if (symbol) {
+                      if (!option.security_id || option.found === false) return;
+                      
+                      const securityIdStr = option.security_id.toString();
+                      const optInfo = NIFTY_WEEKLY_OPTIONS.find((o: any) => o.security_id === securityIdStr);
+                      
+                      if (optInfo) {
+                        const symbol = `NSE:NIFTY-${(optInfo as any).strike}-${(optInfo as any).type}`;
                         initialOptionsRef.current[symbol] = {
                           symbol,
-                          lp: option.lp || 0,
+                          lp: option.last_price || 0,
                           total_buy_qty: option.total_buy_quantity || 0,
                           total_sell_qty: option.total_sell_quantity || 0,
                         } as FyersQuote;
@@ -336,6 +350,9 @@ const App: React.FC = () => {
                     });
                     
                     console.log(`✅ Initialized ${Object.keys(initialStocksRef.current).length} stock refs and ${Object.keys(initialOptionsRef.current).length} option refs`);
+                    if (Object.keys(initialStocksRef.current).length > 0) {
+                      console.log('📝 Sample initialized symbols:', Object.keys(initialStocksRef.current).slice(0, 3));
+                    }
                   }
                   
                   console.log(`✅ Restored ${redisSnapshots.length} historical snapshots from Redis`);
@@ -551,10 +568,20 @@ const App: React.FC = () => {
       initialRef: React.MutableRefObject<Record<string, FyersQuote>>,
       isStock: boolean
   ): EnrichedFyersQuote[] => {
+      // Debug: Log first few symbols to verify initialization
+      if (currentData.length > 0 && Object.keys(initialRef.current).length > 0) {
+        const firstSymbol = currentData[0].symbol;
+        const hasInitial = !!initialRef.current[firstSymbol];
+        if (!hasInitial) {
+          console.warn(`⚠️ enrichData: Symbol "${firstSymbol}" not found in initialRef. Available:`, Object.keys(initialRef.current).slice(0, 3));
+        }
+      }
+      
       return currentData.map(curr => {
         const prev = prevRef.current[curr.symbol];
         
         if (!initialRef.current[curr.symbol]) {
+           console.warn(`⚠️ Missing initial for ${curr.symbol}, using current as fallback`);
            const sessionStartData = sessionHistory[curr.symbol]?.[0];
            if(sessionStartData) {
               initialRef.current[curr.symbol] = {
