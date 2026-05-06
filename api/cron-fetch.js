@@ -86,9 +86,9 @@ export default async function handler(req, res) {
 
     const stockData = await stockResponse.json();
 
-    // Fetch Nifty Index LTP
+    // Fetch Nifty Index LTP (Security ID 13 = NIFTY 50 INDEX)
     const indexResponse = await fetch(
-      'https://developer.paytmmoney.com/data/v1/price/live?mode=FULL&pref=NSE:26000:INDEX',
+      'https://developer.paytmmoney.com/data/v1/price/live?mode=FULL&pref=NSE:13:INDEX',
       {
         headers: {
           'x-jwt-token': paytmToken,
@@ -98,7 +98,7 @@ export default async function handler(req, res) {
     );
 
     const indexData = await indexResponse.json();
-    const niftyLTP = indexData?.data?.[0]?.lp || null;
+    const niftyLTP = indexData?.data?.[0]?.last_price || indexData?.data?.[0]?.lp || null;
 
     const duration = Date.now() - startTime;
     
