@@ -272,3 +272,69 @@ export const fetchNiftyIndexLTP = async (credentials: FyersCredentials): Promise
     return 0;
   }
 };
+
+// Fetch data from Redis (stored by cron job)
+// This avoids making duplicate API calls and uses pre-fetched data
+export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], niftyLTP: number } | null> => {
+  try {
+    console.log('[PayTM Redis] Fetching data from /api/get-redis-data...');
+    const response = await fetch('/api/get-redis-data');
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(`[PayTM Redis] API returned ${response.status}:`, errorText);
+      return null;
+    }
+    
+    const result = await response.json();
+    console.log('[PayTM Redis] Response:', { success: result.success, hasData: !!result.data });
+    
+    if (!result.success || !result.data) {
+      console.warn('[PayTM Redis] Invalid response structure or no data available');
+      console.warn('[PayTM Redis] Hint: Check if the cron job (/api/cron-fetch) is running');
+      return null;
+    }
+    
+    const snapshot = result.data;
+    
+    // Check if data is stale (older than 5 minutes)
+    const dataAge = Date.now() - (snapshot.timestamp || 0);
+    if (dataAge > 5 * 60 * 1000) {
+      console.warn(`[PayTM Redis] ⚠️ Data is ${Math.round(dataAge / 60000)} minutes old`);
+    }
+    
+    // Convert raw PayTM data to FyersQuote format
+    const stocks: FyersQuote[] = [];
+    if (snapshot.stocks && Array.isArray(snapshot.stocks)) {
+      snapshot.stocks.forEach((paytmQuote: any) => {
+        try {
+          if (paytmQuote.found !== false) {
+            const quote = convertPayTMToFyersQuote(paytmQuote);
+            stocks.push(quote);
+          }
+        } catch (err) {
+          console.error('[PayTM Redis] Error converting quote:', err);
+        }
+      });
+    } else {
+      console.error('[PayTM Redis] snapshot.stocks is not an array:', typeof snapshot.stocks);
+    }
+    
+    if (stocks.length === 0) {
+      console.warn('[PayTM Redis] ⚠️ No valid stocks found in Redis data');
+      return null;
+    }
+    
+    const ageMinutes = Math.round(dataAge / 60000);
+    console.log(`[PayTM Redis] ✅ Loaded ${stocks.length} stocks, Nifty: ${snapshot.niftyLTP || 0} (Age: ${ageMinutes}m)`);
+    
+    return {
+      stocks,
+      niftyLTP: snapshot.niftyLTP || 0
+    };
+    
+  } catch (error) {
+    console.error('[PayTM Redis] Fetch error:', error);
+    return null;
+  }
+};
