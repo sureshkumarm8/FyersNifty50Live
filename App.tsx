@@ -169,6 +169,35 @@ const App: React.FC = () => {
                 if (historyData.success && historyData.data?.length > 0) {
                   console.log(`📥 Loaded ${historyData.data.length} snapshots from Redis`);
                   
+                  // Get oldest snapshot for calculating deltas
+                  const oldestSnap = historyData.data[historyData.data.length - 1];
+                  const oldestStocks = oldestSnap?.stocks || [];
+                  const oldestOptions = oldestSnap?.options || [];
+                  
+                  // Build initial totals from oldest snapshot
+                  let initialStockBuy = 0, initialStockSell = 0;
+                  oldestStocks.forEach((s: any) => {
+                    initialStockBuy += s.total_buy_quantity || 0;
+                    initialStockSell += s.total_sell_quantity || 0;
+                  });
+                  
+                  let initialCallBuy = 0, initialCallSell = 0, initialPutBuy = 0, initialPutSell = 0;
+                  oldestOptions.forEach((opt: any) => {
+                    const isCE = (opt.symbol || '').includes('CE');
+                    const isPE = (opt.symbol || '').includes('PE');
+                    if (isCE) {
+                      initialCallBuy += opt.total_buy_quantity || 0;
+                      initialCallSell += opt.total_sell_quantity || 0;
+                    } else if (isPE) {
+                      initialPutBuy += opt.total_buy_quantity || 0;
+                      initialPutSell += opt.total_sell_quantity || 0;
+                    }
+                  });
+                  
+                  console.log('📊 Initial values - Stock Buy:', initialStockBuy, 'Sell:', initialStockSell);
+                  console.log('📊 Initial values - Call Buy:', initialCallBuy, 'Sell:', initialCallSell);
+                  console.log('📊 Initial values - Put Buy:', initialPutBuy, 'Sell:', initialPutSell);
+                  
                   // Convert Redis data to MarketSnapshot format
                   const redisSnapshots: MarketSnapshot[] = historyData.data.map((snap: any) => {
                     const stocks = snap.stocks || [];
@@ -179,15 +208,19 @@ const App: React.FC = () => {
                     const adv = stocks.filter((s: any) => (s.change_percent || 0) > 0).length;
                     const dec = stocks.filter((s: any) => (s.change_percent || 0) < 0).length;
                     
-                    // Calculate stock sentiment (buy vs sell pressure)
+                    // Calculate CURRENT stock totals
                     let totalBuyQty = 0, totalSellQty = 0;
                     stocks.forEach((s: any) => {
                       totalBuyQty += s.total_buy_quantity || 0;
                       totalSellQty += s.total_sell_quantity || 0;
                     });
-                    const stockSent = totalSellQty !== 0 ? ((totalBuyQty - totalSellQty) / Math.abs(totalSellQty) * 100) : 0;
                     
-                    // Calculate options metrics
+                    // Calculate stock DELTAS from initial
+                    const stockBuyDelta = totalBuyQty - initialStockBuy;
+                    const stockSellDelta = totalSellQty - initialStockSell;
+                    const stockSent = stockSellDelta !== 0 ? ((stockBuyDelta - stockSellDelta) / Math.abs(stockSellDelta) * 100) : 0;
+                    
+                    // Calculate CURRENT options totals
                     let callsBuyQty = 0, callsSellQty = 0, callsOI = 0;
                     let putsBuyQty = 0, putsSellQty = 0, putsOI = 0;
                     
@@ -206,9 +239,15 @@ const App: React.FC = () => {
                       }
                     });
                     
+                    // Calculate options DELTAS from initial
+                    const callBuyDelta = callsBuyQty - initialCallBuy;
+                    const callSellDelta = callsSellQty - initialCallSell;
+                    const putBuyDelta = putsBuyQty - initialPutBuy;
+                    const putSellDelta = putsSellQty - initialPutSell;
+                    
                     const pcr = callsOI > 0 ? putsOI / callsOI : 0;
-                    const callSent = callsSellQty !== 0 ? ((callsBuyQty - callsSellQty) / Math.abs(callsSellQty) * 100) : 0;
-                    const putSent = putsSellQty !== 0 ? ((putsBuyQty - putsSellQty) / Math.abs(putsSellQty) * 100) : 0;
+                    const callSent = callSellDelta !== 0 ? ((callBuyDelta - callSellDelta) / Math.abs(callSellDelta) * 100) : 0;
+                    const putSent = putSellDelta !== 0 ? ((putBuyDelta - putSellDelta) / Math.abs(putSellDelta) * 100) : 0;
                     const optionsSent = callSent - putSent;
                     
                     // Overall sentiment (weighted)
@@ -237,7 +276,22 @@ const App: React.FC = () => {
                     };
                   });
                   
-                  console.log('🔄 Converted snapshots:', redisSnapshots.length, 'First:', redisSnapshots[0]);
+                  console.log('🔄 Converted snapshots:', redisSnapshots.length);
+                  if (redisSnapshots.length > 0) {
+                    console.log('📊 Oldest snapshot (should be ~0):', {
+                      time: redisSnapshots[redisSnapshots.length - 1]?.time,
+                      callSent: redisSnapshots[redisSnapshots.length - 1]?.callSent?.toFixed(2),
+                      putSent: redisSnapshots[redisSnapshots.length - 1]?.putSent?.toFixed(2),
+                      optionsSent: redisSnapshots[redisSnapshots.length - 1]?.optionsSent?.toFixed(2)
+                    });
+                    console.log('📊 Newest snapshot (should have values):', {
+                      time: redisSnapshots[0]?.time,
+                      callSent: redisSnapshots[0]?.callSent?.toFixed(2),
+                      putSent: redisSnapshots[0]?.putSent?.toFixed(2),
+                      pcr: redisSnapshots[0]?.pcr?.toFixed(2),
+                      optionsSent: redisSnapshots[0]?.optionsSent?.toFixed(2)
+                    });
+                  }
                   
                   // Calculate ptsChg between snapshots
                   for (let i = 1; i < redisSnapshots.length; i++) {
