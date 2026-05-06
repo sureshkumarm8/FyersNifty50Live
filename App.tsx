@@ -23,6 +23,13 @@ import { downloadCSV } from './services/csv';
 import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 
+// Declare global window cache for PayTM options
+declare global {
+  interface Window {
+    __PAYTM_OPTIONS_CACHE__?: FyersQuote[];
+  }
+}
+
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     try {
@@ -127,6 +134,22 @@ const App: React.FC = () => {
               } finally {
                 setIsLoadingConfig(false);
               }
+            }
+            
+            // Check if weekly options need update
+            console.log('📅 Checking weekly options expiry...');
+            try {
+              const { checkOptionsExpiry } = await import('./utils/optionsAutoUpdate');
+              const expiryCheck = checkOptionsExpiry();
+              console.log('[Options]', expiryCheck.message);
+              
+              if (expiryCheck.needsUpdate) {
+                setStatusMessage('⚠️ Weekly options expired! Run: node scripts/generateWeeklyOptions.cjs');
+              } else if (expiryCheck.daysUntilExpiry <= 2) {
+                console.warn('[Options] Expiring soon:', expiryCheck.message);
+              }
+            } catch (err) {
+              console.warn('[Options] Failed to check expiry:', err);
             }
             
             console.log('🔧 Initializing database...');
@@ -589,9 +612,14 @@ const App: React.FC = () => {
         
         if (redisData && redisData.stocks.length > 0) {
           // Use Redis data (already fetched by cron job)
-          console.log(`✅ [PayTM] Using Redis data: ${redisData.stocks.length} stocks`);
+          console.log(`✅ [PayTM] Using Redis data: ${redisData.stocks.length} stocks, ${redisData.options?.length || 0} options`);
           stockData = redisData.stocks;
           niftyLtpVal = redisData.niftyLTP;
+          
+          // Store options from Redis for later use
+          if (redisData.options && redisData.options.length > 0) {
+            window.__PAYTM_OPTIONS_CACHE__ = redisData.options;
+          }
         } else {
           // Fallback: Fetch directly from PayTM API only if token is available
           if (!credentials.paytmAccessToken) {
@@ -637,11 +665,17 @@ const App: React.FC = () => {
           let rawOptions: FyersQuote[];
           
           if (credentials.dataProvider === 'paytm') {
-            // Only fetch options if we have a valid token, otherwise skip options data
-            if (credentials.paytmAccessToken) {
+            // Check if we have options from Redis cache first
+            if (window.__PAYTM_OPTIONS_CACHE__ && window.__PAYTM_OPTIONS_CACHE__.length > 0) {
+              console.log(`[App] Using ${window.__PAYTM_OPTIONS_CACHE__.length} options from Redis cache`);
+              rawOptions = window.__PAYTM_OPTIONS_CACHE__;
+              // Clear cache after use to fetch fresh on next cycle
+              delete window.__PAYTM_OPTIONS_CACHE__;
+            } else if (credentials.paytmAccessToken) {
+              // Fallback: Fetch options if we have a valid token
               try {
                 rawOptions = await fetchPayTMOptions(niftyLtpVal, credentials);
-                console.log(`[App] Fetched ${rawOptions.length} options from PayTM`);
+                console.log(`[App] Fetched ${rawOptions.length} options from PayTM API`);
               } catch (optError) {
                 console.warn('[App] Failed to fetch options data:', optError);
                 rawOptions = []; // Continue without options data

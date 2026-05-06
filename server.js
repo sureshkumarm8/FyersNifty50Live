@@ -173,6 +173,59 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // --- REDIS API PROXY (For local development with production data) ---
+  if (reqUrl.pathname === '/api/get-redis-data' && req.method === 'GET') {
+    try {
+      const redisUrl = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+      const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+
+      if (!redisUrl || !redisToken) {
+        console.log('[Redis Proxy] Missing Redis credentials in environment');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: false, 
+          error: 'Redis credentials not configured. Add UPSTASH_REDIS_REST_URL and TOKEN to .env.local' 
+        }));
+        return;
+      }
+
+      console.log('[Redis Proxy] Fetching snapshot:latest from Redis...');
+      
+      const response = await fetch(`${redisUrl}/get/snapshot:latest`, {
+        headers: {
+          'Authorization': `Bearer ${redisToken}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Redis returned ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.result) {
+        console.log('[Redis Proxy] No data in Redis yet');
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          success: false, 
+          error: 'No data in Redis. Trigger cron: curl https://fyers-nifty50-live.vercel.app/api/cron-fetch' 
+        }));
+        return;
+      }
+
+      const snapshot = JSON.parse(data.result);
+      console.log(`[Redis Proxy] ✅ Loaded snapshot - Stocks: ${snapshot.stockCount}, Options: ${snapshot.optionsCount || 0}`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, data: snapshot }));
+    } catch (err) {
+      console.error('[Redis Proxy] Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
   // --- QUOTES ROUTE (Using Quotes API - supports multiple symbols) ---
   if (reqUrl.pathname === '/api/quotes' && req.method === 'GET') {
     const symbols = reqUrl.searchParams.get('symbols');

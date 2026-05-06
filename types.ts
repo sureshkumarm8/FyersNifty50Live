@@ -359,7 +359,6 @@ export interface PatternOutcome {
   avgDuration: number; // Minutes
   bestTime?: string;
 }
-}
 
 export interface SessionHistoryMap {
   [symbol: string]: SessionCandle[];

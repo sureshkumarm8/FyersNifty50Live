@@ -275,7 +275,7 @@ export const fetchNiftyIndexLTP = async (credentials: FyersCredentials): Promise
 
 // Fetch data from Redis (stored by cron job)
 // This avoids making duplicate API calls and uses pre-fetched data
-export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], niftyLTP: number } | null> => {
+export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], options: FyersQuote[], niftyLTP: number } | null> => {
   try {
     console.log('[PayTM Redis] Fetching data from /api/get-redis-data...');
     const response = await fetch('/api/get-redis-data');
@@ -313,11 +313,26 @@ export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], nif
             stocks.push(quote);
           }
         } catch (err) {
-          console.error('[PayTM Redis] Error converting quote:', err);
+          console.error('[PayTM Redis] Error converting stock quote:', err);
         }
       });
     } else {
       console.error('[PayTM Redis] snapshot.stocks is not an array:', typeof snapshot.stocks);
+    }
+    
+    // Convert options data
+    const options: FyersQuote[] = [];
+    if (snapshot.options && Array.isArray(snapshot.options)) {
+      snapshot.options.forEach((paytmQuote: any) => {
+        try {
+          if (paytmQuote.found !== false) {
+            const quote = convertPayTMToFyersQuote(paytmQuote);
+            options.push(quote);
+          }
+        } catch (err) {
+          console.error('[PayTM Redis] Error converting option quote:', err);
+        }
+      });
     }
     
     if (stocks.length === 0) {
@@ -326,10 +341,11 @@ export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], nif
     }
     
     const ageMinutes = Math.round(dataAge / 60000);
-    console.log(`[PayTM Redis] ✅ Loaded ${stocks.length} stocks, Nifty: ${snapshot.niftyLTP || 0} (Age: ${ageMinutes}m)`);
+    console.log(`[PayTM Redis] ✅ Loaded ${stocks.length} stocks, ${options.length} options, Nifty: ${snapshot.niftyLTP || 0} (Age: ${ageMinutes}m)`);
     
     return {
       stocks,
+      options,
       niftyLTP: snapshot.niftyLTP || 0
     };
     

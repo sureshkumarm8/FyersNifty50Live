@@ -3,11 +3,56 @@
 
 import { Redis } from '@upstash/redis';
 
+// Complete Nifty50 Security IDs from paytmMappings.ts
 const NIFTY50_SECURITY_IDS = [
-  '11536', '11723', '3499', '3456', '11630', '11915', '3063', '11532',
-  '4668', '4717', '1330', '13611', '5258', '4963', '16675', '2885',
-  '11483', '6364', '13538', '14977', '1922', '16669', '10447', '526',
-  '15083', '4592', '1660', '1270', '14299', '4749', '5247', '4960'
+  '3351',  // SUNPHARMA
+  '11536', // TCS
+  '10940', // DIVISLAB
+  '3787',  // WIPRO
+  '13538', // TECHM
+  '1922',  // KOTAKBANK
+  '5900',  // AXISBANK
+  '25',    // ADANIENT
+  '694',   // CIPLA
+  '10604', // BHARTIARTL
+  '526',   // BPCL
+  '11532', // ULTRACEMCO
+  '547',   // BRITANNIA
+  '2475',  // ONGC
+  '1348',  // HEROMOTOCO
+  '14977', // POWERGRID
+  '1594',  // INFY
+  '7229',  // HCLTECH
+  '3045',  // SBIN
+  '2885',  // RELIANCE
+  '10999', // MARUTI
+  '2031',  // M&M
+  '21808', // SBILIFE
+  '1232',  // GRASIM
+  '11723', // JSWSTEEL
+  '467',   // HDFCLIFE
+  '11483', // LT
+  '15083', // ADANIPORTS
+  '1363',  // HINDALCO
+  '5258',  // INDUSINDBK
+  '157',   // APOLLOHOSP
+  '3506',  // TITAN
+  '1660',  // ITC
+  '16669', // BAJAJ-AUTO
+  '20374', // COALINDIA
+  '910',   // EICHERMOT
+  '3432',  // TATACONSUM
+  '236',   // ASIANPAINT
+  '4963',  // ICICIBANK
+  '1394',  // HINDUNILVR
+  '11630', // NTPC
+  '1333',  // HDFCBANK
+  '3499',  // TATASTEEL
+  '16675', // BAJAJFINSV
+  '17963', // NESTLEIND
+  '881',   // DRREDDY
+  '4306',  // SHRIRAMFIN
+  '317'    // BAJFINANCE
 ];
 
 // Initialize Redis client
@@ -100,6 +145,46 @@ export default async function handler(req, res) {
     const indexData = await indexResponse.json();
     const niftyLTP = indexData?.data?.[0]?.last_price || indexData?.data?.[0]?.lp || null;
 
+    // Fetch Options data (ATM ± 1000 points)
+    let optionsData = null;
+    if (niftyLTP && niftyLTP > 0) {
+      try {
+        const atmStrike = Math.round(niftyLTP / 50) * 50;
+        const strikeRange = 20; // ±1000 points
+        const minStrike = atmStrike - (strikeRange * 50);
+        const maxStrike = atmStrike + (strikeRange * 50);
+        
+        // Import weekly options from constants
+        const { NIFTY_WEEKLY_OPTIONS } = await import('../constants/niftyWeeklyOptions.js');
+        const filteredOptions = NIFTY_WEEKLY_OPTIONS.filter(opt => 
+          opt.strike >= minStrike && opt.strike <= maxStrike
+        );
+        const optionIds = filteredOptions.map(opt => opt.security_id);
+        
+        if (optionIds.length > 0) {
+          const optionPreferences = optionIds.map(id => `NSE:${id}:INDEX_OPT`).join(',');
+          const optionsResponse = await fetch(
+            `https://developer.paytmmoney.com/data/v1/price/live?mode=FULL&pref=${encodeURIComponent(optionPreferences)}`,
+            {
+              headers: {
+                'x-jwt-token': paytmToken,
+                'Accept': 'application/json'
+              }
+            }
+          );
+          
+          if (optionsResponse.ok) {
+            const optData = await optionsResponse.json();
+            optionsData = optData?.data || [];
+            console.log(`[Cron] Fetched ${optionsData.length} options contracts`);
+          }
+        }
+      } catch (optError) {
+        console.error('[Cron] Options fetch error:', optError.message);
+        // Continue without options data
+      }
+    }
+
     const duration = Date.now() - startTime;
     
     // Save to Redis for persistent storage
@@ -108,7 +193,9 @@ export default async function handler(req, res) {
       istTime: istString,
       niftyLTP,
       stocks: stockData?.data || [],
+      options: optionsData || [],
       stockCount: stockData?.data?.length || 0,
+      optionsCount: optionsData?.length || 0,
       duration
     };
     
@@ -144,6 +231,7 @@ export default async function handler(req, res) {
       data: {
         niftyLTP,
         stockCount: stockData?.data?.length || 0,
+        optionsCount: optionsData?.length || 0,
         timestamp: snapshot.timestamp,
         duration,
         istTime: istString,
