@@ -667,27 +667,22 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 </div>
                             </div>
                         ) : (
-                            <div className="space-y-2">
+                                <div className="space-y-2">
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">PayTM Access Token</label>
                                 <div className="relative group">
                                     <div className="absolute left-3 top-3 text-slate-500 group-focus-within:text-blue-400 transition-colors">
                                         <Lock size={16} />
                                     </div>
                                     <textarea 
-                                        value={paytmAccessToken ? '•'.repeat(Math.min(paytmAccessToken.length, 100)) : ''} 
+                                        value={paytmAccessToken} 
                                         onChange={(e) => {
-                                            // Allow editing by clearing the masked value
-                                            if (e.target.value === '') {
-                                                setPaytmAccessToken('');
-                                            }
-                                        }}
-                                        onFocus={(e) => {
-                                            // Show actual value when focused for editing
-                                            e.target.value = paytmAccessToken;
-                                        }}
-                                        onBlur={(e) => {
-                                            // Save the actual value and re-mask
                                             setPaytmAccessToken(e.target.value);
+                                        }}
+                                        onPaste={(e) => {
+                                            // Explicitly handle paste
+                                            e.preventDefault();
+                                            const pastedText = e.clipboardData.getData('text');
+                                            setPaytmAccessToken(pastedText.trim());
                                         }}
                                         placeholder="Paste your PayTM Money access token here..."
                                         rows={2}

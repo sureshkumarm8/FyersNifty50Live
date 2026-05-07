@@ -62,6 +62,7 @@ const App: React.FC = () => {
   });
   
   const [isLoadingConfig, setIsLoadingConfig] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false); // New flag to track config loading
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +134,10 @@ const App: React.FC = () => {
                 console.log('ℹ️ Backend config not available, using localStorage');
               } finally {
                 setIsLoadingConfig(false);
+                setConfigLoaded(true); // Mark config as loaded (even if failed)
               }
+            } else {
+              setConfigLoaded(true); // Already have token
             }
             
             // Check if weekly options need update and trigger auto-discovery
@@ -865,6 +869,12 @@ const App: React.FC = () => {
   }, []);
 
   const refreshData = useCallback(async () => {
+    // Wait for config to load before fetching
+    if (!configLoaded) {
+      console.log('⏳ [App] Waiting for config to load...');
+      return;
+    }
+    
     // Check credentials based on provider
     const hasValidCredentials = credentials.dataProvider === 'paytm' 
       ? credentials.paytmAccessToken 
@@ -1212,7 +1222,7 @@ const App: React.FC = () => {
         return () => clearInterval(intervalId);
       }
     }
-  }, [isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval, credentials.bypassMarketHours]);
+  }, [configLoaded, isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval, credentials.bypassMarketHours]);
 
 
   const handleClearQuantHistory = () => {
