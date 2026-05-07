@@ -1,0 +1,114 @@
+================================================================================
+           AUTOMATIC OPTIONS DISCOVERY - QUICK REFERENCE
+================================================================================
+
+🔄 HOW IT WORKS (Simplified):
+-------------------------------
+1. App starts → Discovers current week's options from PayTM CSV
+2. Options cached in Redis for 7 days
+3. Every Tuesday (expiry day) → Auto-refreshes next week's options
+4. No manual intervention needed!
+
+📊 DATA FLOW:
+-------------
+PayTM CSV → Parse Options → Redis Cache → Live Prices → Frontend
+     ▲                            │
+     └────────────────────────────┘
+          (Refresh on expiry)
+
+🎯 KEY APIS:
+------------
+1. /api/discover-options
+   - Fetches current week's options from PayTM CSV
+   - Caches in Redis: "options:current_week"
+   - Returns: { expiry, count, options[], atmStrike }
+
+2. /api/cron-fetch
+   - Auto-discovers if cache missing/expired
+   - Fetches live prices for options
+   - Runs every minute during market hours
+
+3. /api/get-redis-data
+   - Returns cached data for frontend
+   - Includes stocks, options, niftyLTP
+
+📅 WEEKLY EXPIRY SCHEDULE:
+---------------------------
+Options expire: Every Tuesday (or Monday if holiday)
+Calendar source: constants/niftyExpiryDates.ts
+
+Example:
+- May 6 (Mon): Using options expiring May 13
+- May 13 (Tue): ⚠️ Expiry! Auto-discovers May 20 options
+- May 14 (Wed): Using new May 20 options
+- May 20 (Tue): ⚠️ Expiry! Auto-discovers May 27 options
+
+🔍 DEBUGGING:
+-------------
+# Check current expiry in Redis:
+curl http://localhost:3000/api/discover-options | jq '.expiry'
+
+# Force refresh:
+curl http://localhost:3000/api/discover-options?force=true
+
+# Check what's in Redis:
+curl http://localhost:3000/api/get-redis-data | jq '.data | keys'
+
+# Verify cron auto-discovery:
+# Look for these logs in cron-fetch:
+✅ [Cron] ✅ Using cached options (expiry: 2026-05-13, count: 82)
+⚠️ [Cron] ⚠️ Cached options expired - needs discovery
+🔄 [Cron] 🔄 Triggering automatic options discovery...
+✅ [Cron] ✅ Discovered 82 options for 2026-05-13
+
+🛠️ TROUBLESHOOTING:
+-------------------
+Problem: Options not showing
+Solution: Check browser console for:
+  - "[PayTM] Using dynamic options (expiry: X, count: Y)"
+  - If showing static fallback, discovery API may have failed
+
+Problem: Stale options after Tuesday
+Solution: 
+  - Refresh browser (triggers App.tsx discovery)
+  - Or wait 1 minute for cron-fetch to auto-discover
+
+Problem: Discovery fails
+Solution:
+  - Check PAYTM_ACCESS_TOKEN env var
+  - Verify PayTM CSV URL is accessible
+  - Falls back to static constants automatically
+
+📈 MONITORING:
+--------------
+Key metrics to watch:
+- Discovery success rate (should be 100%)
+- Cache hit rate (should be >95% after first discovery)
+- Options count (typically 80-100 contracts)
+- Expiry date (should match current week)
+
+🎓 TECHNICAL DETAILS:
+---------------------
+Cache Key: "options:current_week"
+TTL: 7 days (604800 seconds)
+Strike Range: ATM ± 1000 points (±20 strikes of 50)
+Data Source: https://developer.paytmmoney.com/.../option_security_master.csv
+Fallback: constants/niftyWeeklyOptions.ts (static)
+
+🚀 DEPLOYMENT CHECKLIST:
+------------------------
+✅ Build completed (npm run build)
+✅ Environment variables set (PAYTM_ACCESS_TOKEN)
+✅ Redis configured (Upstash)
+✅ Cron job active (cron-job.org → /api/cron-fetch)
+✅ Expiry calendar updated (constants/niftyExpiryDates.ts)
+
+💡 BEST PRACTICES:
+------------------
+1. Keep expiry calendar updated (6 months ahead)
+2. Monitor logs on Tuesday (expiry day)
+3. Don't clear Redis cache unnecessarily
+4. Let auto-discovery handle weekly updates
+5. Static constants are fallback only - don't update manually
+
+================================================================================

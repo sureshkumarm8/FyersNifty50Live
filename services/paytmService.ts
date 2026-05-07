@@ -1,4 +1,3 @@
-
 import { FyersQuote, FyersCredentials } from '../types';
 import { NIFTY_WEIGHTAGE } from '../constants';
 import { 
@@ -8,7 +7,8 @@ import {
 import { 
   NIFTY_WEEKLY_OPTIONS, 
   getWeeklyOptionIds,
-  CURRENT_EXPIRY_FORMATTED
+  CURRENT_EXPIRY_FORMATTED,
+  NiftyOption
 } from '../constants/niftyWeeklyOptions';
 
 const PROXY_PAYTM_QUOTES_URL = '/api/paytm/quotes';
@@ -54,7 +54,7 @@ export const getNiftyIndexSecurityId = (): string => {
   return NIFTY_INDEX_SECURITY_ID;
 };
 
-export const getNiftyOptionSecurityIds = (niftyLtp: number): string[] => {
+export const getNiftyOptionSecurityIds = async (niftyLtp: number): Promise<string[]> => {
   // Round to nearest 50 to get ATM strike
   const atmStrike = Math.round(niftyLtp / 50) * 50;
   
@@ -64,14 +64,36 @@ export const getNiftyOptionSecurityIds = (niftyLtp: number): string[] => {
   const minStrike = atmStrike - (strikeRange * 50); // 22000
   const maxStrike = atmStrike + (strikeRange * 50); // 24000
   
-  // Filter options within the strike range (both CE and PE)
-  const filteredOptions = NIFTY_WEEKLY_OPTIONS.filter(opt => 
-    opt.strike >= minStrike && opt.strike <= maxStrike
-  );
+  // Try to get dynamic options from discover-options API (auto-called by cron)
+  let filteredOptions: NiftyOption[] = [];
+  
+  try {
+    const response = await fetch('/api/discover-options');
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.options) {
+        console.log(`[PayTM] Using dynamic options (expiry: ${data.expiry}, count: ${data.count})`);
+        // Filter by ATM range
+        filteredOptions = data.options.filter((opt: NiftyOption) => 
+          opt.strike >= minStrike && opt.strike <= maxStrike
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[PayTM] Could not fetch dynamic options, using static fallback');
+  }
+  
+  // Fallback to static if dynamic fetch failed
+  if (filteredOptions.length === 0) {
+    filteredOptions = NIFTY_WEEKLY_OPTIONS.filter(opt => 
+      opt.strike >= minStrike && opt.strike <= maxStrike
+    );
+    console.log(`[PayTM] Using static options fallback (count: ${filteredOptions.length})`);
+  }
   
   const allIds = filteredOptions.map(opt => opt.security_id);
   
-  // console.log(`[PayTM] Options Filter: Nifty LTP=${niftyLtp}, ATM=${atmStrike}, Range=${minStrike}-${maxStrike}, Contracts=${allIds.length}`);
+  console.log(`[PayTM] Options Filter: Nifty LTP=${niftyLtp}, ATM=${atmStrike}, Range=${minStrike}-${maxStrike}, Contracts=${allIds.length}`);
   
   return allIds;
 };
@@ -251,7 +273,7 @@ export const fetchPayTMOptions = async (
   niftyLtp: number,
   credentials: FyersCredentials
 ): Promise<FyersQuote[]> => {
-  const securityIds = getNiftyOptionSecurityIds(niftyLtp);
+  const securityIds = await getNiftyOptionSecurityIds(niftyLtp);
   return fetchPayTMQuotes(securityIds, credentials, 'OPTION');
 };
 

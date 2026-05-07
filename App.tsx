@@ -136,15 +136,34 @@ const App: React.FC = () => {
               }
             }
             
-            // Check if weekly options need update
+            // Check if weekly options need update and trigger auto-discovery
             console.log('📅 Checking weekly options expiry...');
             try {
               const { checkOptionsExpiry } = await import('./utils/optionsAutoUpdate');
               const expiryCheck = checkOptionsExpiry();
               console.log('[Options]', expiryCheck.message);
               
+              // Always trigger discovery on startup to ensure Redis cache is populated
+              console.log('[Options] 🔄 Triggering automatic options discovery...');
+              try {
+                const discoverResponse = await fetch('/api/discover-options');
+                if (discoverResponse.ok) {
+                  const discoverData = await discoverResponse.json();
+                  if (discoverData.success) {
+                    console.log(`[Options] ✅ Discovered ${discoverData.count} contracts for ${discoverData.expiry}`);
+                    if (discoverData.cached) {
+                      console.log(`[Options] Using cached data from ${discoverData.discoveredAt}`);
+                    }
+                  }
+                } else {
+                  console.warn('[Options] Discovery API returned:', discoverResponse.status);
+                }
+              } catch (discoverErr) {
+                console.warn('[Options] Discovery failed (will use fallback):', discoverErr);
+              }
+              
               if (expiryCheck.needsUpdate) {
-                setMarketStatusMsg('⚠️ Weekly options expired! Run: node scripts/generateWeeklyOptions.cjs');
+                setMarketStatusMsg('⚠️ Weekly options expired! Auto-discovery attempted.');
               } else if (expiryCheck.daysUntilExpiry <= 2) {
                 console.warn('[Options] Expiring soon:', expiryCheck.message);
               }

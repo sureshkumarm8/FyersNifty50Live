@@ -169,7 +169,7 @@ export default async function handler(req, res) {
     const indexData = await indexResponse.json();
     const niftyLTP = indexData?.data?.[0]?.last_price || indexData?.data?.[0]?.lp || null;
 
-    // Fetch Options data (ATM ± 1000 points)
+    // Fetch Options data (ATM ± 1000 points) - DYNAMIC DISCOVERY
     let optionsData = null;
     if (niftyLTP && niftyLTP > 0) {
       try {
@@ -178,9 +178,127 @@ export default async function handler(req, res) {
         const minStrike = atmStrike - (strikeRange * 50);
         const maxStrike = atmStrike + (strikeRange * 50);
         
-        // Import weekly options from constants
-        const { NIFTY_WEEKLY_OPTIONS } = await import('../constants/niftyWeeklyOptions.js');
-        const filteredOptions = NIFTY_WEEKLY_OPTIONS.filter(opt => 
+        // Try to get current week's options from Redis cache (populated by discover-options API)
+        let currentWeekOptions = await redis.get('options:current_week');
+        let needsDiscovery = false;
+        
+        if (!currentWeekOptions) {
+          console.log('[Cron] ⚠️ No cached options found - needs discovery');
+          needsDiscovery = true;
+        } else {
+          const cacheData = typeof currentWeekOptions === 'string' 
+            ? JSON.parse(currentWeekOptions) 
+            : currentWeekOptions;
+          
+          // Check if expiry has passed
+          const expiryDate = new Date(cacheData.expiry);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          expiryDate.setHours(0, 0, 0, 0);
+          
+          if (expiryDate < today) {
+            console.log(`[Cron] ⚠️ Cached options expired on ${cacheData.expiry} - needs discovery`);
+            needsDiscovery = true;
+          } else {
+            console.log(`[Cron] ✅ Using cached options (expiry: ${cacheData.expiry}, count: ${cacheData.count})`);
+            currentWeekOptions = cacheData;
+          }
+        }
+        
+        // Auto-discover if needed
+        if (needsDiscovery) {
+          console.log('[Cron] 🔄 Triggering automatic options discovery...');
+          try {
+            // Import and call discover-options logic inline
+            const { NIFTY_EXPIRY_DATES } = await import('../constants/niftyExpiryDates.js');
+            
+            // Get next expiry
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            let nextExpiry = null;
+            
+            for (const expiry of NIFTY_EXPIRY_DATES) {
+              const expiryDate = new Date(expiry.date);
+              expiryDate.setHours(0, 0, 0, 0);
+              if (expiryDate >= today) {
+                nextExpiry = expiry.date;
+                console.log(`[Cron] Next expiry: ${nextExpiry} (${expiry.dayOfWeek})`);
+                break;
+              }
+            }
+            
+            if (!nextExpiry) {
+              throw new Error('No future expiry found in calendar');
+            }
+            
+            // Fetch CSV and parse options
+            console.log('[Cron] Fetching PayTM options CSV...');
+            const csvResponse = await fetch('https://developer.paytmmoney.com/data/v1/scrips/option_security_master.csv');
+            if (!csvResponse.ok) throw new Error(`CSV fetch failed: ${csvResponse.status}`);
+            
+            const csvText = await csvResponse.text();
+            const lines = csvText.split('\n');
+            const options = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (!line) continue;
+              
+              const parts = line.split(',');
+              if (parts.length < 6) continue;
+              
+              const securityId = parts[0]?.trim();
+              const symbol = parts[1]?.trim();
+              const strike = parseFloat(parts[3]);
+              const expiry = parts[4]?.trim();
+              
+              if (symbol?.toUpperCase().includes('NIFTY') && 
+                  expiry === nextExpiry &&
+                  !isNaN(strike) &&
+                  strike >= minStrike && 
+                  strike <= maxStrike &&
+                  securityId) {
+                
+                const type = symbol.toUpperCase().includes('CE') ? 'CE' : 
+                            symbol.toUpperCase().includes('PE') ? 'PE' : null;
+                
+                if (type) {
+                  options.push({ security_id: securityId, strike, type, symbol });
+                }
+              }
+            }
+            
+            options.sort((a, b) => {
+              if (a.strike !== b.strike) return a.strike - b.strike;
+              return a.type === 'CE' ? -1 : 1;
+            });
+            
+            console.log(`[Cron] ✅ Discovered ${options.length} options for ${nextExpiry}`);
+            
+            // Cache the discovered options
+            const cacheData = {
+              expiry: nextExpiry,
+              discoveredAt: new Date().toISOString(),
+              atmStrike,
+              niftyLTP,
+              strikeRange: { min: minStrike, max: maxStrike },
+              options,
+              count: options.length
+            };
+            
+            await redis.set('options:current_week', JSON.stringify(cacheData), { ex: 604800 });
+            currentWeekOptions = cacheData;
+            
+          } catch (discoveryError) {
+            console.error('[Cron] ❌ Discovery failed:', discoveryError.message);
+            console.log('[Cron] Falling back to static constants');
+            const { NIFTY_WEEKLY_OPTIONS } = await import('../constants/niftyWeeklyOptions.js');
+            currentWeekOptions = { options: NIFTY_WEEKLY_OPTIONS };
+          }
+        }
+        
+        // Filter options for ATM range
+        const filteredOptions = currentWeekOptions.options.filter(opt => 
           opt.strike >= minStrike && opt.strike <= maxStrike
         );
         const optionIds = filteredOptions.map(opt => opt.security_id);
