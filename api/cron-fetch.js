@@ -3,6 +3,68 @@
 
 import { Redis } from '@upstash/redis';
 
+// Import mapping data
+import { PAYTM_NIFTY50_MAP } from '../constants/paytmMappings.js';
+import { NIFTY_WEEKLY_OPTIONS, CURRENT_EXPIRY_FORMATTED } from '../constants/niftyWeeklyOptions.js';
+
+// Convert PayTM quote to FyersQuote format
+function convertPayTMToFyersFormat(paytmQuote, mappingData, isOption = false) {
+  const securityIdStr = paytmQuote.security_id.toString();
+  
+  let symbol = 'UNKNOWN';
+  let shortName = 'UNKNOWN';
+  let description = 'Unknown Security';
+  let expiryDate = undefined;
+  
+  if (isOption) {
+    // Find in options mapping
+    const optInfo = NIFTY_WEEKLY_OPTIONS.find(o => o.security_id === securityIdStr);
+    if (optInfo) {
+      symbol = `NSE:NIFTY-${optInfo.strike}-${optInfo.type}`;
+      shortName = `NIFTY ${optInfo.strike} ${optInfo.type}`;
+      description = `NIFTY ${optInfo.strike} ${optInfo.type} ${CURRENT_EXPIRY_FORMATTED}`;
+      expiryDate = CURRENT_EXPIRY_FORMATTED;
+    }
+  } else {
+    // Find in stock mapping
+    const stockInfo = Object.values(PAYTM_NIFTY50_MAP).find(s => s.security_id === securityIdStr);
+    if (stockInfo) {
+      symbol = `NSE:${stockInfo.symbol}`;
+      shortName = stockInfo.symbol;
+      description = stockInfo.name;
+    }
+  }
+  
+  return {
+    symbol,
+    short_name: shortName,
+    exchange: 'NSE',
+    expiry_date: expiryDate,
+    description,
+    original_name: shortName,
+    fyToken: securityIdStr,
+    tt: paytmQuote.last_trade_time || paytmQuote.last_update_time || Date.now(),
+    
+    lp: paytmQuote.last_price || 0,
+    open_price: paytmQuote.ohlc?.open || 0,
+    high_price: paytmQuote.ohlc?.high || 0,
+    low_price: paytmQuote.ohlc?.low || 0,
+    prev_close_price: paytmQuote.ohlc?.close || 0,
+    volume: paytmQuote.volume_traded || 0,
+    
+    ch: paytmQuote.change_absolute || 0,
+    chp: paytmQuote.change_percent || 0,
+    
+    total_buy_qty: paytmQuote.total_buy_quantity || 0,
+    total_sell_qty: paytmQuote.total_sell_quantity || 0,
+    bid: paytmQuote.depth?.buy?.[0]?.price || 0,
+    ask: paytmQuote.depth?.sell?.[0]?.price || 0,
+    spread: (paytmQuote.depth?.sell?.[0]?.price || 0) - (paytmQuote.depth?.buy?.[0]?.price || 0),
+    
+    oi: paytmQuote.oi || 0
+  };
+}
+
 // Complete Nifty50 Security IDs from paytmMappings.ts
 const NIFTY50_SECURITY_IDS = [
   '3351',  // SUNPHARMA
@@ -329,15 +391,26 @@ export default async function handler(req, res) {
 
     const duration = Date.now() - startTime;
     
-    // Save to Redis for persistent storage
+    // Convert raw PayTM data to FyersQuote format for consistency
+    const convertedStocks = (stockData?.data || [])
+      .filter(quote => quote.found !== false)
+      .map(quote => convertPayTMToFyersFormat(quote, PAYTM_NIFTY50_MAP, false));
+    
+    const convertedOptions = (optionsData || [])
+      .filter(quote => quote.found !== false)
+      .map(quote => convertPayTMToFyersFormat(quote, NIFTY_WEEKLY_OPTIONS, true));
+    
+    console.log(`[Cron] Converted ${convertedStocks.length} stocks and ${convertedOptions.length} options to FyersQuote format`);
+    
+    // Save to Redis for persistent storage (now in consistent format!)
     const snapshot = {
       timestamp: Date.now(),
       istTime: istString,
       niftyLTP,
-      stocks: stockData?.data || [],
-      options: optionsData || [],
-      stockCount: stockData?.data?.length || 0,
-      optionsCount: optionsData?.length || 0,
+      stocks: convertedStocks,  // Now in FyersQuote format
+      options: convertedOptions, // Now in FyersQuote format
+      stockCount: convertedStocks.length,
+      optionsCount: convertedOptions.length,
       duration,
       source: 'cron'  // Mark that this data came from cron job
     };
