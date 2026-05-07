@@ -350,45 +350,98 @@ const App: React.FC = () => {
                     const { PAYTM_NIFTY50_MAP } = await import('./constants/paytmMappings');
                     const { NIFTY_WEEKLY_OPTIONS } = await import('./constants/niftyWeeklyOptions');
                     
-                    // Initialize stock refs - convert security_id to symbol
+                    // Initialize stock refs - handle BOTH raw and converted formats
                     oldestStocks.forEach((stock: any) => {
-                      if (!stock.security_id || stock.found === false) return;
+                      let symbol: string | undefined;
+                      let initialData = {
+                        lp: 0,
+                        total_buy_qty: 0,
+                        total_sell_qty: 0
+                      };
                       
-                      const securityIdStr = stock.security_id.toString();
-                      const stockInfo = Object.values(PAYTM_NIFTY50_MAP).find((s: any) => s.security_id === securityIdStr);
+                      // Check if already converted (has 'symbol' field)
+                      if (stock.symbol && !stock.security_id) {
+                        symbol = stock.symbol;
+                        initialData = {
+                          lp: stock.lp || 0,
+                          total_buy_qty: stock.total_buy_qty || 0,
+                          total_sell_qty: stock.total_sell_qty || 0
+                        };
+                      }
+                      // Raw PayTM format (has security_id)
+                      else if (stock.security_id && stock.found !== false) {
+                        const securityIdStr = stock.security_id.toString();
+                        const stockInfo = Object.values(PAYTM_NIFTY50_MAP).find((s: any) => s.security_id === securityIdStr);
+                        
+                        if (stockInfo) {
+                          symbol = `NSE:${(stockInfo as any).symbol}`;
+                          initialData = {
+                            lp: stock.last_price || 0,
+                            total_buy_qty: stock.total_buy_quantity || 0,
+                            total_sell_qty: stock.total_sell_quantity || 0
+                          };
+                        }
+                      }
                       
-                      if (stockInfo) {
-                        const symbol = `NSE:${(stockInfo as any).symbol}`;
+                      if (symbol) {
                         initialStocksRef.current[symbol] = {
                           symbol,
-                          lp: stock.last_price || 0,
-                          total_buy_qty: stock.total_buy_quantity || 0,
-                          total_sell_qty: stock.total_sell_quantity || 0,
+                          lp: initialData.lp,
+                          total_buy_qty: initialData.total_buy_qty,
+                          total_sell_qty: initialData.total_sell_qty,
                         } as FyersQuote;
                       }
                     });
                     
-                    // Initialize options refs - convert security_id to symbol
+                    // Initialize options refs - handle BOTH raw and converted formats
                     oldestOptions.forEach((option: any) => {
-                      if (!option.security_id || option.found === false) return;
+                      let symbol: string | undefined;
+                      let initialData = {
+                        lp: 0,
+                        total_buy_qty: 0,
+                        total_sell_qty: 0
+                      };
                       
-                      const securityIdStr = option.security_id.toString();
-                      const optInfo = NIFTY_WEEKLY_OPTIONS.find((o: any) => o.security_id === securityIdStr);
+                      // Check if already converted (has 'symbol' field)
+                      if (option.symbol && !option.security_id) {
+                        symbol = option.symbol;
+                        initialData = {
+                          lp: option.lp || 0,
+                          total_buy_qty: option.total_buy_qty || 0,
+                          total_sell_qty: option.total_sell_qty || 0
+                        };
+                      }
+                      // Raw PayTM format (has security_id)
+                      else if (option.security_id && option.found !== false) {
+                        const securityIdStr = option.security_id.toString();
+                        const optInfo = NIFTY_WEEKLY_OPTIONS.find((o: any) => o.security_id === securityIdStr);
+                        
+                        if (optInfo) {
+                          symbol = `NSE:NIFTY-${(optInfo as any).strike}-${(optInfo as any).type}`;
+                          initialData = {
+                            lp: option.last_price || 0,
+                            total_buy_qty: option.total_buy_quantity || 0,
+                            total_sell_qty: option.total_sell_quantity || 0
+                          };
+                        }
+                      }
                       
-                      if (optInfo) {
-                        const symbol = `NSE:NIFTY-${(optInfo as any).strike}-${(optInfo as any).type}`;
+                      if (symbol) {
                         initialOptionsRef.current[symbol] = {
                           symbol,
-                          lp: option.last_price || 0,
-                          total_buy_qty: option.total_buy_quantity || 0,
-                          total_sell_qty: option.total_sell_quantity || 0,
+                          lp: initialData.lp,
+                          total_buy_qty: initialData.total_buy_qty,
+                          total_sell_qty: initialData.total_sell_qty,
                         } as FyersQuote;
                       }
                     });
                     
                     console.log(`✅ Initialized ${Object.keys(initialStocksRef.current).length} stock refs and ${Object.keys(initialOptionsRef.current).length} option refs`);
                     if (Object.keys(initialStocksRef.current).length > 0) {
-                      console.log('📝 Sample initialized symbols:', Object.keys(initialStocksRef.current).slice(0, 3));
+                      console.log('📝 Sample stock symbols:', Object.keys(initialStocksRef.current).slice(0, 3));
+                    }
+                    if (Object.keys(initialOptionsRef.current).length > 0) {
+                      console.log('📝 Sample option symbols:', Object.keys(initialOptionsRef.current).slice(0, 3));
                     }
                     
                     // Build sessionHistory from TODAY's Redis snapshots
@@ -402,98 +455,159 @@ const App: React.FC = () => {
                       const stocks = snap.stocks || [];
                       const options = snap.options || [];
                       
-                      // Process stocks
+                      // Process stocks - handle BOTH raw and converted formats
                       stocks.forEach((stock: any) => {
-                        if (!stock.security_id || stock.found === false) return;
+                        let symbol: string | undefined;
+                        let stockData = {
+                          last_price: 0,
+                          volume_traded: 0,
+                          change_percent: 0,
+                          total_buy_quantity: 0,
+                          total_sell_quantity: 0
+                        };
                         
-                        const securityIdStr = stock.security_id.toString();
-                        const stockInfo = Object.values(PAYTM_NIFTY50_MAP).find((s: any) => s.security_id === securityIdStr);
-                        
-                        if (stockInfo) {
-                          const symbol = `NSE:${(stockInfo as any).symbol}`;
-                          
-                          if (!sessionHistoryMap[symbol]) {
-                            sessionHistoryMap[symbol] = [];
-                          }
-                          
-                          // Calculate day changes using initialRef
-                          const initial = initialStocksRef.current[symbol];
-                          const lp_chg_day_p = initial && initial.lp !== 0 
-                            ? ((stock.last_price - initial.lp) / initial.lp) * 100 
-                            : 0;
-                          const bid_chg_day_p = initial && initial.total_buy_qty !== 0
-                            ? ((stock.total_buy_quantity - initial.total_buy_qty) / initial.total_buy_qty) * 100
-                            : 0;
-                          const ask_chg_day_p = initial && initial.total_sell_qty !== 0
-                            ? ((stock.total_sell_quantity - initial.total_sell_qty) / initial.total_sell_qty) * 100
-                            : 0;
-                          const day_net_strength = bid_chg_day_p - ask_chg_day_p;
-                          
-                          sessionHistoryMap[symbol].push({
-                            time: timeStr,
-                            timestamp: snap.timestamp,
-                            lp: stock.last_price || 0,
-                            volume: stock.volume_traded || 0,
-                            chp: stock.change_percent || 0,
-                            lp_chg_1m_p: 0, // Not available from Redis
-                            lp_chg_day_p,
-                            total_buy_qty: stock.total_buy_quantity || 0,
-                            total_sell_qty: stock.total_sell_quantity || 0,
-                            bid_qty_chg_p: 0, // Not available from Redis
-                            bid_chg_day_p,
-                            ask_qty_chg_p: 0, // Not available from Redis
-                            ask_chg_day_p,
-                            net_strength_1m: 0, // Not available from Redis
-                            day_net_strength
-                          });
+                        // Check if already converted (has 'symbol' field)
+                        if (stock.symbol && !stock.security_id) {
+                          symbol = stock.symbol;
+                          stockData = {
+                            last_price: stock.lp || 0,
+                            volume_traded: stock.volume || 0,
+                            change_percent: stock.chp || 0,
+                            total_buy_quantity: stock.total_buy_qty || 0,
+                            total_sell_quantity: stock.total_sell_qty || 0
+                          };
                         }
+                        // Raw PayTM format (has security_id)
+                        else if (stock.security_id && stock.found !== false) {
+                          const securityIdStr = stock.security_id.toString();
+                          const stockInfo = Object.values(PAYTM_NIFTY50_MAP).find((s: any) => s.security_id === securityIdStr);
+                          
+                          if (stockInfo) {
+                            symbol = `NSE:${(stockInfo as any).symbol}`;
+                            stockData = {
+                              last_price: stock.last_price || 0,
+                              volume_traded: stock.volume_traded || 0,
+                              change_percent: stock.change_percent || 0,
+                              total_buy_quantity: stock.total_buy_quantity || 0,
+                              total_sell_quantity: stock.total_sell_quantity || 0
+                            };
+                          }
+                        }
+                        
+                        if (!symbol) return; // Skip if we couldn't determine symbol
+                        
+                        if (!sessionHistoryMap[symbol]) {
+                          sessionHistoryMap[symbol] = [];
+                        }
+                        
+                        // Calculate day changes using initialRef
+                        const initial = initialStocksRef.current[symbol];
+                        const lp_chg_day_p = initial && initial.lp !== 0 
+                          ? ((stockData.last_price - initial.lp) / initial.lp) * 100 
+                          : 0;
+                        const bid_chg_day_p = initial && initial.total_buy_qty !== 0
+                          ? ((stockData.total_buy_quantity - initial.total_buy_qty) / initial.total_buy_qty) * 100
+                          : 0;
+                        const ask_chg_day_p = initial && initial.total_sell_qty !== 0
+                          ? ((stockData.total_sell_quantity - initial.total_sell_qty) / initial.total_sell_qty) * 100
+                          : 0;
+                        const day_net_strength = bid_chg_day_p - ask_chg_day_p;
+                        
+                        sessionHistoryMap[symbol].push({
+                          time: timeStr,
+                          timestamp: snap.timestamp,
+                          lp: stockData.last_price,
+                          volume: stockData.volume_traded,
+                          chp: stockData.change_percent,
+                          lp_chg_1m_p: 0, // Not available from Redis
+                          lp_chg_day_p,
+                          total_buy_qty: stockData.total_buy_quantity,
+                          total_sell_qty: stockData.total_sell_quantity,
+                          bid_qty_chg_p: 0, // Not available from Redis
+                          bid_chg_day_p,
+                          ask_qty_chg_p: 0, // Not available from Redis
+                          ask_chg_day_p,
+                          net_strength_1m: 0, // Not available from Redis
+                          day_net_strength
+                        });
                       });
                       
-                      // Process options
+                      // Process options - handle BOTH raw and converted formats
                       options.forEach((option: any) => {
-                        if (!option.security_id || option.found === false) return;
+                        let symbol: string | undefined;
+                        let optionData = {
+                          last_price: 0,
+                          volume_traded: 0,
+                          change_percent: 0,
+                          total_buy_quantity: 0,
+                          total_sell_quantity: 0
+                        };
                         
-                        const securityIdStr = option.security_id.toString();
-                        const optInfo = NIFTY_WEEKLY_OPTIONS.find((o: any) => o.security_id === securityIdStr);
-                        
-                        if (optInfo) {
-                          const symbol = `NSE:NIFTY-${(optInfo as any).strike}-${(optInfo as any).type}`;
-                          
-                          if (!sessionHistoryMap[symbol]) {
-                            sessionHistoryMap[symbol] = [];
-                          }
-                          
-                          // Calculate day changes using initialRef
-                          const initial = initialOptionsRef.current[symbol];
-                          const lp_chg_day_p = initial && initial.lp !== 0 
-                            ? ((option.last_price - initial.lp) / initial.lp) * 100 
-                            : 0;
-                          const bid_chg_day_p = initial && initial.total_buy_qty !== 0
-                            ? ((option.total_buy_quantity - initial.total_buy_qty) / initial.total_buy_qty) * 100
-                            : 0;
-                          const ask_chg_day_p = initial && initial.total_sell_qty !== 0
-                            ? ((option.total_sell_quantity - initial.total_sell_qty) / initial.total_sell_qty) * 100
-                            : 0;
-                          const day_net_strength = bid_chg_day_p - ask_chg_day_p;
-                          
-                          sessionHistoryMap[symbol].push({
-                            time: timeStr,
-                            timestamp: snap.timestamp,
-                            lp: option.last_price || 0,
-                            volume: option.volume_traded || 0,
-                            chp: option.change_percent || 0,
-                            lp_chg_1m_p: 0,
-                            lp_chg_day_p,
-                            total_buy_qty: option.total_buy_quantity || 0,
-                            total_sell_qty: option.total_sell_quantity || 0,
-                            bid_qty_chg_p: 0,
-                            bid_chg_day_p,
-                            ask_qty_chg_p: 0,
-                            ask_chg_day_p,
-                            net_strength_1m: 0,
-                            day_net_strength
-                          });
+                        // Check if already converted (has 'symbol' field)
+                        if (option.symbol && !option.security_id) {
+                          // Already converted FyersQuote format
+                          symbol = option.symbol;
+                          optionData = {
+                            last_price: option.lp || 0,
+                            volume_traded: option.volume || 0,
+                            change_percent: option.chp || 0,
+                            total_buy_quantity: option.total_buy_qty || 0,
+                            total_sell_quantity: option.total_sell_qty || 0
+                          };
                         }
+                        // Raw PayTM format (has security_id)
+                        else if (option.security_id && option.found !== false) {
+                          const securityIdStr = option.security_id.toString();
+                          const optInfo = NIFTY_WEEKLY_OPTIONS.find((o: any) => o.security_id === securityIdStr);
+                          
+                          if (optInfo) {
+                            symbol = `NSE:NIFTY-${(optInfo as any).strike}-${(optInfo as any).type}`;
+                            optionData = {
+                              last_price: option.last_price || 0,
+                              volume_traded: option.volume_traded || 0,
+                              change_percent: option.change_percent || 0,
+                              total_buy_quantity: option.total_buy_quantity || 0,
+                              total_sell_quantity: option.total_sell_quantity || 0
+                            };
+                          }
+                        }
+                        
+                        if (!symbol) return; // Skip if we couldn't determine symbol
+                        
+                        if (!sessionHistoryMap[symbol]) {
+                          sessionHistoryMap[symbol] = [];
+                        }
+                        
+                        // Calculate day changes using initialRef
+                        const initial = initialOptionsRef.current[symbol];
+                        const lp_chg_day_p = initial && initial.lp !== 0 
+                          ? ((optionData.last_price - initial.lp) / initial.lp) * 100 
+                          : 0;
+                        const bid_chg_day_p = initial && initial.total_buy_qty !== 0
+                          ? ((optionData.total_buy_quantity - initial.total_buy_qty) / initial.total_buy_qty) * 100
+                          : 0;
+                        const ask_chg_day_p = initial && initial.total_sell_qty !== 0
+                          ? ((optionData.total_sell_quantity - initial.total_sell_qty) / initial.total_sell_qty) * 100
+                          : 0;
+                        const day_net_strength = bid_chg_day_p - ask_chg_day_p;
+                        
+                        sessionHistoryMap[symbol].push({
+                          time: timeStr,
+                          timestamp: snap.timestamp,
+                          lp: optionData.last_price,
+                          volume: optionData.volume_traded,
+                          chp: optionData.change_percent,
+                          lp_chg_1m_p: 0,
+                          lp_chg_day_p,
+                          total_buy_qty: optionData.total_buy_quantity,
+                          total_sell_qty: optionData.total_sell_quantity,
+                          bid_qty_chg_p: 0,
+                          bid_chg_day_p,
+                          ask_qty_chg_p: 0,
+                          ask_chg_day_p,
+                          net_strength_1m: 0,
+                          day_net_strength
+                        });
                       });
                     }
                     
@@ -502,6 +616,15 @@ const App: React.FC = () => {
                     const sampleSymbol = Object.keys(sessionHistoryMap)[0];
                     const sampleCount = sessionHistoryMap[sampleSymbol]?.length || 0;
                     console.log(`✅ Built sessionHistory: ${totalSymbols} symbols, ~${sampleCount} candles each`);
+                    
+                    // Count stock vs option symbols
+                    const stockSymbols = Object.keys(sessionHistoryMap).filter(s => !s.includes('CE') && !s.includes('PE'));
+                    const optionSymbols = Object.keys(sessionHistoryMap).filter(s => s.includes('CE') || s.includes('PE'));
+                    console.log(`📊 SessionHistory breakdown: ${stockSymbols.length} stocks, ${optionSymbols.length} options`);
+                    if (optionSymbols.length > 0) {
+                      console.log(`📊 Sample option history symbols:`, optionSymbols.slice(0, 3));
+                      console.log(`📊 Sample option history length:`, sessionHistoryMap[optionSymbols[0]]?.length);
+                    }
                   }
                   
                   console.log(`✅ Restored ${redisSnapshots.length} historical snapshots from Redis`);
