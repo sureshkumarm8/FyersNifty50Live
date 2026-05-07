@@ -325,58 +325,9 @@ export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], opt
       console.warn(`[PayTM Redis] ⚠️ Data is ${Math.round(dataAge / 60000)} minutes old`);
     }
     
-    // Convert data - handle BOTH formats (raw PayTM with security_id OR already-converted FyersQuote with symbol)
-    const stocks: FyersQuote[] = [];
-    if (snapshot.stocks && Array.isArray(snapshot.stocks)) {
-      snapshot.stocks.forEach((item: any) => {
-        try {
-          if (item.found === false) return;
-          
-          // Check if already converted (has 'symbol' field and no 'security_id')
-          // Frontend saves already-converted data, cron saves raw PayTM data
-          if (item.symbol && !item.security_id) {
-            // Already converted to FyersQuote format
-            stocks.push(item as FyersQuote);
-          } 
-          // Raw PayTM data with security_id - needs conversion
-          else if (item.security_id !== undefined) {
-            const quote = convertPayTMToFyersQuote(item);
-            stocks.push(quote);
-          } else {
-            console.warn('[PayTM Redis] Stock item missing both symbol and security_id');
-          }
-        } catch (err) {
-          console.error('[PayTM Redis] Error processing stock:', err);
-        }
-      });
-    } else {
-      console.error('[PayTM Redis] snapshot.stocks is not an array:', typeof snapshot.stocks);
-    }
-    
-    // Convert options data - same dual-format handling
-    const options: FyersQuote[] = [];
-    if (snapshot.options && Array.isArray(snapshot.options)) {
-      snapshot.options.forEach((item: any) => {
-        try {
-          if (item.found === false) return;
-          
-          // Check if already converted (has 'symbol' field and no 'security_id')
-          if (item.symbol && !item.security_id) {
-            // Already converted to FyersQuote format
-            options.push(item as FyersQuote);
-          }
-          // Raw PayTM data with security_id - needs conversion
-          else if (item.security_id !== undefined) {
-            const quote = convertPayTMToFyersQuote(item);
-            options.push(quote);
-          } else {
-            console.warn('[PayTM Redis] Option item missing both symbol and security_id');
-          }
-        } catch (err) {
-          console.error('[PayTM Redis] Error processing option:', err);
-        }
-      });
-    }
+    // Data is now always in FyersQuote format (converted by both cron and frontend)
+    const stocks: FyersQuote[] = snapshot.stocks || [];
+    const options: FyersQuote[] = snapshot.options || [];
     
     if (stocks.length === 0) {
       console.warn('[PayTM Redis] ⚠️ No valid stocks found in Redis data');
