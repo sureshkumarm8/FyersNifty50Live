@@ -1,5 +1,5 @@
 
-const CACHE_NAME = 'nifty50-live-v2';
+const CACHE_NAME = 'nifty50-live-v3-2026-05-07';
 const urlsToCache = [
   '/',
   '/index.html',

@@ -167,10 +167,24 @@ const App: React.FC = () => {
                 console.log('📦 Redis response:', historyData);
                 
                 if (historyData.success && historyData.data?.length > 0) {
-                  console.log(`📥 Loaded ${historyData.data.length} snapshots from Redis`);
+                  // FILTER: Only use TODAY's data (IST timezone)
+                  const todayIST = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                  const filteredData = historyData.data.filter((snap: any) => {
+                    const snapDateIST = new Date(snap.timestamp).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                    return snapDateIST === todayIST;
+                  });
+                  
+                  if (filteredData.length === 0) {
+                    console.log(`⚠️ No snapshots found for today (${todayIST}), starting fresh`);
+                    console.log('✅ Setting isDbLoaded = true');
+                    setIsDbLoaded(true);
+                    return; // Exit early, will fetch live data
+                  }
+                  
+                  console.log(`📥 Loaded ${filteredData.length} snapshots from TODAY (${todayIST}), filtered from ${historyData.data.length} total`);
                   
                   // Get oldest snapshot for calculating deltas
-                  const oldestSnap = historyData.data[historyData.data.length - 1];
+                  const oldestSnap = filteredData[filteredData.length - 1];
                   const oldestStocks = oldestSnap?.stocks || [];
                   const oldestOptions = oldestSnap?.options || [];
                   
@@ -198,8 +212,8 @@ const App: React.FC = () => {
                   console.log('📊 Initial values - Call Buy:', initialCallBuy, 'Sell:', initialCallSell);
                   console.log('📊 Initial values - Put Buy:', initialPutBuy, 'Sell:', initialPutSell);
                   
-                  // Convert Redis data to MarketSnapshot format
-                  const redisSnapshots: MarketSnapshot[] = historyData.data.map((snap: any) => {
+                  // Convert Redis data to MarketSnapshot format (use filteredData instead of historyData.data)
+                  const redisSnapshots: MarketSnapshot[] = filteredData.map((snap: any) => {
                     const stocks = snap.stocks || [];
                     const options = snap.options || [];
                     const niftyLTP = snap.niftyLTP || 0;
@@ -302,8 +316,8 @@ const App: React.FC = () => {
                   setHistoryLog(redisSnapshots);
                   
                   // Initialize session history and refs from the OLDEST snapshot (last in array since newest-first)
-                  if (redisSnapshots.length > 0 && historyData.data[historyData.data.length - 1]?.stocks) {
-                    const oldestSnapshot = historyData.data[historyData.data.length - 1];
+                  if (redisSnapshots.length > 0 && filteredData[filteredData.length - 1]?.stocks) {
+                    const oldestSnapshot = filteredData[filteredData.length - 1];
                     const oldestStocks = oldestSnapshot.stocks || [];
                     const oldestOptions = oldestSnapshot.options || [];
                     
@@ -354,13 +368,13 @@ const App: React.FC = () => {
                       console.log('📝 Sample initialized symbols:', Object.keys(initialStocksRef.current).slice(0, 3));
                     }
                     
-                    // Build sessionHistory from ALL Redis snapshots
-                    console.log('📊 Building sessionHistory from Redis snapshots...');
+                    // Build sessionHistory from TODAY's Redis snapshots
+                    console.log('📊 Building sessionHistory from TODAY\'s Redis snapshots...');
                     const sessionHistoryMap: SessionHistoryMap = {};
                     
-                    // Process snapshots in chronological order (oldest to newest)
-                    for (let i = historyData.data.length - 1; i >= 0; i--) {
-                      const snap = historyData.data[i];
+                    // Process snapshots in chronological order (oldest to newest) - use filteredData
+                    for (let i = filteredData.length - 1; i >= 0; i--) {
+                      const snap = filteredData[i];
                       const timeStr = new Date(snap.timestamp).toLocaleTimeString('en-IN', { hour12: false });
                       const stocks = snap.stocks || [];
                       const options = snap.options || [];
@@ -868,34 +882,91 @@ const App: React.FC = () => {
       let stockData: FyersQuote[];
       let niftyLtpVal = 0;
       
-      console.log(`📊 [Mobile Debug] Starting data fetch - Provider: ${credentials.dataProvider}`);
+      console.log(`📊 [App] Starting data fetch - Provider: ${credentials.dataProvider}`);
       
       if (credentials.dataProvider === 'paytm') {
-        console.log('[App] Using PayTM Money API');
-        
-        // Try to fetch from Redis first (pre-fetched by cron job)
-        const redisData = await fetchPayTMFromRedis();
-        
-        if (redisData && redisData.stocks.length > 0) {
-          // Use Redis data (already fetched by cron job)
-          console.log(`✅ [PayTM] Using Redis data: ${redisData.stocks.length} stocks, ${redisData.options?.length || 0} options`);
-          stockData = redisData.stocks;
-          niftyLtpVal = redisData.niftyLTP;
+        // SMART FETCH: Always fetch live data directly, save to Redis in background
+        if (credentials.paytmAccessToken) {
+          console.log('🚀 [PayTM] Fetching LIVE data directly from API...');
           
-          // Store options from Redis for later use
-          if (redisData.options && redisData.options.length > 0) {
-            window.__PAYTM_OPTIONS_CACHE__ = redisData.options;
+          try {
+            // Fetch stocks and index in parallel for speed
+            const [liveStocks, liveNiftyLTP] = await Promise.all([
+              fetchPayTMStocks(credentials),
+              fetchNiftyIndexLTP(credentials)
+            ]);
+            
+            stockData = liveStocks;
+            niftyLtpVal = liveNiftyLTP;
+            console.log(`✅ [PayTM] LIVE: ${stockData.length} stocks, Nifty: ${niftyLtpVal}`);
+            
+            // Fetch options in parallel
+            let optionsData: any[] = [];
+            if (niftyLtpVal > 0) {
+              try {
+                optionsData = await fetchPayTMOptions(niftyLtpVal, credentials);
+                console.log(`✅ [PayTM] LIVE: ${optionsData.length} options`);
+                window.__PAYTM_OPTIONS_CACHE__ = optionsData;
+                
+                // Initialize refs for first-time options
+                if (Object.keys(initialOptionsRef.current).length === 0 && optionsData.length > 0) {
+                  console.log('🔧 [App] Initializing options refs');
+                  optionsData.forEach(opt => {
+                    initialOptionsRef.current[opt.symbol] = opt;
+                    prevOptionsRef.current[opt.symbol] = opt;
+                  });
+                }
+              } catch (optError) {
+                console.warn('[PayTM] Options fetch failed:', optError);
+              }
+            }
+            
+            // Save to Redis in background (non-blocking, async)
+            fetch('/api/save-redis-data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                stocks: stockData, 
+                options: optionsData, 
+                niftyLTP: niftyLtpVal 
+              })
+            }).then(() => {
+              console.log('💾 [Redis] Background save successful');
+            }).catch(err => {
+              console.warn('⚠️ [Redis] Background save failed (non-critical):', err.message);
+            });
+            
+          } catch (apiError) {
+            // Fallback to Redis if live API fails
+            console.warn('⚠️ [PayTM] Live API failed, falling back to Redis:', apiError);
+            const redisData = await fetchPayTMFromRedis();
+            
+            if (redisData && redisData.stocks.length > 0) {
+              console.log(`📦 [Redis] Using backup: ${redisData.stocks.length} stocks`);
+              stockData = redisData.stocks;
+              niftyLtpVal = redisData.niftyLTP;
+              
+              if (redisData.options && redisData.options.length > 0) {
+                window.__PAYTM_OPTIONS_CACHE__ = redisData.options;
+              }
+            } else {
+              throw new Error('Both live API and Redis backup failed');
+            }
           }
         } else {
-          // Fallback: Fetch directly from PayTM API only if token is available
-          if (!credentials.paytmAccessToken) {
-            throw new Error('No Redis data available and PayTM Access Token is missing. Please check your configuration or wait for the cron job to populate data.');
+          // No token - must use Redis
+          console.log('⚠️ [PayTM] No access token, using Redis only');
+          const redisData = await fetchPayTMFromRedis();
+          
+          if (redisData && redisData.stocks.length > 0) {
+            stockData = redisData.stocks;
+            niftyLtpVal = redisData.niftyLTP;
+            if (redisData.options && redisData.options.length > 0) {
+              window.__PAYTM_OPTIONS_CACHE__ = redisData.options;
+            }
+          } else {
+            throw new Error('No Redis data and no PayTM token available');
           }
-          console.log('⚠️ [PayTM] No Redis data, fetching directly from API');
-          stockData = await fetchPayTMStocks(credentials);
-          console.log(`📊 [Mobile Debug] Fetched ${stockData.length} stocks from PayTM`);
-          niftyLtpVal = await fetchNiftyIndexLTP(credentials);
-          console.log(`📊 [Mobile Debug] Nifty LTP: ${niftyLtpVal}`);
         }
       } else {
         console.log('[App] Using Fyers API');
@@ -935,8 +1006,7 @@ const App: React.FC = () => {
             if (window.__PAYTM_OPTIONS_CACHE__ && window.__PAYTM_OPTIONS_CACHE__.length > 0) {
               console.log(`[App] Using ${window.__PAYTM_OPTIONS_CACHE__.length} options from Redis cache`);
               rawOptions = window.__PAYTM_OPTIONS_CACHE__;
-              // Clear cache after use to fetch fresh on next cycle
-              delete window.__PAYTM_OPTIONS_CACHE__;
+              // Don't clear cache - it will be refreshed on next Redis fetch
             } else if (credentials.paytmAccessToken) {
               // Fallback: Fetch options if we have a valid token
               try {
@@ -955,8 +1025,9 @@ const App: React.FC = () => {
             rawOptions = await fetchQuotes(optionSymbols, credentials);
           }
           
+          console.log(`[App] Processing ${rawOptions.length} raw options for enrichment`);
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
-          // console.log(`[App] Enriched ${enrichedOptions.length} options`);
+          console.log(`[App] Enriched ${enrichedOptions.length} options, setting to state`);
           setOptionQuotes(enrichedOptions);
           updateSessionHistory(enrichedOptions);
           

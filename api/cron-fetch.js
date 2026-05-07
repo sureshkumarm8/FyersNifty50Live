@@ -101,6 +101,30 @@ export default async function handler(req, res) {
       });
     }
 
+    // SMART CHECK: Is frontend active? (Check heartbeat flag)
+    try {
+      const frontendActive = await redis.get('frontend_active');
+      
+      if (frontendActive) {
+        const flagAge = Date.now() - parseInt(frontendActive);
+        const ageSeconds = Math.round(flagAge / 1000);
+        
+        console.log(`[Cron] 🚫 Frontend is active (heartbeat ${ageSeconds}s ago) - Skipping fetch`);
+        return res.status(200).json({
+          success: true,
+          message: 'Frontend is active - Cron skipped',
+          skipped: true,
+          reason: 'frontend_active',
+          frontendHeartbeatAge: ageSeconds,
+          currentTime: istString
+        });
+      } else {
+        console.log(`[Cron] ✅ No frontend detected - Cron will fetch data`);
+      }
+    } catch (flagCheckError) {
+      console.log('[Cron] Could not check frontend flag, proceeding:', flagCheckError.message);
+    }
+
     // Get PayTM token from environment
     const paytmToken = process.env.PAYTM_ACCESS_TOKEN;
     
@@ -196,7 +220,8 @@ export default async function handler(req, res) {
       options: optionsData || [],
       stockCount: stockData?.data?.length || 0,
       optionsCount: optionsData?.length || 0,
-      duration
+      duration,
+      source: 'cron'  // Mark that this data came from cron job
     };
     
     try {

@@ -34,10 +34,20 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
   // Check if we have no valid options data
   const hasNoData = quotes.length === 0 || quotes.every(q => q.lp === 0 && q.volume === 0);
   const hasValidData = quotes.length > 0 && quotes.some(q => q.lp > 0 || q.volume > 0);
+  
+  // Debug logging
+  React.useEffect(() => {
+    console.log(`[OptionChain] Received ${quotes.length} quotes, hasNoData: ${hasNoData}, hasValidData: ${hasValidData}`);
+    if (quotes.length > 0) {
+      console.log('[OptionChain] First 3 quotes:', quotes.slice(0, 3));
+    }
+  }, [quotes, hasNoData, hasValidData]);
 
   // --- Sorting & Filtering Logic (Client Side) ---
   const sortedQuotes = useMemo(() => {
     const data = [...quotes];
+    
+    console.log(`[OptionChain] Sorting ${data.length} quotes by ${sortConfig.field} ${sortConfig.direction}`);
     
     data.sort((a, b) => {
       const aValue = a[sortConfig.field];
@@ -59,6 +69,7 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
       return 0;
     });
 
+    console.log(`[OptionChain] Sorted result: ${data.length} quotes`);
     return data;
   }, [quotes, sortConfig]);
 
