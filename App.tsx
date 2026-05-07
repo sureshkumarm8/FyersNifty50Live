@@ -914,12 +914,63 @@ const App: React.FC = () => {
       console.log(`📊 [App] Starting data fetch - Provider: ${credentials.dataProvider}`);
       
       if (credentials.dataProvider === 'paytm') {
-        // SMART FETCH: Always fetch live data directly, save to Redis in background
+        // SMART FETCH: Load from Redis first (fast), then optionally refresh in background
         if (credentials.paytmAccessToken) {
-          console.log('🚀 [PayTM] Fetching LIVE data directly from API...');
+          console.log('🚀 [PayTM] Loading from Redis cache...');
           
-          try {
-            // Fetch stocks and index in parallel for speed
+          // Try Redis first for instant load
+          const redisData = await fetchPayTMFromRedis();
+          
+          if (redisData && redisData.stocks.length > 0) {
+            console.log(`📦 [Redis] Loaded: ${redisData.stocks.length} stocks, ${redisData.options?.length || 0} options, Nifty: ${redisData.niftyLTP}`);
+            stockData = redisData.stocks;
+            niftyLtpVal = redisData.niftyLTP;
+            
+            // Load options from Redis cache
+            if (redisData.options && redisData.options.length > 0) {
+              window.__PAYTM_OPTIONS_CACHE__ = redisData.options;
+              console.log(`✅ [Redis] Options cache loaded: ${redisData.options.length} contracts`);
+              
+              // Initialize refs for first-time options
+              if (Object.keys(initialOptionsRef.current).length === 0) {
+                console.log('🔧 [App] Initializing options refs from Redis');
+                redisData.options.forEach(opt => {
+                  initialOptionsRef.current[opt.symbol] = opt;
+                  prevOptionsRef.current[opt.symbol] = opt;
+                });
+              }
+            }
+            
+            // Optionally: Fetch live data in background to update Redis (non-blocking)
+            // This ensures next load is fresh without making user wait
+            Promise.all([
+              fetchPayTMStocks(credentials),
+              fetchNiftyIndexLTP(credentials)
+            ]).then(async ([liveStocks, liveNiftyLTP]) => {
+              const liveOptions = liveNiftyLTP > 0 ? await fetchPayTMOptions(liveNiftyLTP, credentials) : [];
+              
+              // Save to Redis for next time
+              fetch('/api/save-redis-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                  stocks: liveStocks, 
+                  options: liveOptions, 
+                  niftyLTP: liveNiftyLTP 
+                })
+              }).then(() => {
+                console.log('💾 [Redis] Background refresh successful');
+              }).catch(err => {
+                console.warn('⚠️ [Redis] Background refresh failed:', err.message);
+              });
+            }).catch(err => {
+              console.warn('⚠️ [PayTM] Background live fetch failed (non-critical):', err.message);
+            });
+            
+          } else {
+            // No Redis data, fetch live (first load scenario)
+            console.log('⚠️ [Redis] No cache available, fetching LIVE...');
+            
             const [liveStocks, liveNiftyLTP] = await Promise.all([
               fetchPayTMStocks(credentials),
               fetchNiftyIndexLTP(credentials)
@@ -929,7 +980,7 @@ const App: React.FC = () => {
             niftyLtpVal = liveNiftyLTP;
             console.log(`✅ [PayTM] LIVE: ${stockData.length} stocks, Nifty: ${niftyLtpVal}`);
             
-            // Fetch options in parallel
+            // Fetch options
             let optionsData: any[] = [];
             if (niftyLtpVal > 0) {
               try {
@@ -964,23 +1015,6 @@ const App: React.FC = () => {
             }).catch(err => {
               console.warn('⚠️ [Redis] Background save failed (non-critical):', err.message);
             });
-            
-          } catch (apiError) {
-            // Fallback to Redis if live API fails
-            console.warn('⚠️ [PayTM] Live API failed, falling back to Redis:', apiError);
-            const redisData = await fetchPayTMFromRedis();
-            
-            if (redisData && redisData.stocks.length > 0) {
-              console.log(`📦 [Redis] Using backup: ${redisData.stocks.length} stocks`);
-              stockData = redisData.stocks;
-              niftyLtpVal = redisData.niftyLTP;
-              
-              if (redisData.options && redisData.options.length > 0) {
-                window.__PAYTM_OPTIONS_CACHE__ = redisData.options;
-              }
-            } else {
-              throw new Error('Both live API and Redis backup failed');
-            }
           }
         } else {
           // No token - must use Redis
