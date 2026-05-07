@@ -1072,6 +1072,17 @@ const App: React.FC = () => {
               }
             }
             
+            // Initialize stock refs if not already done
+            const needsStockInit = Object.keys(initialStocksRef.current).length === 0;
+            if (needsStockInit && redisData.stocks.length > 0) {
+              console.log('🔧 [App] Initializing stock refs from Redis');
+              redisData.stocks.forEach(stock => {
+                initialStocksRef.current[stock.symbol] = stock;
+                prevStocksRef.current[stock.symbol] = stock;
+              });
+              console.log(`✅ [App] Initialized ${Object.keys(initialStocksRef.current).length} stock refs`);
+            }
+            
             // Optionally: Fetch live data in background to update Redis (non-blocking)
             // This ensures next load is fresh without making user wait
             Promise.all([
