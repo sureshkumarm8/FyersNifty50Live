@@ -930,14 +930,22 @@ const App: React.FC = () => {
             if (redisData.options && redisData.options.length > 0) {
               window.__PAYTM_OPTIONS_CACHE__ = redisData.options;
               console.log(`✅ [Redis] Options cache loaded: ${redisData.options.length} contracts`);
+              console.log(`📊 [Redis] Sample option symbols:`, redisData.options.slice(0, 3).map(o => o.symbol));
               
-              // Initialize refs for first-time options
-              if (Object.keys(initialOptionsRef.current).length === 0) {
-                console.log('🔧 [App] Initializing options refs from Redis');
+              // Initialize refs for first-time options OR update if symbols don't match
+              const needsInit = Object.keys(initialOptionsRef.current).length === 0;
+              const firstCacheSymbol = redisData.options[0]?.symbol;
+              const hasMatchingSymbol = firstCacheSymbol && initialOptionsRef.current[firstCacheSymbol];
+              
+              if (needsInit || !hasMatchingSymbol) {
+                console.log('🔧 [App] Initializing options refs from Redis (needsInit:', needsInit, ', hasMatch:', hasMatchingSymbol, ')');
                 redisData.options.forEach(opt => {
                   initialOptionsRef.current[opt.symbol] = opt;
                   prevOptionsRef.current[opt.symbol] = opt;
                 });
+                console.log(`✅ [App] Initialized ${Object.keys(initialOptionsRef.current).length} options refs`);
+              } else {
+                console.log('ℹ️ [App] Options refs already initialized, skipping');
               }
             }
             
