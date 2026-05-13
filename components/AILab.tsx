@@ -2018,19 +2018,588 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
 
           {researchResults && !isResearching && (
             <div className="glass-panel rounded-xl p-6 border border-indigo-500/30">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-white">Research Results</h3>
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl">
+                    <CheckCircle size={24} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white">Research Results</h3>
+                    <p className="text-xs text-slate-400">AI-powered market analysis</p>
+                  </div>
+                </div>
                 <button
                   onClick={() => setResearchResults(null)}
-                  className="text-slate-400 hover:text-white"
+                  className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all"
                 >
                   <X size={20} />
                 </button>
               </div>
-              <div className="space-y-4">
-                <pre className="bg-slate-950 p-4 rounded-lg overflow-x-auto text-xs text-slate-300 font-mono whitespace-pre-wrap">
-                  {JSON.stringify(researchResults, null, 2)}
-                </pre>
+              
+              {/* Pattern Discovery Results */}
+              {researchResults.bullishPatterns && (
+                <div className="space-y-6">
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="glass-panel rounded-xl p-4 border border-blue-500/30 bg-blue-500/5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Activity size={16} className="text-blue-400" />
+                        <span className="text-xs text-slate-400 font-bold">Total Snapshots</span>
+                      </div>
+                      <div className="text-2xl font-bold text-white">{researchResults.totalSnapshots}</div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-4 border border-green-500/30 bg-green-500/5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <TrendingUp size={16} className="text-green-400" />
+                        <span className="text-xs text-slate-400 font-bold">Bullish Patterns</span>
+                      </div>
+                      <div className="text-2xl font-bold text-green-400">{researchResults.bullishPatterns.count}</div>
+                      <div className="text-xs text-slate-400 mt-1">
+                        {researchResults.bullishPatterns.successRate.toFixed(1)}% success rate
+                      </div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-4 border border-red-500/30 bg-red-500/5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <TrendingDown size={16} className="text-red-400" />
+                        <span className="text-xs text-slate-400 font-bold">Bearish Patterns</span>
+                      </div>
+                      <div className="text-2xl font-bold text-red-400">{researchResults.bearishPatterns.count}</div>
+                      <div className="text-xs text-slate-400 mt-1">
+                        {researchResults.bearishPatterns.successRate.toFixed(1)}% success rate
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Decision Making Block */}
+                  <div className="glass-panel rounded-xl p-6 border-2 border-purple-500/50 bg-gradient-to-br from-purple-500/10 to-indigo-500/10">
+                    <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                      <Brain size={20} className="text-purple-400" />
+                      Trading Decision Insights
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-slate-900/50 rounded-lg border border-green-500/30">
+                        <div className="flex items-center gap-2 mb-3">
+                          <ArrowUpCircle size={18} className="text-green-400" />
+                          <h5 className="font-bold text-green-400">When to GO LONG</h5>
+                        </div>
+                        <div className="space-y-2 text-sm text-slate-300">
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-green-400 mt-1 flex-shrink-0" />
+                            <span>Sentiment turning positive (+10% threshold)</span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-green-400 mt-1 flex-shrink-0" />
+                            <span>Price follow-through with +20pts movement</span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-green-400 mt-1 flex-shrink-0" />
+                            <span>Average expected move: <span className="text-green-400 font-bold">+{researchResults.bullishPatterns.avgMove.toFixed(1)} pts</span></span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-green-400 mt-1 flex-shrink-0" />
+                            <span>Historical accuracy: <span className="text-green-400 font-bold">{researchResults.bullishPatterns.successRate.toFixed(0)}%</span></span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-slate-900/50 rounded-lg border border-red-500/30">
+                        <div className="flex items-center gap-2 mb-3">
+                          <ArrowDownCircle size={18} className="text-red-400" />
+                          <h5 className="font-bold text-red-400">When to GO SHORT</h5>
+                        </div>
+                        <div className="space-y-2 text-sm text-slate-300">
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-red-400 mt-1 flex-shrink-0" />
+                            <span>Sentiment deteriorating (-10% threshold)</span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-red-400 mt-1 flex-shrink-0" />
+                            <span>Price breakdown with -20pts movement</span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-red-400 mt-1 flex-shrink-0" />
+                            <span>Average expected move: <span className="text-red-400 font-bold">{researchResults.bearishPatterns.avgMove.toFixed(1)} pts</span></span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-red-400 mt-1 flex-shrink-0" />
+                            <span>Historical accuracy: <span className="text-red-400 font-bold">{researchResults.bearishPatterns.successRate.toFixed(0)}%</span></span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* PCR Extremes Analysis */}
+                  <div className="glass-panel rounded-xl p-5 border border-blue-500/30 bg-blue-500/5">
+                    <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                      <Scale size={20} className="text-blue-400" />
+                      PCR Extreme Levels
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-slate-900/50 rounded-lg">
+                        <div className="text-sm text-slate-400 mb-1">High PCR (&gt;1.3)</div>
+                        <div className="text-2xl font-bold text-bull mb-2">{researchResults.pcrExtremes.highPCR.count} occurrences</div>
+                        <div className="text-xs text-slate-400">
+                          Avg Price: <span className="text-white font-bold">{researchResults.pcrExtremes.highPCR.avgPrice.toFixed(2)}</span>
+                        </div>
+                        <div className="mt-2 text-xs text-green-400">💡 Typically bullish signal (puts hedging)</div>
+                      </div>
+                      <div className="p-4 bg-slate-900/50 rounded-lg">
+                        <div className="text-sm text-slate-400 mb-1">Low PCR (&lt;0.7)</div>
+                        <div className="text-2xl font-bold text-bear mb-2">{researchResults.pcrExtremes.lowPCR.count} occurrences</div>
+                        <div className="text-xs text-slate-400">
+                          Avg Price: <span className="text-white font-bold">{researchResults.pcrExtremes.lowPCR.avgPrice.toFixed(2)}</span>
+                        </div>
+                        <div className="mt-2 text-xs text-red-400">💡 Typically bearish signal (calls hedging)</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Correlation Results */}
+              {researchResults.sentimentVsPrice && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="glass-panel rounded-xl p-5 border border-purple-500/30 bg-purple-500/5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <BarChart3 size={18} className="text-purple-400" />
+                        <span className="text-sm font-bold text-white">Sentiment ↔ Price</span>
+                      </div>
+                      <div className="text-3xl font-bold text-purple-400 mb-2">{researchResults.sentimentVsPrice.correlation}</div>
+                      <div className="text-xs text-slate-400">{researchResults.sentimentVsPrice.interpretation}</div>
+                      <div className="mt-3 p-2 bg-slate-900/50 rounded text-xs text-slate-300">
+                        {Number(researchResults.sentimentVsPrice.correlation) > 0.3 
+                          ? '✅ Sentiment is a reliable predictor' 
+                          : Number(researchResults.sentimentVsPrice.correlation) < -0.3
+                          ? '⚠️ Contrarian indicator - fade the sentiment'
+                          : '⚠️ Weak correlation - use other signals'}
+                      </div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-5 border border-blue-500/30 bg-blue-500/5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Scale size={18} className="text-blue-400" />
+                        <span className="text-sm font-bold text-white">PCR ↔ Price</span>
+                      </div>
+                      <div className="text-3xl font-bold text-blue-400 mb-2">{researchResults.pcrVsPrice.correlation}</div>
+                      <div className="text-xs text-slate-400">{researchResults.pcrVsPrice.interpretation}</div>
+                      <div className="mt-3 p-2 bg-slate-900/50 rounded text-xs text-slate-300">
+                        {Number(researchResults.pcrVsPrice.correlation) > 0.3 
+                          ? '✅ High PCR → Bullish moves' 
+                          : Number(researchResults.pcrVsPrice.correlation) < -0.3
+                          ? '✅ Low PCR → Bearish moves'
+                          : '⚠️ PCR has weak predictive power'}
+                      </div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-5 border border-orange-500/30 bg-orange-500/5">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Activity size={18} className="text-orange-400" />
+                        <span className="text-sm font-bold text-white">Volatility ↔ Sentiment</span>
+                      </div>
+                      <div className="text-3xl font-bold text-orange-400 mb-2">{researchResults.volatilityVsSentiment.correlation}</div>
+                      <div className="text-xs text-slate-400">{researchResults.volatilityVsSentiment.interpretation}</div>
+                      <div className="mt-3 p-2 bg-slate-900/50 rounded text-xs text-slate-300">
+                        💡 Extreme sentiment = Higher volatility expected
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Trading Strategy Based on Correlations */}
+                  <div className="glass-panel rounded-xl p-6 border-2 border-indigo-500/50 bg-gradient-to-br from-indigo-500/10 to-purple-500/10">
+                    <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                      <Target size={20} className="text-indigo-400" />
+                      Data-Driven Trading Strategy
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-slate-900/50 rounded-lg">
+                        <h5 className="font-bold text-green-400 mb-3 flex items-center gap-2">
+                          <Zap size={16} />
+                          High Probability Bullish Setup
+                        </h5>
+                        <div className="space-y-2 text-sm text-slate-300">
+                          <div>✓ Sentiment: <span className="text-green-400 font-bold">&gt;65%</span></div>
+                          <div>✓ PCR: <span className="text-green-400 font-bold">&gt;1.2</span> (if positive correlation)</div>
+                          <div>✓ Price: Near support / PDL</div>
+                          <div className="mt-3 pt-3 border-t border-white/10 text-xs text-green-400">
+                            📈 Expected outcome: <span className="font-bold">+30-50 pts move in 1-2 hours</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-slate-900/50 rounded-lg">
+                        <h5 className="font-bold text-red-400 mb-3 flex items-center gap-2">
+                          <Zap size={16} />
+                          High Probability Bearish Setup
+                        </h5>
+                        <div className="space-y-2 text-sm text-slate-300">
+                          <div>✓ Sentiment: <span className="text-red-400 font-bold">&lt;35%</span></div>
+                          <div>✓ PCR: <span className="text-red-400 font-bold">&lt;0.8</span> (if negative correlation)</div>
+                          <div>✓ Price: Near resistance / PDH</div>
+                          <div className="mt-3 pt-3 border-t border-white/10 text-xs text-red-400">
+                            📉 Expected outcome: <span className="font-bold">-30-50 pts move in 1-2 hours</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Time Analysis Results */}
+              {researchResults.bestHours && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="glass-panel rounded-xl p-5 border border-green-500/30 bg-green-500/5">
+                      <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <Clock size={20} className="text-green-400" />
+                        Best Trading Hours
+                      </h4>
+                      <div className="space-y-3">
+                        {researchResults.bestHours.map((hour: any, idx: number) => (
+                          <div key={idx} className="p-3 bg-slate-900/50 rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm font-bold text-white">{hour.hour}</span>
+                              <span className="text-xs text-green-400 font-bold">#{idx + 1}</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <div className="text-slate-400">Avg Move</div>
+                                <div className={`font-bold ${hour.avgMove > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {hour.avgMove > 0 ? '+' : ''}{hour.avgMove.toFixed(1)} pts
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400">Volatility</div>
+                                <div className="font-bold text-orange-400">{hour.volatility.toFixed(1)} pts</div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400">Samples</div>
+                                <div className="font-bold text-blue-400">{hour.count}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-xs text-green-400">
+                        💡 Focus your trading during these high-movement hours
+                      </div>
+                    </div>
+
+                    <div className="glass-panel rounded-xl p-5 border border-red-500/30 bg-red-500/5">
+                      <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <AlertTriangle size={20} className="text-red-400" />
+                        Avoid These Hours
+                      </h4>
+                      <div className="space-y-3">
+                        {researchResults.worstHours.map((hour: any, idx: number) => (
+                          <div key={idx} className="p-3 bg-slate-900/50 rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm font-bold text-white">{hour.hour}</span>
+                              <span className="text-xs text-red-400 font-bold">Low Activity</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <div className="text-slate-400">Avg Move</div>
+                                <div className={`font-bold ${hour.avgMove > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {hour.avgMove > 0 ? '+' : ''}{hour.avgMove.toFixed(1)} pts
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400">Volatility</div>
+                                <div className="font-bold text-orange-400">{hour.volatility.toFixed(1)} pts</div>
+                              </div>
+                              <div>
+                                <div className="text-slate-400">Samples</div>
+                                <div className="font-bold text-blue-400">{hour.count}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-400">
+                        ⚠️ Low movement hours - consider staying flat
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel rounded-xl p-5 border-2 border-yellow-500/50 bg-gradient-to-br from-yellow-500/10 to-orange-500/10">
+                    <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                      <Sparkles size={20} className="text-yellow-400" />
+                      Time-Based Trading Rules
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                      <div className="p-3 bg-slate-900/50 rounded-lg">
+                        <div className="font-bold text-blue-400 mb-1">📍 Market Open (9:15-10:00)</div>
+                        <div className="text-xs text-slate-300">High volatility, wait for direction</div>
+                      </div>
+                      <div className="p-3 bg-slate-900/50 rounded-lg">
+                        <div className="font-bold text-green-400 mb-1">🎯 Best Hours (10:00-14:00)</div>
+                        <div className="text-xs text-slate-300">Prime trading window, follow trends</div>
+                      </div>
+                      <div className="p-3 bg-slate-900/50 rounded-lg">
+                        <div className="font-bold text-orange-400 mb-1">⏰ Market Close (15:00-15:30)</div>
+                        <div className="text-xs text-slate-300">Profit booking time, reduce exposure</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Volatility Results */}
+              {researchResults.averageVolatility !== undefined && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="glass-panel rounded-xl p-5 border border-blue-500/30 bg-blue-500/5 text-center">
+                      <div className="text-sm text-slate-400 mb-2">Average Volatility</div>
+                      <div className="text-3xl font-bold text-blue-400">{researchResults.averageVolatility.toFixed(1)} pts</div>
+                      <div className="text-xs text-slate-400 mt-2">12-interval rolling window</div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-5 border border-orange-500/30 bg-orange-500/5 text-center">
+                      <div className="text-sm text-slate-400 mb-2">High Volatility Events</div>
+                      <div className="text-3xl font-bold text-orange-400">{researchResults.highVolatilityPeriods.count}</div>
+                      <div className="text-xs text-slate-400 mt-2">Avg Range: {researchResults.highVolatilityPeriods.avgRange.toFixed(1)} pts</div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-5 border border-green-500/30 bg-green-500/5 text-center">
+                      <div className="text-sm text-slate-400 mb-2">Low Volatility Events</div>
+                      <div className="text-3xl font-bold text-green-400">{researchResults.lowVolatilityPeriods.count}</div>
+                      <div className="text-xs text-slate-400 mt-2">Avg Range: {researchResults.lowVolatilityPeriods.avgRange.toFixed(1)} pts</div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel rounded-xl p-6 border-2 border-purple-500/50 bg-gradient-to-br from-purple-500/10 to-pink-500/10">
+                    <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                      <Zap size={20} className="text-purple-400" />
+                      Volatility Trading Strategy
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-slate-900/50 rounded-lg border border-orange-500/30">
+                        <h5 className="font-bold text-orange-400 mb-3">High Volatility Regime</h5>
+                        <div className="space-y-2 text-sm text-slate-300">
+                          <div>• Use wider stops (+50 pts)</div>
+                          <div>• Reduce position size by 50%</div>
+                          <div>• Target larger moves (1:3 R:R)</div>
+                          <div>• Avoid counter-trend trades</div>
+                          <div className="mt-3 pt-3 border-t border-white/10 text-xs text-orange-400">
+                            ⚡ Big moves expected - trade with caution
+                          </div>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-slate-900/50 rounded-lg border border-green-500/30">
+                        <h5 className="font-bold text-green-400 mb-3">Low Volatility Regime</h5>
+                        <div className="space-y-2 text-sm text-slate-300">
+                          <div>• Use tighter stops (+20 pts)</div>
+                          <div>• Can increase position size</div>
+                          <div>• Target smaller moves (1:1.5 R:R)</div>
+                          <div>• Mean reversion works best</div>
+                          <div className="mt-3 pt-3 border-t border-white/10 text-xs text-green-400">
+                            📊 Range-bound market - scalp and book
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Reversal Results */}
+              {researchResults.totalReversals !== undefined && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="glass-panel rounded-xl p-4 border border-purple-500/30 bg-purple-500/5 text-center">
+                      <div className="text-xs text-slate-400 mb-2">Total Reversals</div>
+                      <div className="text-2xl font-bold text-purple-400">{researchResults.totalReversals}</div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-4 border border-blue-500/30 bg-blue-500/5 text-center">
+                      <div className="text-xs text-slate-400 mb-2">Reversal Rate</div>
+                      <div className="text-2xl font-bold text-blue-400">{researchResults.reversalRate}</div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-4 border border-green-500/30 bg-green-500/5 text-center">
+                      <div className="text-xs text-slate-400 mb-2">Avg Sentiment</div>
+                      <div className="text-2xl font-bold text-green-400">{researchResults.avgSentimentAtReversal.toFixed(0)}%</div>
+                    </div>
+                    <div className="glass-panel rounded-xl p-4 border border-orange-500/30 bg-orange-500/5 text-center">
+                      <div className="text-xs text-slate-400 mb-2">Avg PCR</div>
+                      <div className="text-2xl font-bold text-orange-400">{researchResults.avgPCRAtReversal.toFixed(2)}</div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel rounded-xl p-6 border-2 border-red-500/50 bg-gradient-to-br from-red-500/10 to-pink-500/10">
+                    <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                      <AlertTriangle size={20} className="text-red-400" />
+                      Reversal Warning Signals
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-slate-900/50 rounded-lg">
+                        <h5 className="font-bold text-yellow-400 mb-3">Extreme Sentiment Warning</h5>
+                        <div className="space-y-2 text-sm text-slate-300">
+                          <div>📊 Typical reversal sentiment: <span className="font-bold text-yellow-400">{researchResults.avgSentimentAtReversal.toFixed(0)}%</span></div>
+                          <div className="mt-3 space-y-1 text-xs">
+                            <div>• Sentiment &gt;80% → Watch for top</div>
+                            <div>• Sentiment &lt;20% → Watch for bottom</div>
+                            <div>• Divergence with price → High risk</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-slate-900/50 rounded-lg">
+                        <h5 className="font-bold text-blue-400 mb-3">PCR Reversal Zones</h5>
+                        <div className="space-y-2 text-sm text-slate-300">
+                          <div>📊 Typical reversal PCR: <span className="font-bold text-blue-400">{researchResults.avgPCRAtReversal.toFixed(2)}</span></div>
+                          <div className="mt-3 space-y-1 text-xs">
+                            <div>• PCR &gt;1.5 → Extreme bullish, reversal risk</div>
+                            <div>• PCR &lt;0.6 → Extreme bearish, reversal risk</div>
+                            <div>• Sudden PCR spike → Panic, fade it</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                      <p className="text-sm text-yellow-400 font-bold mb-2">⚠️ Reversal Trading Rules</p>
+                      <div className="text-xs text-slate-300 space-y-1">
+                        <div>1. Don't chase when sentiment is extreme (&gt;80% or &lt;20%)</div>
+                        <div>2. Wait for confirmation - let reversal prove itself</div>
+                        <div>3. Use tight stops - reversals can fail quickly</div>
+                        <div>4. Take partial profits early - reversals are tricky</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Winning Setups Results */}
+              {researchResults.totalWinningSetups !== undefined && (
+                <div className="space-y-6">
+                  <div className="glass-panel rounded-xl p-5 border border-emerald-500/30 bg-emerald-500/5 text-center">
+                    <div className="text-sm text-slate-400 mb-2">High Probability Setups Found</div>
+                    <div className="text-4xl font-bold text-emerald-400 mb-2">{researchResults.totalWinningSetups}</div>
+                    <div className="text-xs text-slate-400">Moves &gt;20 pts in next 30 minutes</div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="glass-panel rounded-xl p-6 border-2 border-green-500/50 bg-gradient-to-br from-green-500/10 to-emerald-500/10">
+                      <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <TrendingUp size={20} className="text-green-400" />
+                        Perfect Bullish Setup
+                      </h4>
+                      <div className="space-y-3">
+                        <div className="p-3 bg-slate-900/50 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Count</div>
+                          <div className="text-2xl font-bold text-green-400">{researchResults.bullish.count} setups</div>
+                        </div>
+                        <div className="p-3 bg-slate-900/50 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Optimal Sentiment</div>
+                          <div className="text-2xl font-bold text-white">{researchResults.bullish.avgSentiment.toFixed(1)}%</div>
+                        </div>
+                        <div className="p-3 bg-slate-900/50 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Optimal PCR</div>
+                          <div className="text-2xl font-bold text-white">{researchResults.bullish.avgPCR.toFixed(2)}</div>
+                        </div>
+                        <div className="p-4 bg-green-500/20 border border-green-500/40 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Average Move</div>
+                          <div className="text-3xl font-bold text-green-400">+{researchResults.bullish.avgMove.toFixed(1)} pts</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+                        <p className="text-sm text-green-400 font-bold mb-2">✅ Entry Checklist</p>
+                        <div className="text-xs text-slate-300 space-y-1">
+                          <div>□ Sentiment: {(researchResults.bullish.avgSentiment - 10).toFixed(0)}% - {(researchResults.bullish.avgSentiment + 10).toFixed(0)}%</div>
+                          <div>□ PCR: {(researchResults.bullish.avgPCR - 0.2).toFixed(2)} - {(researchResults.bullish.avgPCR + 0.2).toFixed(2)}</div>
+                          <div>□ Price near support level</div>
+                          <div>□ Momentum turning positive</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="glass-panel rounded-xl p-6 border-2 border-red-500/50 bg-gradient-to-br from-red-500/10 to-pink-500/10">
+                      <h4 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <TrendingDown size={20} className="text-red-400" />
+                        Perfect Bearish Setup
+                      </h4>
+                      <div className="space-y-3">
+                        <div className="p-3 bg-slate-900/50 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Count</div>
+                          <div className="text-2xl font-bold text-red-400">{researchResults.bearish.count} setups</div>
+                        </div>
+                        <div className="p-3 bg-slate-900/50 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Optimal Sentiment</div>
+                          <div className="text-2xl font-bold text-white">{researchResults.bearish.avgSentiment.toFixed(1)}%</div>
+                        </div>
+                        <div className="p-3 bg-slate-900/50 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Optimal PCR</div>
+                          <div className="text-2xl font-bold text-white">{researchResults.bearish.avgPCR.toFixed(2)}</div>
+                        </div>
+                        <div className="p-4 bg-red-500/20 border border-red-500/40 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Average Move</div>
+                          <div className="text-3xl font-bold text-red-400">{researchResults.bearish.avgMove.toFixed(1)} pts</div>
+                        </div>
+                      </div>
+                      <div className="mt-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+                        <p className="text-sm text-red-400 font-bold mb-2">✅ Entry Checklist</p>
+                        <div className="text-xs text-slate-300 space-y-1">
+                          <div>□ Sentiment: {(researchResults.bearish.avgSentiment - 10).toFixed(0)}% - {(researchResults.bearish.avgSentiment + 10).toFixed(0)}%</div>
+                          <div>□ PCR: {(researchResults.bearish.avgPCR - 0.2).toFixed(2)} - {(researchResults.bearish.avgPCR + 0.2).toFixed(2)}</div>
+                          <div>□ Price near resistance level</div>
+                          <div>□ Momentum turning negative</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Custom Query Results */}
+              {researchResults.query && (
+                <div className="space-y-4">
+                  <div className="glass-panel rounded-xl p-5 border border-indigo-500/30 bg-indigo-500/5">
+                    <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                      <Sparkles size={20} className="text-indigo-400" />
+                      Custom Query Results
+                    </h4>
+                    <div className="p-4 bg-slate-900/50 rounded-lg mb-4">
+                      <div className="text-xs text-slate-400 mb-1">Query</div>
+                      <div className="text-sm text-white font-mono">{researchResults.query}</div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      <div className="p-3 bg-slate-900/50 rounded-lg">
+                        <div className="text-xs text-slate-400 mb-1">Data Points</div>
+                        <div className="text-xl font-bold text-white">{researchResults.dataPoints}</div>
+                      </div>
+                      {researchResults.filtered !== undefined && (
+                        <div className="p-3 bg-slate-900/50 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Matching</div>
+                          <div className="text-xl font-bold text-blue-400">{researchResults.filtered}</div>
+                        </div>
+                      )}
+                      {researchResults.avgPriceMove !== undefined && (
+                        <div className="p-3 bg-slate-900/50 rounded-lg">
+                          <div className="text-xs text-slate-400 mb-1">Avg Move</div>
+                          <div className={`text-xl font-bold ${researchResults.avgPriceMove > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {researchResults.avgPriceMove > 0 ? '+' : ''}{researchResults.avgPriceMove.toFixed(1)} pts
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Export/Save Section */}
+              <div className="flex items-center justify-between pt-4 border-t border-white/10">
+                <div className="text-xs text-slate-400">
+                  💡 Tip: Use these insights to refine your trading strategy
+                </div>
+                <button
+                  onClick={() => {
+                    const dataStr = JSON.stringify(researchResults, null, 2);
+                    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                    const url = URL.createObjectURL(dataBlob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `research-results-${Date.now()}.json`;
+                    link.click();
+                  }}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-lg transition-all flex items-center gap-2"
+                >
+                  <Download size={14} />
+                  Export JSON
+                </button>
               </div>
             </div>
           )}
