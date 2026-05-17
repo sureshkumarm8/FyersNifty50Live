@@ -20,6 +20,7 @@ import { lifecycleManager } from '../services/lifecycleManager';
 import { dbService } from '../services/db';
 import { downloadCSV, importCSVFile } from '../services/csv';
 import { SentimentHistory } from './SentimentHistory';
+import { aiPatternAnalyzer } from '../services/aiPatternAnalyzer';
 
 interface PatternDashboardProps {
   currentSnapshot: MarketSnapshot | null;
@@ -45,6 +46,11 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // AI Enhancement states
+  const [aiPrediction, setAIPrediction] = useState<any>(null);
+  const [loadingAI, setLoadingAI] = useState(false);
+  const [patternExplanation, setPatternExplanation] = useState<string>('');
 
   // Load initial data
   useEffect(() => {
@@ -59,6 +65,47 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
       findSimilarDays();
     }
   }, [currentSnapshot]);
+  
+  // AI Enhancement: Get AI prediction using patterns
+  const getAIPrediction = async () => {
+    if (!currentSnapshot || !credentials?.aiEnabled) return;
+    
+    setLoadingAI(true);
+    try {
+      const prediction = await aiPatternAnalyzer.getAIPrediction(
+        credentials,
+        currentSnapshot
+      );
+      setAIPrediction(prediction);
+    } catch (error) {
+      console.error('AI prediction failed:', error);
+    } finally {
+      setLoadingAI(false);
+    }
+  };
+  
+  // AI Enhancement: Auto-refresh AI prediction
+  useEffect(() => {
+    if (currentSnapshot && credentials?.aiEnabled) {
+      getAIPrediction();
+      
+      // Refresh every 2 minutes
+      const interval = setInterval(getAIPrediction, 120000);
+      return () => clearInterval(interval);
+    }
+  }, [currentSnapshot, credentials?.aiEnabled]);
+  
+  // AI Enhancement: Explain pattern with AI
+  const explainPatternWithAI = async (pattern: Pattern) => {
+    if (!credentials?.aiEnabled) return;
+    
+    try {
+      const explanation = await aiPatternAnalyzer.explainPattern(credentials, pattern);
+      setPatternExplanation(explanation);
+    } catch (error) {
+      console.error('Pattern explanation failed:', error);
+    }
+  };
 
   const loadPatterns = async () => {
     try {
@@ -177,12 +224,13 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
       let newPatternsCount = 0;
       
       for (const archive of archives.slice(0, 10)) { // Last 10 days
-        const patterns = await patternMiner.analyzeDay(archive.date);
+        const patterns = await patternMiner.analyzeDay(archive.date, credentials);
         newPatternsCount += patterns.length;
       }
       
       await loadPatterns();
-      alert(`✅ Scan complete! Found ${newPatternsCount} pattern occurrences`);
+      const method = credentials?.aiEnabled ? 'AI-powered' : 'traditional';
+      alert(`✅ Scan complete! Found ${newPatternsCount} pattern occurrences using ${method} detection`);
     } catch (error) {
       console.error('Pattern scan failed:', error);
       alert('❌ Pattern scan failed');
@@ -430,17 +478,17 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
                 <button
                   onClick={scanForNewPatterns}
                   disabled={isScanning}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-900 text-white font-bold text-sm rounded-lg flex items-center gap-2 transition-all"
+                  className={`px-4 py-2 ${credentials?.aiEnabled ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700' : 'bg-purple-600 hover:bg-purple-700'} disabled:bg-purple-900 text-white font-bold text-sm rounded-lg flex items-center gap-2 transition-all`}
                 >
                   {isScanning ? (
                     <>
                       <Activity className="animate-spin" size={14} />
-                      Scanning...
+                      {credentials?.aiEnabled ? 'AI Analyzing...' : 'Scanning...'}
                     </>
                   ) : (
                     <>
-                      <Zap size={14} />
-                      Scan Archives
+                      {credentials?.aiEnabled ? <Brain size={14} /> : <Zap size={14} />}
+                      {credentials?.aiEnabled ? 'AI Pattern Discovery' : 'Scan Archives'}
                     </>
                   )}
                 </button>
@@ -486,6 +534,93 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
         
         {/* Left Column: Live Matches & Similar Days */}
         <div className="lg:col-span-1 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+          
+          {/* AI Prediction Panel - NEW */}
+          {credentials?.aiEnabled && (
+            <div className="glass-panel rounded-xl p-4 border-2 border-purple-500/30">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-bold text-purple-400 flex items-center gap-2">
+                  <Brain size={16} className="animate-pulse" />
+                  AI-Powered Prediction
+                </h2>
+                {loadingAI && (
+                  <Activity className="animate-spin text-purple-400" size={14} />
+                )}
+              </div>
+              
+              {aiPrediction ? (
+                <div>
+                  {/* Direction */}
+                  <div className={`text-2xl font-bold mb-2 ${
+                    aiPrediction.direction === 'UP' ? 'text-green-400' :
+                    aiPrediction.direction === 'DOWN' ? 'text-red-400' :
+                    'text-yellow-400'
+                  }`}>
+                    {aiPrediction.direction === 'UP' ? '📈 BULLISH' :
+                     aiPrediction.direction === 'DOWN' ? '📉 BEARISH' :
+                     '➡️ NEUTRAL'}
+                  </div>
+                  
+                  {/* Metrics */}
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <div className="bg-slate-900/50 p-2 rounded">
+                      <div className="text-xs text-slate-400">Confidence</div>
+                      <div className="text-lg font-bold text-white">
+                        {aiPrediction.confidence}%
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/50 p-2 rounded">
+                      <div className="text-xs text-slate-400">Expected</div>
+                      <div className={`text-lg font-bold ${
+                        aiPrediction.expectedMove > 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {aiPrediction.expectedMove > 0 ? '+' : ''}{aiPrediction.expectedMove} pts
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* AI Reasoning */}
+                  <div className="bg-purple-500/10 border border-purple-500/30 rounded p-3 mb-3">
+                    <div className="text-xs text-purple-300 mb-1">AI Reasoning:</div>
+                    <div className="text-sm text-white">{aiPrediction.reasoning}</div>
+                  </div>
+                  
+                  {/* Supporting Patterns */}
+                  {aiPrediction.supportingPatterns && aiPrediction.supportingPatterns.length > 0 && (
+                    <div className="text-xs text-slate-400 mb-2">
+                      Based on {aiPrediction.supportingPatterns.length} pattern match(es):
+                      <div className="mt-1 space-y-1">
+                        {aiPrediction.supportingPatterns.slice(0, 3).map((p: any) => (
+                          <div key={p.id} className="text-purple-400">
+                            • {p.name} ({p.confidence}%)
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <button
+                    onClick={getAIPrediction}
+                    className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold rounded transition-all"
+                  >
+                    🔄 Refresh Prediction
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center py-4 text-slate-500 text-sm">
+                  <Brain size={24} className="mx-auto mb-2 opacity-50" />
+                  <p>Waiting for live data...</p>
+                  <button
+                    onClick={getAIPrediction}
+                    disabled={!currentSnapshot}
+                    className="mt-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-800 disabled:text-slate-600 text-white text-xs font-bold rounded transition-all"
+                  >
+                    Get AI Prediction
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           
           {/* Live Pattern Matches */}
           <div className="glass-panel rounded-xl p-4">
