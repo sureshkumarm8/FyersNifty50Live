@@ -61,7 +61,6 @@ export default async function handler(req, res) {
       paytmAccessToken: paytmAccessToken,
       googleApiKey: googleApiKey || '',
       groqApiKey: groqApiKey || '',
-      refreshInterval: 60000,
       aiEnabled: true,
       bypassMarketHours: process.env.BYPASS_MARKET_HOURS === 'true'
     };

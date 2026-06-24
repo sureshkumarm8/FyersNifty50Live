@@ -154,6 +154,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   }, []);
 
   const handleSave = () => {
+    console.log('💾 [SettingsScreen] Saving credentials with refreshInterval:', refreshInterval);
     onSave({ 
       appId, 
       accessToken, 

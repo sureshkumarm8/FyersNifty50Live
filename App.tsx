@@ -126,7 +126,10 @@ const App: React.FC = () => {
                 
                 if (backendConfig && backendConfig.paytmAccessToken) {
                   console.log('✅ Loaded encrypted config from backend');
-                  const updatedCreds = { ...credentials, ...backendConfig };
+                  // Don't overwrite user preferences like refreshInterval
+                  // Only merge credentials (tokens and API keys)
+                  const { refreshInterval, ...backendCredentials } = backendConfig;
+                  const updatedCreds = { ...credentials, ...backendCredentials };
                   setCredentials(updatedCreds);
                   localStorage.setItem('fyers_creds', JSON.stringify(updatedCreds));
                 }
@@ -626,9 +629,11 @@ const App: React.FC = () => {
 
 
   const saveCredentials = (newCreds: FyersCredentials) => {
+    console.log('💾 [App.tsx] saveCredentials called with refreshInterval:', newCreds.refreshInterval);
     setCredentials(newCreds); 
     try {
         localStorage.setItem('fyers_creds', JSON.stringify(newCreds));
+        console.log('✅ [App.tsx] Credentials saved to localStorage');
     } catch (e) {
         setError("Failed to save credentials to local storage.");
     }
@@ -859,6 +864,11 @@ const App: React.FC = () => {
       return;
     }
     
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-IN', { hour12: false });
+    console.log(`\n🔄 ======== REFRESH DATA CALLED at ${timeStr} ========`);
+    console.log(`📊 Refresh Interval Setting: ${credentials.refreshInterval}ms (${(credentials.refreshInterval || 60000) / 1000}s)`);
+    
     // Check credentials based on provider
     const hasValidCredentials = credentials.dataProvider === 'paytm' 
       ? credentials.paytmAccessToken 
@@ -898,9 +908,79 @@ const App: React.FC = () => {
       console.log(`📊 [App] Starting data fetch - Provider: ${credentials.dataProvider}`);
       
       if (credentials.dataProvider === 'paytm') {
-        // SMART FETCH: Load from Redis first (fast), then optionally refresh in background
-        if (credentials.paytmAccessToken) {
-          console.log('🚀 [PayTM] Loading from Redis cache...');
+        // Determine fetch strategy based on refresh interval
+        // If user has fast refresh (< 60 seconds), fetch LIVE data
+        // If user has slow refresh (>= 60 seconds) or default, use Redis cache
+        const refreshIntervalValue = credentials.refreshInterval || 60000;
+        const useLiveData = credentials.paytmAccessToken && refreshIntervalValue < 60000;
+        
+        console.log(`📊 [Fetch Strategy] refreshInterval: ${refreshIntervalValue}ms, useLiveData: ${useLiveData}, hasToken: ${!!credentials.paytmAccessToken}`);
+        
+        if (useLiveData) {
+          console.log('🚀 [PayTM] Fast refresh mode - fetching LIVE data...');
+          
+          const [liveStocks, liveNiftyLTP] = await Promise.all([
+            fetchPayTMStocks(credentials),
+            fetchNiftyIndexLTP(credentials)
+          ]);
+          
+          stockData = liveStocks;
+          niftyLtpVal = liveNiftyLTP;
+          console.log(`✅ [PayTM] LIVE: ${stockData.length} stocks, Nifty: ${niftyLtpVal}`);
+          console.log(`✅ [LIVE Data Check] Sample timestamps:`, liveStocks.slice(0, 2).map(s => ({
+            symbol: s.symbol,
+            tt: s.tt,
+            ttFormatted: s.tt ? new Date(Number(s.tt)).toLocaleTimeString() : 'N/A',
+            ageSeconds: s.tt ? Math.round((Date.now() - Number(s.tt)) / 1000) : 'N/A'
+          })));
+          
+          // Fetch and cache options
+          let optionsData: any[] = [];
+          if (niftyLtpVal > 0) {
+            try {
+              optionsData = await fetchPayTMOptions(niftyLtpVal, credentials);
+              console.log(`✅ [PayTM] LIVE: ${optionsData.length} options`);
+              window.__PAYTM_OPTIONS_CACHE__ = optionsData;
+              
+              // Initialize refs if needed
+              if (Object.keys(initialOptionsRef.current).length === 0 && optionsData.length > 0) {
+                console.log('🔧 [App] Initializing options refs from LIVE data');
+                optionsData.forEach(opt => {
+                  initialOptionsRef.current[opt.symbol] = opt;
+                  prevOptionsRef.current[opt.symbol] = opt;
+                });
+              }
+            } catch (optError) {
+              console.warn('[PayTM] Options fetch failed:', optError);
+            }
+          }
+          
+          // Initialize stock refs if needed
+          if (Object.keys(initialStocksRef.current).length === 0 && liveStocks.length > 0) {
+            console.log('🔧 [App] Initializing stock refs from LIVE data');
+            liveStocks.forEach(stock => {
+              initialStocksRef.current[stock.symbol] = stock;
+              prevStocksRef.current[stock.symbol] = stock;
+            });
+          }
+          
+          // Save to Redis in background (non-blocking)
+          fetch('/api/save-redis-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              stocks: stockData, 
+              options: optionsData, 
+              niftyLTP: niftyLtpVal 
+            })
+          }).then(() => {
+            console.log('💾 [Redis] Background save successful');
+          }).catch(err => {
+            console.warn('⚠️ [Redis] Background save failed (non-critical):', err.message);
+          });
+          
+        } else if (credentials.paytmAccessToken) {
+          console.log('🚀 [PayTM] Standard refresh mode - loading from Redis cache...');
           
           // Try Redis first for instant load
           const redisData = await fetchPayTMFromRedis();
@@ -1053,6 +1133,12 @@ const App: React.FC = () => {
 
       const enrichedStocks = enrichData(stockData, prevStocksRef, initialStocksRef, true);
       console.log(`📊 [Mobile Debug] Enriched ${enrichedStocks.length} stocks, setting state...`);
+      console.log(`📊 [Data Debug] Sample stock data:`, enrichedStocks.slice(0, 2).map(s => ({ 
+        symbol: s.symbol, 
+        lp: s.lp, 
+        tt: s.tt,
+        ttFormatted: s.tt ? new Date(Number(s.tt)).toLocaleTimeString() : 'N/A'
+      })));
       setStocks(enrichedStocks);
       updateSessionHistory(enrichedStocks);
 
@@ -1068,16 +1154,33 @@ const App: React.FC = () => {
           let rawOptions: FyersQuote[];
           
           if (credentials.dataProvider === 'paytm') {
-            // Check if we have options from Redis cache first
-            if (window.__PAYTM_OPTIONS_CACHE__ && window.__PAYTM_OPTIONS_CACHE__.length > 0) {
-              console.log(`[App] Using ${window.__PAYTM_OPTIONS_CACHE__.length} options from Redis cache`);
-              rawOptions = window.__PAYTM_OPTIONS_CACHE__;
-              // Don't clear cache - it will be refreshed on next Redis fetch
-            } else if (credentials.paytmAccessToken) {
-              // Fallback: Fetch options if we have a valid token
+            // In fast refresh mode (< 60s), always fetch live options
+            // In standard mode (>= 60s), use Redis cache
+            const shouldFetchLiveOptions = credentials.paytmAccessToken && (credentials.refreshInterval || 60000) < 60000;
+            
+            if (shouldFetchLiveOptions) {
+              // Fast refresh: Fetch LIVE options every time
+              console.log(`[App] Fast refresh mode - fetching LIVE options for Nifty: ${niftyLtpVal}`);
               try {
                 rawOptions = await fetchPayTMOptions(niftyLtpVal, credentials);
-                console.log(`[App] Fetched ${rawOptions.length} options from PayTM API`);
+                console.log(`[App] Fetched ${rawOptions.length} LIVE options from PayTM API`);
+                // Update cache for other components that might use it
+                window.__PAYTM_OPTIONS_CACHE__ = rawOptions;
+              } catch (optError) {
+                console.warn('[App] Failed to fetch live options:', optError);
+                // Fallback to cache if live fetch fails
+                rawOptions = window.__PAYTM_OPTIONS_CACHE__ || [];
+              }
+            } else if (window.__PAYTM_OPTIONS_CACHE__ && window.__PAYTM_OPTIONS_CACHE__.length > 0) {
+              // Standard refresh: Use Redis cache
+              console.log(`[App] Using ${window.__PAYTM_OPTIONS_CACHE__.length} options from Redis cache`);
+              rawOptions = window.__PAYTM_OPTIONS_CACHE__;
+            } else if (credentials.paytmAccessToken) {
+              // Fallback: Fetch options if we have a valid token but no cache
+              try {
+                rawOptions = await fetchPayTMOptions(niftyLtpVal, credentials);
+                console.log(`[App] Fetched ${rawOptions.length} options from PayTM API (cache miss)`);
+                window.__PAYTM_OPTIONS_CACHE__ = rawOptions;
               } catch (optError) {
                 console.warn('[App] Failed to fetch options data:', optError);
                 rawOptions = []; // Continue without options data
@@ -1208,6 +1311,7 @@ const App: React.FC = () => {
       : (credentials.appId && credentials.accessToken);
       
     console.log(`📊 [Mobile Debug] Auto-fetch check - isDbLoaded: ${isDbLoaded}, hasValidCreds: ${hasValidCreds}, isPaused: ${isPaused}, provider: ${credentials.dataProvider}`);
+    console.log(`⏰ [Interval Debug] Current refreshInterval from credentials: ${credentials.refreshInterval}ms`);
       
     if (isDbLoaded && hasValidCreds && !isPaused) {
       // Get market time info
@@ -1229,6 +1333,7 @@ const App: React.FC = () => {
           refreshDataRef.current();
           
           // Start regular interval after first call
+          console.log(`⏰ Setting up interval (after market start delay) with ${credentials.refreshInterval}ms refresh rate`);
           const intervalId = setInterval(() => {
             if (refreshDataRef.current) {
               refreshDataRef.current();
@@ -1250,6 +1355,7 @@ const App: React.FC = () => {
         console.log('🚀 Starting live data fetch');
         refreshDataRef.current();
         
+        console.log(`⏰ Setting up interval with ${credentials.refreshInterval}ms refresh rate`);
         const intervalId = setInterval(() => {
           if (refreshDataRef.current) {
             refreshDataRef.current();
