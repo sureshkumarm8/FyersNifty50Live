@@ -2,6 +2,8 @@
 import http from 'http';
 import { URL } from 'url';
 import crypto from 'crypto';
+import { getConfig, saveTokensToFile } from './api/_config.js';
+import sessions from './api/_sessions.js';
 
 const PORT = 5001; 
 const LOCAL_MODE = process.env.LOCAL_MODE === 'true' || process.env.NODE_ENV === 'development';
@@ -409,6 +411,18 @@ const server = http.createServer(async (req, res) => {
           localStore.paytmSessions = new Map();
         }
 
+        // Get config
+        const config = getConfig();
+        if (!config || !config.paytm) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Paytm configuration not found',
+            hint: 'Upload api-keys-config.json or set PAYTM_API_KEY environment variables'
+          }));
+          return;
+        }
+
         // Action 1: Initialize session
         if (data.action === 'init-session') {
           const sessionId = crypto.randomBytes(16).toString('hex');
@@ -423,7 +437,7 @@ const server = http.createServer(async (req, res) => {
             expiresAt: Date.now() + 15 * 60 * 1000,
           });
 
-          const loginUrl = `https://login.paytmmoney.com/merchant-login?apiKey=${process.env.PAYTM_API_KEY || 'ebb89582a5214f3bbf93fa7f7866ce28'}&state=${stateKey}`;
+          const loginUrl = `https://login.paytmmoney.com/merchant-login?apiKey=${config.paytm.apiKey}&state=${stateKey}`;
 
           console.log(`[Paytm] Session created: ${sessionId}`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -449,17 +463,33 @@ const server = http.createServer(async (req, res) => {
 
           try {
             console.log(`[Paytm] Exchanging request token for session: ${data.sessionId}`);
+            console.log(`[Paytm] Request token length: ${data.requestToken?.length || 0}`);
+            
+            const checksum = crypto
+              .createHash('sha256')
+              .update(`${config.paytm.apiKey}${data.requestToken}${config.paytm.apiSecret}`)
+              .digest('hex');
+            
+            const requestBody = {
+              api_key: config.paytm.apiKey,
+              request_token: data.requestToken,
+              api_secret_key: config.paytm.apiSecret,
+              checksum: checksum,
+            };
+            
+            console.log(`[Paytm] Request body keys:`, Object.keys(requestBody));
             
             const paytmResponse = await fetch('https://developer.paytmmoney.com/accounts/v2/gettoken', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                api_key: process.env.PAYTM_API_KEY || 'ebb89582a5214f3bbf93fa7f7866ce28',
-                request_token: data.requestToken,
-                api_secret_key: process.env.PAYTM_API_SECRET || 'd145b65bf63c4c83a67d19d7bf3b70a7',
-              }),
+              headers: {
+                'Content-Type': 'application/json',
+                'X-JWT-Token': config.paytm.apiKey,
+              },
+              body: JSON.stringify(requestBody),
             });
 
+            console.log(`[Paytm] Response status: ${paytmResponse.status}`);
+            
             const tokenData = await paytmResponse.json();
 
             if (tokenData.access_token) {
@@ -469,7 +499,14 @@ const server = http.createServer(async (req, res) => {
               session.readAccessToken = tokenData.read_access_token;
               localStore.paytmSessions.set(data.sessionId, session);
 
-              console.log(`[Paytm] Auth complete for session: ${data.sessionId}`);
+              // Save tokens locally
+              saveTokensToFile('paytm', {
+                accessToken: tokenData.access_token,
+                publicAccessToken: tokenData.public_access_token,
+                readAccessToken: tokenData.read_access_token,
+              });
+
+              console.log(`[Paytm] ✅ Auth complete for session: ${data.sessionId}`);
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
                 success: true,

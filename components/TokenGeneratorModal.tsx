@@ -89,7 +89,7 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
   const handleSubmitRequestToken = async () => {
     if (!requestToken || !sessionId) {
       setStatus('error');
-      setMessage('❌ Please enter the request token');
+      setMessage('❌ Please enter the request token or redirect URL');
       return;
     }
 
@@ -97,17 +97,34 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
     setMessage('💾 Exchanging token...');
 
     try {
+      // Extract requestToken if full URL was pasted
+      let token = requestToken.trim();
+      
+      if (token.includes('requestToken=')) {
+        // Extract from URL: ?success=true&requestToken=ABC123&state=XYZ
+        const match = token.match(/requestToken=([^&]+)/);
+        if (match && match[1]) {
+          token = match[1];
+          console.log('[TokenGenerator] Extracted token from URL:', token);
+        }
+      }
+
+      console.log('[TokenGenerator] Final request token:', token);
+      console.log('[TokenGenerator] Token length:', token.length);
+      console.log('[TokenGenerator] Session ID:', sessionId);
+
       const response = await fetch('/api/paytm-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'complete-auth',
           sessionId,
-          requestToken,
+          requestToken: token,
         }),
       });
 
       const data = await response.json();
+      console.log('[TokenGenerator] Token exchange response:', data);
 
       if (data.success) {
         // Save token to Redis
@@ -137,9 +154,20 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
           throw new Error('Failed to save token');
         }
       } else {
-        throw new Error(data.error || 'Failed to exchange token');
+        // Better error message
+        const errorMsg = data.details || data.error || 'Failed to exchange token';
+        
+        // Check for common issues
+        if (errorMsg.includes('Invalid Api Key') || errorMsg.includes('Invalid Api Secret')) {
+          throw new Error(`API credentials issue: ${errorMsg}\n\nMake sure your PAYTM_API_KEY and PAYTM_API_SECRET are correct.`);
+        } else if (errorMsg.includes('Request Token')) {
+          throw new Error(`Request token issue: ${errorMsg}\n\nMake sure you pasted the complete redirect URL.`);
+        } else {
+          throw new Error(errorMsg);
+        }
       }
     } catch (error) {
+      console.error('[TokenGenerator] Exchange error:', error);
       setStatus('error');
       setMessage(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -267,7 +295,10 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
                   rows={3}
                 />
                 <p className="text-xs text-amber-600 mt-2">
-                  The request token will be automatically extracted from the URL
+                  ℹ️ The request token will be automatically extracted from the URL
+                </p>
+                <p className="text-xs text-amber-500 mt-1 font-semibold">
+                  🔑 Example: https://developer.paytmmoney.com/?requestToken=ABC123...
                 </p>
                 <button
                   onClick={handleSubmitRequestToken}
