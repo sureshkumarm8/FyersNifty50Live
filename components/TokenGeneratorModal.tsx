@@ -40,13 +40,21 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
     setStep('login');
 
     try {
+      console.log('[TokenGenerator] Calling /api/paytm-generate');
       const response = await fetch('/api/paytm-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'init-session' }),
       });
 
+      console.log('[TokenGenerator] Response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data = await response.json();
+      console.log('[TokenGenerator] Response data:', data);
 
       if (data.success) {
         setSessionId(data.sessionId);
@@ -57,6 +65,7 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
         throw new Error(data.error || 'Failed to initialize session');
       }
     } catch (error) {
+      console.error('[TokenGenerator] Init error:', error);
       setStatus('error');
       setMessage(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
