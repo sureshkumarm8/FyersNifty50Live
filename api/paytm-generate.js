@@ -181,13 +181,30 @@ async function handlePost(req, res) {
     }
 
     try {
+      // Trim whitespace from request token
+      const trimmedToken = requestToken.trim();
+      
       console.log(`[PaytmGenerate] Exchanging request token for session: ${sessionId}`);
-      console.log(`[PaytmGenerate] Request token length: ${requestToken?.length || 0}`);
+      console.log(`[PaytmGenerate] Request token: ${trimmedToken}`);
+      console.log(`[PaytmGenerate] Request token length: ${trimmedToken.length}`);
+      console.log(`[PaytmGenerate] API Key length: ${currentConfig.paytm.apiKey.length}`);
+      console.log(`[PaytmGenerate] API Secret length: ${currentConfig.paytm.apiSecret.length}`);
 
       const checksum = crypto
         .createHash('sha256')
-        .update(`${currentConfig.paytm.apiKey}${requestToken}${currentConfig.paytm.apiSecret}`)
+        .update(`${currentConfig.paytm.apiKey}${trimmedToken}${currentConfig.paytm.apiSecret}`)
         .digest('hex');
+
+      console.log(`[PaytmGenerate] Checksum: ${checksum}`);
+
+      const requestBody = {
+        api_key: currentConfig.paytm.apiKey,
+        request_token: trimmedToken,
+        api_secret_key: currentConfig.paytm.apiSecret,
+        checksum: checksum,
+      };
+
+      console.log(`[PaytmGenerate] Request body keys: ${Object.keys(requestBody).join(', ')}`);
 
       const paytmResponse = await fetch('https://developer.paytmmoney.com/accounts/v2/gettoken', {
         method: 'POST',
@@ -195,17 +212,13 @@ async function handlePost(req, res) {
           'Content-Type': 'application/json',
           'X-JWT-Token': currentConfig.paytm.apiKey,
         },
-        body: JSON.stringify({
-          api_key: currentConfig.paytm.apiKey,
-          request_token: requestToken,
-          api_secret_key: currentConfig.paytm.apiSecret,
-          checksum: checksum,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       console.log(`[PaytmGenerate] Paytm API response status: ${paytmResponse.status}`);
 
       const tokenData = await paytmResponse.json();
+      console.log(`[PaytmGenerate] Response: ${JSON.stringify(tokenData).substring(0, 200)}`);
 
       if (tokenData.access_token) {
         console.log(`[PaytmGenerate] ✅ Token exchange successful`);

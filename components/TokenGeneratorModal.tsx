@@ -127,32 +127,15 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
       console.log('[TokenGenerator] Token exchange response:', data);
 
       if (data.success) {
-        // Save token to Redis
-        const saveResponse = await fetch('/api/save-paytm-token-direct', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            accessToken: data.accessToken,
-            source: 'native-generator',
-            timestamp: new Date().toISOString(),
-          }),
-        });
+        setStatus('success');
+        setMessage(`✅ Token saved successfully!\nValid for: 24 hours`);
+        setStep('complete');
 
-        const saveData = await saveResponse.json();
-
-        if (saveData.success) {
-          setStatus('success');
-          setMessage(`✅ Token saved successfully!\nValid for: ${saveData.expires_in || '24 hours'}`);
-          setStep('complete');
-
-          // Auto-close after 3 seconds
-          setTimeout(() => {
-            onTokenSaved(data.accessToken);
-            onClose();
-          }, 3000);
-        } else {
-          throw new Error('Failed to save token');
-        }
+        // Auto-close after 3 seconds
+        setTimeout(() => {
+          onTokenSaved(data.accessToken);
+          onClose();
+        }, 3000);
       } else {
         // Better error message
         const errorMsg = data.details || data.error || 'Failed to exchange token';
