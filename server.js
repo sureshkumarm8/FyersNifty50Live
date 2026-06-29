@@ -2,8 +2,66 @@
 import http from 'http';
 import { URL } from 'url';
 import crypto from 'crypto';
-import { getConfig, saveTokensToFile } from './api/_config.js';
-import sessions from './api/_sessions.js';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Config loader (same as api/paytm-generate.js)
+let cachedConfig = null;
+
+function getConfig() {
+  if (process.env.PAYTM_API_KEY || process.env.PAYTM_API_SECRET) {
+    if (!cachedConfig) {
+      console.log('[Config] Using environment variables');
+      cachedConfig = {
+        paytm: {
+          apiKey: process.env.PAYTM_API_KEY || '',
+          apiSecret: process.env.PAYTM_API_SECRET || '',
+        },
+      };
+    }
+    return cachedConfig;
+  }
+  
+  try {
+    if (cachedConfig) return cachedConfig;
+    const configPath = join(__dirname, 'api-keys-config.json');
+    if (existsSync(configPath)) {
+      console.log('[Config] Using local api-keys-config.json');
+      cachedConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+      return cachedConfig;
+    }
+  } catch (error) {
+    console.error('[Config] Error loading config:', error.message);
+  }
+  return null;
+}
+
+function saveTokensToFile(broker, tokens) {
+  try {
+    const tokensPath = join(__dirname, `paytm_tokens_${Date.now()}.json`);
+    let config = getConfig();
+    if (!config) config = {};
+    if (!config[broker]) config[broker] = {};
+    config[broker].tokens = {
+      accessToken: tokens.accessToken,
+      publicAccessToken: tokens.publicAccessToken,
+      readAccessToken: tokens.readAccessToken,
+      timestamp: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    };
+    writeFileSync(tokensPath, JSON.stringify(config, null, 2));
+    console.log(`[Config] Tokens saved to ${tokensPath}`);
+    return true;
+  } catch (error) {
+    console.error('[Config] Error saving tokens:', error.message);
+    return false;
+  }
+}
 
 const PORT = 5001; 
 const LOCAL_MODE = process.env.LOCAL_MODE === 'true' || process.env.NODE_ENV === 'development';

@@ -1,0 +1,17 @@
+{
+  "paytm": {
+    "apiKey": "ebb89582a5214f3bbf93fa7f7866ce28",
+    "apiSecret": "d145b65bf63c4c83a67d19d7bf3b70a7",
+    "tokens": {
+      "accessToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJtZXJjaGFudCIsImlzcyI6InBheXRtbW9uZXkiLCJpZCI6MTg0MDQyNCwiZXhwIjoxNzgyNzU3Nzk5fQ.VsxXeNIGas6r9M2WjXF_7LchxmLs43xHV2fvD4dYP6g",
+      "publicAccessToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJtZXJjaGFudCIsImlzcyI6InBheXRtbW9uZXkiLCJpZCI6MTg0MDQyNCwiZXhwIjoxNzgyNzU3Nzk5fQ.UR9nXM6KztLFQvGU5zGJolyAhuX1RlBI4D5zxDSjfUw",
+      "readAccessToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJtZXJjaGFudCIsImlzcyI6InBheXRtbW9uZXkiLCJpZCI6MTg0MDQyNCwiZXhwIjoxNzgyNzU3Nzk5fQ.cA40iy_kmXcC5GRQugjKnkPST2GGRKu2jS_M9ZjQv8A",
+      "timestamp": "2026-06-29T18:23:11.560Z",
+      "expiresAt": "2026-06-30T18:23:11.560Z"
+    }
+  },
+  "fyers": {
+    "clientId": "TONVBX2T3E-100",
+    "secretKey": "PWVVYZ39AB"
+  }
+}
