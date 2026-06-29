@@ -8,11 +8,12 @@ import {
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
   ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair,
-  Volume2, Layers, Key, Lock, Cpu, TrendingDown
+  Volume2, Layers, Key, Lock, Cpu, TrendingDown, Zap as ZapIcon
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
 import { apiCallTracker, APIStats } from '../services/aiProvider';
+import { TokenGeneratorModal } from './TokenGeneratorModal';
 
 interface SettingsScreenProps {
   onBack: () => void;
@@ -99,6 +100,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   // PayTM Integration
   const [dataProvider, setDataProvider] = useState<'fyers' | 'paytm'>(currentCreds.dataProvider || 'fyers');
   const [paytmAccessToken, setPaytmAccessToken] = useState(currentCreds.paytmAccessToken || '');
+  const [showTokenGenerator, setShowTokenGenerator] = useState(false);
+  const [tokenSaveNotification, setTokenSaveNotification] = useState<{type: 'success' | 'error', text: string} | null>(null);
   
   // Live Trading Control
   const [liveOrdersEnabled, setLiveOrdersEnabled] = useState(currentCreds.liveOrdersEnabled || false);
@@ -693,6 +696,33 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 <p className="text-xs text-slate-500 ml-1 mt-2">
                                     Get your access token from <a href="https://developer.paytmmoney.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">PayTM Money Developer Portal</a>
                                 </p>
+                                
+                                {/* Generate Token Button */}
+                                <div className="mt-4 flex gap-2">
+                                    <button
+                                        onClick={() => setShowTokenGenerator(true)}
+                                        className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-lg font-medium text-sm transition-all flex items-center justify-center gap-2 transform hover:scale-105"
+                                    >
+                                        <ZapIcon size={16} />
+                                        🚀 Generate AccessToken
+                                    </button>
+                                </div>
+
+                                {/* Notification */}
+                                {tokenSaveNotification && (
+                                    <div className={`mt-3 p-3 rounded-lg flex items-center gap-2 ${
+                                        tokenSaveNotification.type === 'success' 
+                                            ? 'bg-green-500/20 text-green-300 border border-green-500/30' 
+                                            : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                                    }`}>
+                                        {tokenSaveNotification.type === 'success' ? (
+                                            <CheckCircle size={16} />
+                                        ) : (
+                                            <AlertTriangle size={16} />
+                                        )}
+                                        <span className="text-xs">{tokenSaveNotification.text}</span>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -1851,6 +1881,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 </div>
             </div>
         )}
+
+        {/* Token Generator Modal */}
+        <TokenGeneratorModal
+          isOpen={showTokenGenerator}
+          onClose={() => setShowTokenGenerator(false)}
+          onTokenSaved={(token) => {
+            setPaytmAccessToken(token);
+            setTokenSaveNotification({
+              type: 'success',
+              text: '✅ Token saved successfully! Valid for 24 hours. Will auto-refresh daily.'
+            });
+            setTimeout(() => setTokenSaveNotification(null), 5000);
+          }}
+        />
 
       </div>
     </div>
