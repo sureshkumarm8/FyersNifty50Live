@@ -8,7 +8,8 @@ else
   echo "⚠️  Warning: .env.local not found"
 fi
 
-# Use production-like mode (with Redis)
+# Use development mode (installs dev dependencies)
+# IMPORTANT: Must be 'development' for npm to install devDependencies like vite
 export NODE_ENV=development
 
 echo ""
