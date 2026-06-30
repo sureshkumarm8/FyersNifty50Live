@@ -91,6 +91,9 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Content-Type', 'application/json');
+
+  console.log(`[PaytmGenerate] ${req.method} request received`);
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -103,13 +106,15 @@ export default async function handler(req, res) {
       return handlePost(req, res);
     }
 
-    return res.status(405).json({ error: 'Method not allowed' });
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'Method not allowed' }));
   } catch (error) {
     console.error('[PaytmGenerate] Error:', error);
-    return res.status(500).json({
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
       success: false,
       error: error.message || 'Internal server error',
-    });
+    }));
   }
 }
 
@@ -117,21 +122,24 @@ async function handleGet(req, res) {
   const { sessionId } = req.query;
 
   if (!sessionId) {
-    return res.status(400).json({ error: 'sessionId query parameter required' });
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'sessionId query parameter required' }));
   }
 
   const session = sessions.get(sessionId);
 
   if (!session) {
-    return res.status(404).json({ success: false, error: 'Session not found or expired' });
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ success: false, error: 'Session not found or expired' }));
   }
 
-  return res.status(200).json({
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({
     success: true,
     status: session.status,
     broker: session.broker,
     expiresIn: Math.max(0, session.expiresAt - Date.now()),
-  });
+  }));
 }
 
 async function handlePost(req, res) {
@@ -139,11 +147,12 @@ async function handlePost(req, res) {
 
   const currentConfig = getConfig();
   if (!currentConfig || !currentConfig.paytm) {
-    return res.status(400).json({
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
       success: false,
       error: 'Paytm configuration not found',
       hint: 'Set PAYTM_API_KEY and PAYTM_API_SECRET environment variables'
-    });
+    }));
   }
 
   // Action 1: Initialize session

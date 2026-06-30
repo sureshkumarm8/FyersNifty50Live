@@ -48,12 +48,23 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
       });
 
       console.log('[TokenGenerator] Response status:', response.status);
+      const contentType = response.headers.get('content-type');
+      console.log('[TokenGenerator] Content-Type:', contentType);
 
       if (!response.ok) {
+        const text = await response.text();
+        console.log('[TokenGenerator] Error response:', text.substring(0, 200));
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const text = await response.text();
+      console.log('[TokenGenerator] Raw response:', text.substring(0, 200));
+      
+      if (!text) {
+        throw new Error('Empty response from server');
+      }
+
+      const data = JSON.parse(text);
       console.log('[TokenGenerator] Response data:', data);
 
       if (data.success) {
@@ -123,7 +134,18 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
         }),
       });
 
-      const data = await response.json();
+      console.log('[TokenGenerator] Token exchange response status:', response.status);
+      const contentType = response.headers.get('content-type');
+      console.log('[TokenGenerator] Content-Type:', contentType);
+
+      const text = await response.text();
+      console.log('[TokenGenerator] Raw response:', text.substring(0, 200));
+      
+      if (!text) {
+        throw new Error('Empty response from server');
+      }
+
+      const data = JSON.parse(text);
       console.log('[TokenGenerator] Token exchange response:', data);
 
       if (data.success) {
