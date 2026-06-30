@@ -103,6 +103,8 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'symbol', direction: 'asc' });
+  const [isPrivacyMode, setIsPrivacyMode] = useState(false);
+  const [isDecoyMode, setIsDecoyMode] = useState(false);
   const prevViewModeRef = useRef<ViewMode>('summary');
 
   const prevStocksRef = useRef<Record<string, FyersQuote>>({});
@@ -564,6 +566,19 @@ const App: React.FC = () => {
       setApiStats(stats);
     });
     return unsubscribe;
+  }, []);
+
+  // Privacy Mode Keyboard Shortcut (Cmd+Shift+V or Ctrl+Shift+V)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'v') {
+        e.preventDefault();
+        setIsPrivacyMode(prev => !prev);
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
 
@@ -1444,6 +1459,7 @@ const App: React.FC = () => {
         <div className="glass-header rounded-2xl p-3 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg border border-white/5">
            
            <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
+               {!isPrivacyMode && (
                <div className="flex items-center gap-2">
                    <div className="bg-blue-600 p-2 rounded-lg shadow-lg shadow-blue-500/20">
                       <Activity className="text-white" size={20} />
@@ -1453,6 +1469,7 @@ const App: React.FC = () => {
                        <p className="text-[10px] text-slate-400 font-mono">LIVE TERMINAL</p>
                    </div>
                </div>
+               )}
            </div>
 
            {/* View Switcher (Desktop/Tablet) */}
@@ -1537,6 +1554,80 @@ const App: React.FC = () => {
 
       {/* --- Main Content Area --- */}
       <main className="flex-1 overflow-hidden relative flex flex-col">
+        
+        {isPrivacyMode && (
+            <div className="absolute inset-0 z-50 bg-slate-950/80 flex flex-col items-center justify-center gap-6 backdrop-blur-sm">
+                <div className="text-center space-y-4">
+                    <div className="inline-block p-3 bg-slate-800/50 border border-slate-700/30 rounded">
+                        <div className="relative w-8 h-8">
+                            <div className="absolute inset-0 border-2 border-slate-700 rounded-full"></div>
+                            <div className="absolute inset-0 border-2 border-transparent border-t-slate-500 rounded-full animate-spin"></div>
+                        </div>
+                    </div>
+                    <h1 className="text-sm font-normal text-slate-500">loading...</h1>
+                    <p className="text-slate-600 max-w-xs text-xs">syncing</p>
+                </div>
+
+                <div className="space-y-3 w-full max-w-xs">
+                    <button
+                        onClick={() => setIsDecoyMode(!isDecoyMode)}
+                        className={`w-full py-2 px-3 rounded text-xs border transition-all ${
+                            isDecoyMode 
+                                ? 'bg-slate-800 text-slate-400 border-slate-700' 
+                                : 'bg-slate-800 hover:bg-slate-800 text-slate-400 border-slate-700'
+                        }`}
+                    >
+                        {isDecoyMode ? 'decoy: on' : 'background'}
+                    </button>
+                    
+                    <button
+                        onClick={() => setIsPrivacyMode(false)}
+                        className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-800 border border-slate-700 rounded text-slate-400 transition-all text-xs"
+                    >
+                        close
+                    </button>
+                </div>
+
+                <p className="text-xs text-slate-700 font-mono absolute bottom-4">
+                    Cmd+Shift+V
+                </p>
+            </div>
+        )}
+
+        {isPrivacyMode && isDecoyMode && (
+            <div className="absolute inset-0 z-40 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col items-center justify-center">
+                <div className="space-y-8 text-center">
+                    <div>
+                        <h2 className="text-4xl font-bold text-slate-300 font-mono">9:32</h2>
+                        <p className="text-slate-500 text-sm mt-2">Tuesday, 30 June 2026</p>
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-4 max-w-xs">
+                        <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3">
+                            <div className="h-8 bg-slate-700/30 rounded-md mb-2"></div>
+                            <p className="text-xs text-slate-500">Project A</p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3">
+                            <div className="h-8 bg-slate-700/30 rounded-md mb-2"></div>
+                            <p className="text-xs text-slate-500">Project B</p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3">
+                            <div className="h-8 bg-slate-700/30 rounded-md mb-2"></div>
+                            <p className="text-xs text-slate-500">Project C</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-4 max-w-xs">
+                        <p className="text-slate-400 text-sm">Work in Progress</p>
+                        <div className="mt-3 space-y-2">
+                            <div className="h-2 bg-slate-700/30 rounded-full"></div>
+                            <div className="h-2 bg-slate-700/30 rounded-full w-5/6"></div>
+                            <div className="h-2 bg-slate-700/30 rounded-full w-4/5"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
         
         {viewMode === 'settings' && (
             <div className="absolute inset-0 z-50 bg-slate-950">
