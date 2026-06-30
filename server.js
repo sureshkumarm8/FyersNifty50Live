@@ -6,9 +6,13 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Load .env.local for local development
+dotenv.config({ path: join(__dirname, '.env.local') });
 
 // Config loader (same as api/paytm-generate.js)
 let cachedConfig = null;
