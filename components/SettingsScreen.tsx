@@ -1886,6 +1886,21 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         <TokenGeneratorModal
           isOpen={showTokenGenerator}
           onClose={() => setShowTokenGenerator(false)}
+          currentCreds={{
+            appId,
+            accessToken,
+            googleApiKey,
+            groqApiKey,
+            claudeApiKey,
+            aiProvider: selectedAiProvider,
+            groqModel,
+            geminiModel,
+            claudeModel,
+            bypassMarketHours,
+            refreshInterval,
+            aiEnabled,
+            liveOrdersEnabled
+          }}
           onTokenSaved={(token) => {
             setPaytmAccessToken(token);
             setTokenSaveNotification({

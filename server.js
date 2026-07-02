@@ -610,9 +610,164 @@ const server = http.createServer(async (req, res) => {
       }
     });
   }
-  else {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not Found' }));
+});
+
+// ============================================
+// PROXY ENDPOINTS FOR EMBEDDED SITES
+// ============================================
+
+// Proxy for Zerodha Kite
+server.on('request', (req, res) => {
+  if (req.url.startsWith('/api/proxy/zerodha')) {
+    (async () => {
+      try {
+        const { default: fetch } = await import('node-fetch');
+        console.log('[Proxy] Fetching Zerodha Kite...');
+        
+        const response = await fetch('https://kite.zerodha.com/', {
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://kite.zerodha.com/',
+            'Accept-Language': 'en-US,en;q=0.9',
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        let html = await response.text();
+        console.log('[Proxy] Zerodha response received, modifying...');
+        
+        // Remove X-Frame-Options and other security headers that block embedding
+        html = html.replace(/X-Frame-Options:[^;\n]*/gi, '');
+        html = html.replace(/frame-ancestors[^;]*/gi, '');
+        
+        // Modify CSP to allow framing
+        html = html.replace(
+          /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/gi,
+          '<meta http-equiv="Content-Security-Policy" content="frame-ancestors \'self\' *;">'
+        );
+
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'X-Frame-Options': 'ALLOWALL',
+          'Content-Security-Policy': "frame-ancestors 'self' *"
+        });
+        console.log('[Proxy] ✅ Zerodha served successfully');
+        res.end(html);
+      } catch (err) {
+        console.error('[Proxy] ❌ Zerodha Error:', err.message);
+        const errorHtml = `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <style>
+                body { font-family: Arial; background: #f0f0f0; padding: 40px; text-align: center; }
+                .error { background: white; padding: 40px; border-radius: 8px; max-width: 600px; margin: 0 auto; }
+                h1 { color: #d32f2f; }
+                p { color: #666; line-height: 1.6; }
+                code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+              </style>
+            </head>
+            <body>
+              <div class="error">
+                <h1>⚠️ Cannot Load Zerodha Kite</h1>
+                <p>Failed to fetch Zerodha Kite. The site might be:</p>
+                <ul style="text-align: left;">
+                  <li>Temporarily unavailable</li>
+                  <li>Blocking our proxy server</li>
+                  <li>Experiencing network issues</li>
+                </ul>
+                <p><strong>Error:</strong> <code>${err.message}</code></p>
+                <p><a href="https://kite.zerodha.com/" target="_blank">Open Zerodha Kite directly →</a></p>
+              </div>
+            </body>
+          </html>
+        `;
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(errorHtml);
+      }
+    })();
+    return;
+  }
+
+  if (req.url.startsWith('/api/proxy/sensibull')) {
+    (async () => {
+      try {
+        const { default: fetch } = await import('node-fetch');
+        console.log('[Proxy] Fetching Sensibull...');
+        
+        const response = await fetch('https://web.sensibull.com/open-interest/oi-vs-strike?tradingsymbol=RELIANCE', {
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://web.sensibull.com/',
+            'Accept-Language': 'en-US,en;q=0.9',
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        let html = await response.text();
+        console.log('[Proxy] Sensibull response received, modifying...');
+        
+        // Remove blocking headers
+        html = html.replace(/X-Frame-Options:[^;\n]*/gi, '');
+        html = html.replace(/frame-ancestors[^;]*/gi, '');
+        
+        // Modify CSP
+        html = html.replace(
+          /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/gi,
+          '<meta http-equiv="Content-Security-Policy" content="frame-ancestors \'self\' *;">'
+        );
+
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'X-Frame-Options': 'ALLOWALL',
+          'Content-Security-Policy': "frame-ancestors 'self' *"
+        });
+        console.log('[Proxy] ✅ Sensibull served successfully');
+        res.end(html);
+      } catch (err) {
+        console.error('[Proxy] ❌ Sensibull Error:', err.message);
+        const errorHtml = `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <style>
+                body { font-family: Arial; background: #f0f0f0; padding: 40px; text-align: center; }
+                .error { background: white; padding: 40px; border-radius: 8px; max-width: 600px; margin: 0 auto; }
+                h1 { color: #d32f2f; }
+                p { color: #666; line-height: 1.6; }
+                code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+              </style>
+            </head>
+            <body>
+              <div class="error">
+                <h1>⚠️ Cannot Load Sensibull</h1>
+                <p>Failed to fetch Sensibull. The site might be:</p>
+                <ul style="text-align: left;">
+                  <li>Temporarily unavailable</li>
+                  <li>Blocking our proxy server</li>
+                  <li>Experiencing network issues</li>
+                </ul>
+                <p><strong>Error:</strong> <code>${err.message}</code></p>
+                <p><a href="https://web.sensibull.com/open-interest/oi-vs-strike?tradingsymbol=RELIANCE" target="_blank">Open Sensibull directly →</a></p>
+              </div>
+            </body>
+          </html>
+        `;
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(errorHtml);
+      }
+    })();
+    return;
   }
 });
 

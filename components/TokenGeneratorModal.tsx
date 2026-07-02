@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { X, Loader, CheckCircle, AlertCircle, Clock, Phone, Key } from 'lucide-react';
+import { X, Loader, CheckCircle, AlertCircle, Clock, Phone, Key, Download } from 'lucide-react';
 
 interface TokenGeneratorModalProps {
   isOpen: boolean;
   onClose: () => void;
   onTokenSaved: (token: string) => void;
+  currentCreds?: any;
 }
 
 export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
   isOpen,
   onClose,
   onTokenSaved,
+  currentCreds,
 }) => {
   const [status, setStatus] = useState<'idle' | 'authenticating' | 'otp' | 'saving' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
@@ -18,6 +20,7 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
   const [requestToken, setRequestToken] = useState('');
   const [step, setStep] = useState<'init' | 'login' | 'otp' | 'complete'>('init');
   const [loginUrl, setLoginUrl] = useState('');
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -28,6 +31,7 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
       setRequestToken('');
       setStep('init');
       setLoginUrl('');
+      setGeneratedToken(null);
     }
   }, [isOpen]);
 
@@ -152,12 +156,8 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
         setStatus('success');
         setMessage(`✅ Token saved successfully!\nValid for: 24 hours`);
         setStep('complete');
-
-        // Auto-close after 3 seconds
-        setTimeout(() => {
-          onTokenSaved(data.accessToken);
-          onClose();
-        }, 3000);
+        setGeneratedToken(data.accessToken);
+        onTokenSaved(data.accessToken);
       } else {
         // Better error message
         const errorMsg = data.details || data.error || 'Failed to exchange token';
@@ -176,6 +176,53 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
       setStatus('error');
       setMessage(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  };
+
+  const handleDownloadConfig = () => {
+    if (!generatedToken) return;
+
+    const config = {
+      paytm: {
+        apiKey: "YOUR_PAYTM_API_KEY",
+        apiSecret: "YOUR_PAYTM_API_SECRET",
+        accessToken: generatedToken
+      },
+      fyers: {
+        clientId: currentCreds?.appId || "YOUR_FYERS_CLIENT_ID",
+        secretKey: "YOUR_FYERS_SECRET_KEY",
+        accessToken: currentCreds?.accessToken || "YOUR_FYERS_ACCESS_TOKEN"
+      },
+      google: {
+        apiKey: currentCreds?.googleApiKey || "YOUR_GEMINI_API_KEY_HERE"
+      },
+      groq: {
+        apiKey: currentCreds?.groqApiKey || "YOUR_GROQ_API_KEY_HERE"
+      },
+      claude: {
+        apiKey: currentCreds?.claudeApiKey || "YOUR_CLAUDE_API_KEY_HERE"
+      },
+      config: {
+        bypassMarketHours: currentCreds?.bypassMarketHours || false,
+        refreshInterval: currentCreds?.refreshInterval || 60000,
+        aiEnabled: currentCreds?.aiEnabled !== false,
+        aiProvider: currentCreds?.aiProvider || "gemini",
+        groqModel: currentCreds?.groqModel || "llama-3.3-70b-versatile",
+        geminiModel: currentCreds?.geminiModel || "gemini-2.5-flash",
+        claudeModel: currentCreds?.claudeModel || "claude-sonnet-4-6",
+        dataProvider: "paytm",
+        liveOrdersEnabled: currentCreds?.liveOrdersEnabled || false
+      },
+      generatedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    };
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `nifty50_config_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
   };
 
   if (!isOpen) return null;
@@ -325,10 +372,35 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
 
           {/* Step 4: Success */}
           {step === 'complete' && status === 'success' && (
-            <div className="text-center space-y-3">
+            <div className="text-center space-y-6">
               <div className="text-6xl">🎉</div>
-              <p className="text-lg font-semibold text-green-600">Token Generated Successfully!</p>
-              <p className="text-sm text-gray-600">Closing in a moment...</p>
+              <div>
+                <p className="text-lg font-semibold text-green-600">Token Generated Successfully!</p>
+                <p className="text-sm text-gray-600 mt-1">Your PayTM Money access token is ready to use</p>
+              </div>
+              
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+                <div className="text-sm text-gray-700">
+                  <p className="font-semibold mb-2">✅ Token Details:</p>
+                  <ul className="text-left space-y-1 text-xs">
+                    <li>• <strong>Valid for:</strong> 24 hours from generation</li>
+                    <li>• <strong>Auto-refresh:</strong> Daily at midnight</li>
+                    <li>• <strong>Storage:</strong> Encrypted in your browser</li>
+                  </ul>
+                </div>
+              </div>
+
+              <button
+                onClick={handleDownloadConfig}
+                className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition flex items-center justify-center gap-2"
+              >
+                <Download size={18} />
+                💾 Download Config File (Optional)
+              </button>
+
+              <p className="text-xs text-gray-500">
+                The config file includes your new PayTM token and can be imported later to restore your settings.
+              </p>
             </div>
           )}
         </div>

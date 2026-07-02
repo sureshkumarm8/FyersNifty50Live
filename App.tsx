@@ -1743,6 +1743,7 @@ const App: React.FC = () => {
             </div>
         )}
 
+
         {viewMode === 'ai' && (
             <div className="flex flex-col h-full overflow-hidden">
                 <AILab 
