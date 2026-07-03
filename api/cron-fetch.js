@@ -187,13 +187,22 @@ export default async function handler(req, res) {
       console.log('[Cron] Could not check frontend flag, proceeding:', flagCheckError.message);
     }
 
-    // Get PayTM token from environment
-    const paytmToken = process.env.PAYTM_ACCESS_TOKEN;
+    // Get PayTM token - try auto-refreshed token from Redis first, then fallback to env
+    let paytmToken = await redis.get('paytm:access_token');
+    
+    if (!paytmToken) {
+      paytmToken = process.env.PAYTM_ACCESS_TOKEN;
+      if (paytmToken) {
+        console.log('[Cron] Using manual token from environment variable');
+      }
+    } else {
+      console.log('[Cron] Using auto-refreshed token from Redis');
+    }
     
     if (!paytmToken) {
       return res.status(401).json({ 
         success: false, 
-        error: 'PayTM token not configured. Set PAYTM_ACCESS_TOKEN in Vercel env.' 
+        error: 'PayTM token not configured. Set PAYTM_ACCESS_TOKEN in Vercel env or setup auto-refresh.' 
       });
     }
 

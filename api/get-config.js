@@ -2,6 +2,13 @@
 // Frontend will decrypt this to avoid storing plain tokens
 
 import crypto from 'crypto';
+import { Redis } from '@upstash/redis';
+
+// Initialize Redis
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN,
+});
 
 // Simple encryption using AES-256-CBC
 // The encryption key is derived from a combination of user agent and timestamp
@@ -43,8 +50,18 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Get tokens from environment
-    const paytmAccessToken = process.env.PAYTM_ACCESS_TOKEN;
+    // Get tokens - try auto-refreshed token from Redis first
+    let paytmAccessToken = await redis.get('paytm:access_token');
+    
+    if (!paytmAccessToken) {
+      paytmAccessToken = process.env.PAYTM_ACCESS_TOKEN;
+      if (paytmAccessToken) {
+        console.log('[Config] Using manual token from environment');
+      }
+    } else {
+      console.log('[Config] Using auto-refreshed token from Redis');
+    }
+    
     const googleApiKey = process.env.GOOGLE_API_KEY;
     const groqApiKey = process.env.GROQ_API_KEY;
     

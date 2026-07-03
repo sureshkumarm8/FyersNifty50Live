@@ -1,6 +1,71 @@
 
 import http from 'http';
 import { URL } from 'url';
+import crypto from 'crypto';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import dotenv from 'dotenv';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load .env.local for local development
+dotenv.config({ path: join(__dirname, '.env.local') });
+
+// Config loader (same as api/paytm-generate.js)
+let cachedConfig = null;
+
+function getConfig() {
+  if (process.env.PAYTM_API_KEY || process.env.PAYTM_API_SECRET) {
+    if (!cachedConfig) {
+      console.log('[Config] Using environment variables');
+      cachedConfig = {
+        paytm: {
+          apiKey: process.env.PAYTM_API_KEY || '',
+          apiSecret: process.env.PAYTM_API_SECRET || '',
+        },
+      };
+    }
+    return cachedConfig;
+  }
+  
+  try {
+    if (cachedConfig) return cachedConfig;
+    const configPath = join(__dirname, 'api-keys-config.json');
+    if (existsSync(configPath)) {
+      console.log('[Config] Using local api-keys-config.json');
+      cachedConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+      return cachedConfig;
+    }
+  } catch (error) {
+    console.error('[Config] Error loading config:', error.message);
+  }
+  return null;
+}
+
+function saveTokensToFile(broker, tokens) {
+  try {
+    const tokensPath = join(__dirname, `paytm_tokens_${Date.now()}.json`);
+    let config = getConfig();
+    if (!config) config = {};
+    if (!config[broker]) config[broker] = {};
+    config[broker].tokens = {
+      accessToken: tokens.accessToken,
+      publicAccessToken: tokens.publicAccessToken,
+      readAccessToken: tokens.readAccessToken,
+      timestamp: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    };
+    writeFileSync(tokensPath, JSON.stringify(config, null, 2));
+    console.log(`[Config] Tokens saved to ${tokensPath}`);
+    return true;
+  } catch (error) {
+    console.error('[Config] Error saving tokens:', error.message);
+    return false;
+  }
+}
 
 const PORT = 5001; 
 const LOCAL_MODE = process.env.LOCAL_MODE === 'true' || process.env.NODE_ENV === 'development';
@@ -35,7 +100,10 @@ const server = http.createServer(async (req, res) => {
                           reqUrl.pathname.startsWith('/api/save-history') ||
                           reqUrl.pathname.startsWith('/api/get-config') ||
                           reqUrl.pathname.startsWith('/api/save-config') ||
-                          reqUrl.pathname.startsWith('/api/clear-history');
+                          reqUrl.pathname.startsWith('/api/clear-history') ||
+                          reqUrl.pathname.startsWith('/api/paytm-generate') ||
+                          reqUrl.pathname.startsWith('/api/paytm-market-data') ||
+                          reqUrl.pathname.startsWith('/api/save-paytm-token-direct');
 
   if (!LOCAL_MODE && !isLocalEndpoint && !authHeader) {
      res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -392,9 +460,314 @@ const server = http.createServer(async (req, res) => {
         }
      });
   }
-  else {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not Found' }));
+  // Paytm OAuth Token Generation
+  else if (reqUrl.pathname === '/api/paytm-generate' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body);
+
+        // Session storage
+        if (!localStore.paytmSessions) {
+          localStore.paytmSessions = new Map();
+        }
+
+        // Get config
+        const config = getConfig();
+        if (!config || !config.paytm) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Paytm configuration not found',
+            hint: 'Upload api-keys-config.json or set PAYTM_API_KEY environment variables'
+          }));
+          return;
+        }
+
+        // Action 1: Initialize session
+        if (data.action === 'init-session') {
+          const sessionId = crypto.randomBytes(16).toString('hex');
+          const stateKey = crypto.randomBytes(16).toString('hex');
+          
+          localStore.paytmSessions.set(sessionId, {
+            sessionId,
+            status: 'pending',
+            broker: 'paytm',
+            stateKey,
+            timestamp: Date.now(),
+            expiresAt: Date.now() + 15 * 60 * 1000,
+          });
+
+          const loginUrl = `https://login.paytmmoney.com/merchant-login?apiKey=${config.paytm.apiKey}&state=${stateKey}`;
+
+          console.log(`[Paytm] Session created: ${sessionId}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            sessionId,
+            loginUrl,
+            stateKey,
+            message: 'Open loginUrl in browser for OTP authentication',
+          }));
+          return;
+        }
+
+        // Action 2: Complete auth with request token
+        if (data.action === 'complete-auth' && data.sessionId && data.requestToken) {
+          const session = localStore.paytmSessions.get(data.sessionId);
+          
+          if (!session) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Session not found or expired' }));
+            return;
+          }
+
+          try {
+            console.log(`[Paytm] Exchanging request token for session: ${data.sessionId}`);
+            console.log(`[Paytm] Request token length: ${data.requestToken?.length || 0}`);
+            
+            const checksum = crypto
+              .createHash('sha256')
+              .update(`${config.paytm.apiKey}${data.requestToken}${config.paytm.apiSecret}`)
+              .digest('hex');
+            
+            const requestBody = {
+              api_key: config.paytm.apiKey,
+              request_token: data.requestToken,
+              api_secret_key: config.paytm.apiSecret,
+              checksum: checksum,
+            };
+            
+            console.log(`[Paytm] Request body keys:`, Object.keys(requestBody));
+            
+            const paytmResponse = await fetch('https://developer.paytmmoney.com/accounts/v2/gettoken', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-JWT-Token': config.paytm.apiKey,
+              },
+              body: JSON.stringify(requestBody),
+            });
+
+            console.log(`[Paytm] Response status: ${paytmResponse.status}`);
+            
+            const tokenData = await paytmResponse.json();
+
+            if (tokenData.access_token) {
+              session.status = 'completed';
+              session.accessToken = tokenData.access_token;
+              session.publicAccessToken = tokenData.public_access_token;
+              session.readAccessToken = tokenData.read_access_token;
+              localStore.paytmSessions.set(data.sessionId, session);
+
+              // Save tokens locally
+              saveTokensToFile('paytm', {
+                accessToken: tokenData.access_token,
+                publicAccessToken: tokenData.public_access_token,
+                readAccessToken: tokenData.read_access_token,
+              });
+
+              console.log(`[Paytm] ✅ Auth complete for session: ${data.sessionId}`);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: true,
+                message: 'Authentication successful',
+                accessToken: tokenData.access_token,
+                publicAccessToken: tokenData.public_access_token,
+                readAccessToken: tokenData.read_access_token,
+                expiresIn: '24 hours',
+              }));
+              return;
+            } else {
+              throw new Error(tokenData.message || 'Failed to generate token');
+            }
+          } catch (error) {
+            session.status = 'failed';
+            session.errorMessage = error.message;
+            localStore.paytmSessions.set(data.sessionId, session);
+
+            console.error(`[Paytm] Auth error for session ${data.sessionId}:`, error.message);
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'Failed to exchange request token',
+              details: error.message,
+            }));
+            return;
+          }
+        }
+
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'Invalid request parameters',
+          hint: 'Use action: "init-session" or "complete-auth"',
+        }));
+      } catch (err) {
+        console.error("[Paytm] Error:", err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+  }
+});
+
+// ============================================
+// PROXY ENDPOINTS FOR EMBEDDED SITES
+// ============================================
+
+// Proxy for Zerodha Kite
+server.on('request', (req, res) => {
+  if (req.url.startsWith('/api/proxy/zerodha')) {
+    (async () => {
+      try {
+        const { default: fetch } = await import('node-fetch');
+        console.log('[Proxy] Fetching Zerodha Kite...');
+        
+        const response = await fetch('https://kite.zerodha.com/', {
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://kite.zerodha.com/',
+            'Accept-Language': 'en-US,en;q=0.9',
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        let html = await response.text();
+        console.log('[Proxy] Zerodha response received, modifying...');
+        
+        // Remove X-Frame-Options and other security headers that block embedding
+        html = html.replace(/X-Frame-Options:[^;\n]*/gi, '');
+        html = html.replace(/frame-ancestors[^;]*/gi, '');
+        
+        // Modify CSP to allow framing
+        html = html.replace(
+          /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/gi,
+          '<meta http-equiv="Content-Security-Policy" content="frame-ancestors \'self\' *;">'
+        );
+
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'X-Frame-Options': 'ALLOWALL',
+          'Content-Security-Policy': "frame-ancestors 'self' *"
+        });
+        console.log('[Proxy] ✅ Zerodha served successfully');
+        res.end(html);
+      } catch (err) {
+        console.error('[Proxy] ❌ Zerodha Error:', err.message);
+        const errorHtml = `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <style>
+                body { font-family: Arial; background: #f0f0f0; padding: 40px; text-align: center; }
+                .error { background: white; padding: 40px; border-radius: 8px; max-width: 600px; margin: 0 auto; }
+                h1 { color: #d32f2f; }
+                p { color: #666; line-height: 1.6; }
+                code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+              </style>
+            </head>
+            <body>
+              <div class="error">
+                <h1>⚠️ Cannot Load Zerodha Kite</h1>
+                <p>Failed to fetch Zerodha Kite. The site might be:</p>
+                <ul style="text-align: left;">
+                  <li>Temporarily unavailable</li>
+                  <li>Blocking our proxy server</li>
+                  <li>Experiencing network issues</li>
+                </ul>
+                <p><strong>Error:</strong> <code>${err.message}</code></p>
+                <p><a href="https://kite.zerodha.com/" target="_blank">Open Zerodha Kite directly →</a></p>
+              </div>
+            </body>
+          </html>
+        `;
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(errorHtml);
+      }
+    })();
+    return;
+  }
+
+  if (req.url.startsWith('/api/proxy/sensibull')) {
+    (async () => {
+      try {
+        const { default: fetch } = await import('node-fetch');
+        console.log('[Proxy] Fetching Sensibull...');
+        
+        const response = await fetch('https://web.sensibull.com/open-interest/oi-vs-strike?tradingsymbol=RELIANCE', {
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://web.sensibull.com/',
+            'Accept-Language': 'en-US,en;q=0.9',
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        let html = await response.text();
+        console.log('[Proxy] Sensibull response received, modifying...');
+        
+        // Remove blocking headers
+        html = html.replace(/X-Frame-Options:[^;\n]*/gi, '');
+        html = html.replace(/frame-ancestors[^;]*/gi, '');
+        
+        // Modify CSP
+        html = html.replace(
+          /<meta[^>]*http-equiv="Content-Security-Policy"[^>]*>/gi,
+          '<meta http-equiv="Content-Security-Policy" content="frame-ancestors \'self\' *;">'
+        );
+
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Access-Control-Allow-Origin': '*',
+          'X-Frame-Options': 'ALLOWALL',
+          'Content-Security-Policy': "frame-ancestors 'self' *"
+        });
+        console.log('[Proxy] ✅ Sensibull served successfully');
+        res.end(html);
+      } catch (err) {
+        console.error('[Proxy] ❌ Sensibull Error:', err.message);
+        const errorHtml = `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <style>
+                body { font-family: Arial; background: #f0f0f0; padding: 40px; text-align: center; }
+                .error { background: white; padding: 40px; border-radius: 8px; max-width: 600px; margin: 0 auto; }
+                h1 { color: #d32f2f; }
+                p { color: #666; line-height: 1.6; }
+                code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+              </style>
+            </head>
+            <body>
+              <div class="error">
+                <h1>⚠️ Cannot Load Sensibull</h1>
+                <p>Failed to fetch Sensibull. The site might be:</p>
+                <ul style="text-align: left;">
+                  <li>Temporarily unavailable</li>
+                  <li>Blocking our proxy server</li>
+                  <li>Experiencing network issues</li>
+                </ul>
+                <p><strong>Error:</strong> <code>${err.message}</code></p>
+                <p><a href="https://web.sensibull.com/open-interest/oi-vs-strike?tradingsymbol=RELIANCE" target="_blank">Open Sensibull directly →</a></p>
+              </div>
+            </body>
+          </html>
+        `;
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(errorHtml);
+      }
+    })();
+    return;
   }
 });
 

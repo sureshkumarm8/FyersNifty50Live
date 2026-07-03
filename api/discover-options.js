@@ -148,8 +148,18 @@ export default async function handler(req, res) {
   try {
     console.log('[Discover] Starting options discovery...');
     
-    // Get PayTM token
-    const paytmToken = process.env.PAYTM_ACCESS_TOKEN;
+    // Get PayTM token - try auto-refreshed token from Redis first
+    let paytmToken = await redis.get('paytm:access_token');
+    
+    if (!paytmToken) {
+      paytmToken = process.env.PAYTM_ACCESS_TOKEN;
+      if (paytmToken) {
+        console.log('[Discover] Using manual token from environment');
+      }
+    } else {
+      console.log('[Discover] Using auto-refreshed token from Redis');
+    }
+    
     if (!paytmToken) {
       return res.status(401).json({ 
         success: false,
