@@ -90,9 +90,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
   const [claudeApiKey, setClaudeApiKey] = useState(currentCreds.claudeApiKey || '');
   const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq' | 'claude'>(currentCreds.aiProvider || 'gemini');
-  const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'llama-3.3-70b-versatile');
-  const [geminiModel, setGeminiModel] = useState(currentCreds.geminiModel || 'gemini-2.5-flash');
-  const [claudeModel, setClaudeModel] = useState(currentCreds.claudeModel || 'claude-sonnet-4-6');
+  const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'mixtral-8x7b-32768');
+  const [geminiModel, setGeminiModel] = useState(currentCreds.geminiModel || 'gemini-2.0-flash');
+  const [claudeModel, setClaudeModel] = useState(currentCreds.claudeModel || 'claude-3-5-sonnet-20241022');
+  const [cerebrasApiKey, setCerebrasApiKey] = useState(currentCreds.cerebrasApiKey || '');
+  const [cerebrasModel, setCerebrasModel] = useState(currentCreds.cerebrasModel || 'cerebras/llama-3.1-70b');
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
@@ -164,9 +166,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       googleApiKey, 
       groqApiKey,
       claudeApiKey,
+      cerebrasApiKey,
       groqModel,
       geminiModel,
       claudeModel,
+      cerebrasModel,
       bypassMarketHours, 
       refreshInterval, 
       aiEnabled, 
@@ -290,9 +294,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         refreshInterval: 60000,
         aiEnabled: true,
         aiProvider: "gemini",
-        groqModel: "llama-3.3-70b-versatile",
-        geminiModel: "gemini-2.5-flash",
-        claudeModel: "claude-sonnet-4-6",
+        groqModel: "mixtral-8x7b-32768",
+        geminiModel: "gemini-2.0-flash",
+        claudeModel: "claude-3-5-sonnet-20241022",
         dataProvider: "paytm",
         liveOrdersEnabled: false
       }
@@ -760,12 +764,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 </div>
                                 <select 
                                     value={selectedAiProvider} 
-                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq' | 'claude')}
+                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq' | 'claude' | 'cerebras')}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                 >
-                                    <option value="gemini">Gemini AI</option>
-                                    <option value="groq">Groq AI</option>
-                                    <option value="claude">Claude AI</option>
+                                    <option value="gemini">Gemini AI (Free: 1M tokens/day)</option>
+                                    <option value="groq">Groq AI (Free: 10K tokens/min)</option>
+                                    <option value="claude">Claude AI (Paid: $0.80-$15/1M)</option>
+                                    <option value="cerebras">Cerebras AI (Fast: 600 req/min)</option>
                                 </select>
                                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -803,30 +808,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                        onChange={(e) => setGeminiModel(e.target.value)}
                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                    >
-                                       <optgroup label="💎 Frontier Models (Recommended)">
-                                           <option value="gemini-2.5-flash">Gemini 2.5 Flash - Current Default</option>
-                                           <option value="gemini-2.5-pro">Gemini 2.5 Pro - Stable Multimodal</option>
-                                           <option value="gemini-3-flash-preview">Gemini 3 Flash Preview - High-Speed</option>
-                                           <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview - Peak Reasoning</option>
-                                           <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash-Lite - Low Latency</option>
+                                       <optgroup label="🆓 FREE TIER MODELS (Recommended)">
+                                           <option value="gemini-2.0-flash">Gemini 2.0 Flash - RECOMMENDED (Latest, 1M tokens/day FREE)</option>
+                                           <option value="gemini-1.5-flash">Gemini 1.5 Flash - Alternative (1M tokens/day FREE)</option>
                                        </optgroup>
-                                       <optgroup label="🔄 Latest Aliases (Auto-upgrade)">
-                                           <option value="gemini-3-flash-latest">Gemini 3 Flash Latest - Auto-upgrade</option>
-                                           <option value="gemini-3.1-pro-latest">Gemini 3.1 Pro Latest - Auto-upgrade</option>
+                                       <optgroup label="💎 PAID TIER MODELS">
+                                           <option value="gemini-2.0-pro">Gemini 2.0 Pro - Advanced ($1.50/1M input, $6/1M output)</option>
+                                           <option value="gemini-1.5-pro">Gemini 1.5 Pro - Complex reasoning ($1.25/1M input, $5/1M output)</option>
                                        </optgroup>
-                                       <optgroup label="🦾 Gemma 4 Open Models (April 2, 2026)">
-                                           <option value="gemma-4-31b-it">Gemma 4 31B Dense - Workstation-class</option>
-                                           <option value="gemma-4-26b-moe-it">Gemma 4 26B MoE - Fast Inference (3.8B active)</option>
-                                           <option value="gemma-4-4b-it">Gemma 4 E4B - Edge-optimized (Audio/Image)</option>
-                                           <option value="gemma-4-2b-it">Gemma 4 E2B - Ultra-lightweight (Mobile/IoT)</option>
-                                       </optgroup>
-                                       <optgroup label="🎨 Specialized Endpoints">
-                                           <option value="gemini-3.1-flash-image-preview">Image Generation (Nano Banana 2)</option>
-                                           <option value="veo-3.1-lite-generate-preview">Video Generation (Veo 3.1)</option>
-                                           <option value="lyria-3-generate-preview">Music Generation (Lyria 3)</option>
-                                       </optgroup>
-                                       <optgroup label="🔢 Embedding">
-                                           <option value="text-embedding-004">Text Embedding 004</option>
+                                       <optgroup label="🧪 EXPERIMENTAL">
+                                           <option value="gemini-exp-1206">Gemini Exp 1206 - Cutting Edge (Experimental)</option>
                                        </optgroup>
                                    </select>
                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
@@ -873,38 +864,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                        onChange={(e) => setGroqModel(e.target.value)}
                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                    >
-                                       <optgroup label="🚀 Recommended (High Performance)">
-                                           <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile - Best Overall</option>
-                                           <option value="meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout 17B - Latest</option>
+                                       <optgroup label="🎯 FREE TIER MODELS (July 2026)">
+                                           <option value="mixtral-8x7b-32768">Mixtral 8x7B 32K - RECOMMENDED (Best Performance)</option>
+                                           <option value="llama-3.1-70b-versatile">Llama 3.1 70B Versatile - Best Balance</option>
                                            <option value="llama-3.1-8b-instant">Llama 3.1 8B Instant - Fastest</option>
+                                           <option value="gemma-2-9b-it">Gemma 2 9B IT - Lightweight</option>
                                        </optgroup>
-                                       <optgroup label="🌟 Meta Llama Family">
-                                           <option value="llama-3.1-70b-versatile">Llama 3.1 70B Versatile</option>
-                                           <option value="meta-llama/llama-prompt-guard-2-86m">Llama Prompt Guard 2 (86M)</option>
-                                           <option value="meta-llama/llama-prompt-guard-2-22m">Llama Prompt Guard 2 (22M)</option>
-                                       </optgroup>
-                                       <optgroup label="🌙 Moonshot AI Kimi">
-                                           <option value="moonshotai/kimi-k2-instruct">Kimi K2 Instruct</option>
-                                           <option value="moonshotai/kimi-k2-instruct-0905">Kimi K2 Instruct (v0905)</option>
-                                       </optgroup>
-                                       <optgroup label="🔓 OpenAI Open Source">
-                                           <option value="openai/gpt-oss-120b">GPT OSS 120B</option>
-                                           <option value="openai/gpt-oss-20b">GPT OSS 20B</option>
-                                           <option value="openai/gpt-oss-safeguard-20b">GPT OSS Safeguard 20B</option>
-                                       </optgroup>
-                                       <optgroup label="🧠 Groq Compound">
-                                           <option value="groq/compound">Groq Compound</option>
-                                           <option value="groq/compound-mini">Groq Compound Mini</option>
-                                       </optgroup>
-                                       <optgroup label="🌏 International Models">
-                                           <option value="qwen/qwen3-32b">Qwen 3 32B (Chinese)</option>
-                                           <option value="allam-2-7b">Allam 2 7B (Arabic)</option>
-                                           <option value="canopylabs/orpheus-arabic-saudi">Orpheus Arabic Saudi</option>
-                                           <option value="canopylabs/orpheus-v1-english">Orpheus v1 English</option>
-                                       </optgroup>
-                                       <optgroup label="🎙️ Audio Models (Whisper)">
-                                           <option value="whisper-large-v3">Whisper Large v3</option>
-                                           <option value="whisper-large-v3-turbo">Whisper Large v3 Turbo</option>
+                                       <optgroup label="💎 PREMIUM MODELS (Paid)">
+                                           <option value="llama-3.1-405b-reasoning">Llama 3.1 405B Reasoning - Advanced</option>
+                                           <option value="mixtral-8x22b-32768">Mixtral 8x22B 32K - High Performance</option>
                                        </optgroup>
                                    </select>
                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
@@ -951,18 +919,73 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                        onChange={(e) => setClaudeModel(e.target.value)}
                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                    >
-                                       <option value="claude-sonnet-4-6">Claude Sonnet 4.6 - Best Balance (1M tokens) [$3/$15]</option>
-                                       <option value="claude-opus-4-6">Claude Opus 4.6 - Most Intelligent (1M tokens) [$5/$25]</option>
-                                       <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 - Fastest & Affordable (200K tokens) [$1/$5]</option>
+                                       <optgroup label="⭐ RECOMMENDED MODELS">
+                                           <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet - RECOMMENDED (Best Balance) [$3/$15]</option>
+                                       </optgroup>
+                                       <optgroup label="🚀 LATEST MODELS (June 2025)">
+                                           <option value="claude-3-7-opus">Claude 3.7 Opus - LATEST (Most Intelligent) [$15/$75]</option>
+                                       </optgroup>
+                                       <optgroup label="💰 COST-EFFECTIVE">
+                                           <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku - Cheapest & Fast [$0.80/$4]</option>
+                                       </optgroup>
                                    </select>
                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
                                    </div>
                                </div>
                                <p className="text-[10px] text-slate-500">
-                                   <span className="text-orange-400 font-bold">Sonnet 4.6</span> = Recommended | 
-                                   <span className="text-purple-400 font-bold ml-1">Opus 4.6</span> = Maximum intelligence |
-                                   <span className="text-green-400 font-bold ml-1">Haiku 4.5</span> = Speed & cost-effective
+                                   <span className="text-orange-400 font-bold">Sonnet</span> = Recommended | 
+                                   <span className="text-purple-400 font-bold ml-1">Opus</span> = Maximum intelligence |
+                                   <span className="text-green-400 font-bold ml-1">Haiku</span> = Speed & cost-effective
+                               </p>
+                              </div>
+                            </>
+                         )}
+
+                          {selectedAiProvider === 'cerebras' && (
+                            <>
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Cerebras API Key</label>
+                               <div className="relative group">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors">
+                                       <Lock size={16} />
+                                   </div>
+                                   <input 
+                                       type="password" 
+                                       value={cerebrasApiKey} 
+                                       onChange={(e) => setCerebrasApiKey(e.target.value)} 
+                                       placeholder="CAS_..."
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all font-mono"
+                                   />
+                               </div>
+                               <p className="text-[10px] text-slate-500 text-right">Get your key from console.cerebras.ai</p>
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Cerebras Model</label>
+                               <div className="relative">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                       <BrainCircuit size={16} />
+                                   </div>
+                                   <select 
+                                       value={cerebrasModel} 
+                                       onChange={(e) => setCerebrasModel(e.target.value)}
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
+                                   >
+                                       <optgroup label="⚡ ULTRA-FAST MODELS (Cerebras)">
+                                           <option value="cerebras/llama-3.1-70b">Llama 3.1 70B - RECOMMENDED (11ms latency)</option>
+                                           <option value="cerebras/llama-3.1-8b">Llama 3.1 8B - Fastest & Cheapest</option>
+                                           <option value="cerebras/llama-2-70b-chat">Llama 2 70B Chat - Conversational</option>
+                                       </optgroup>
+                                   </select>
+                                   <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                   </div>
+                               </div>
+                               <p className="text-[10px] text-slate-500">
+                                   <span className="text-orange-400 font-bold">Llama 3.1 70B</span> = Best balance | 
+                                   <span className="text-blue-400 font-bold ml-1">11ms latency</span> = Ultra-fast |
+                                   <span className="text-green-400 font-bold ml-1">600 RPM</span> = High rate limit
                                </p>
                               </div>
                             </>

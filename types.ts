@@ -11,11 +11,13 @@ export interface FyersCredentials {
   googleApiKey?: string;
   groqApiKey?: string;
   claudeApiKey?: string;
+  cerebrasApiKey?: string;
   aiEnabled?: boolean;
-  aiProvider?: 'gemini' | 'groq' | 'claude';
+  aiProvider?: 'gemini' | 'groq' | 'claude' | 'cerebras';
   groqModel?: string;
   geminiModel?: string;
   claudeModel?: string;
+  cerebrasModel?: string;
   
   // AI Feature Switches by Screen/Component
   aiAutoTradeEnabled?: boolean;     // SniperScope in AutoTrade
@@ -91,11 +93,18 @@ export const GEMINI_MODELS = [
   { id: 'text-embedding-004', name: '🔢 Text Embedding 004', category: 'embedding' },
 ];
 
-// Claude Models (Updated as of April 2026)
+// Claude Models (Updated as of July 2026)
 export const CLAUDE_MODELS = [
-  { id: 'claude-opus-4-6', name: '🧠 Claude Opus 4.6 - Most intelligent (1M tokens)', contextWindow: '1M', pricing: '$5/$25' },
-  { id: 'claude-sonnet-4-6', name: '⚡ Claude Sonnet 4.6 - Best balance (1M tokens)', contextWindow: '1M', pricing: '$3/$15' },
-  { id: 'claude-haiku-4-5-20251001', name: '🚀 Claude Haiku 4.5 - Fastest & affordable (200K tokens)', contextWindow: '200K', pricing: '$1/$5' },
+  { id: 'claude-3-5-sonnet-20241022', name: '⚡ Claude 3.5 Sonnet - Best balance (200K tokens)', contextWindow: '200K', pricing: '$3/$15' },
+  { id: 'claude-3-7-opus', name: '🧠 Claude 3.7 Opus - Most intelligent (200K tokens)', contextWindow: '200K', pricing: '$15/$75' },
+  { id: 'claude-3-5-haiku-20241022', name: '🚀 Claude 3.5 Haiku - Fastest & affordable (200K tokens)', contextWindow: '200K', pricing: '$0.80/$4' },
+];
+
+// Cerebras Models (Updated as of July 2026)
+export const CEREBRAS_MODELS = [
+  { id: 'cerebras/llama-3.1-70b', name: '⚡ Llama 3.1 70B - Ultra-fast (11ms latency)', contextWindow: '8K', speed: 'FASTEST', pricing: '$0.30/$0.60' },
+  { id: 'cerebras/llama-3.1-8b', name: '🚀 Llama 3.1 8B - Lightest & fastest', contextWindow: '8K', speed: 'FASTEST', pricing: '$0.30/$0.60' },
+  { id: 'cerebras/llama-2-70b-chat', name: '💬 Llama 2 70B Chat - Conversational', contextWindow: '4K', speed: 'VERY FAST', pricing: '$0.30/$0.60' },
 ];
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
