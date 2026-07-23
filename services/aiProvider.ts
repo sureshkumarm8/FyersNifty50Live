@@ -109,13 +109,16 @@ export async function callAI(
   
   // Check which provider to use
   if (provider === 'groq' && credentials.groqApiKey) {
-    const model = credentials.groqModel || 'llama-3.3-70b-versatile';
+    const model = credentials.groqModel || 'mixtral-8x7b-32768';
     return callGroqAI(credentials.groqApiKey, systemInstruction, userContent, jsonMode, model);
   } else if (provider === 'claude' && credentials.claudeApiKey) {
-    const model = credentials.claudeModel || 'claude-sonnet-4-6';
+    const model = credentials.claudeModel || 'claude-3-5-sonnet-20241022';
     return callClaudeAI(credentials.claudeApiKey, systemInstruction, userContent, jsonMode, model);
+  } else if (provider === 'cerebras' && credentials.cerebrasApiKey) {
+    const model = credentials.cerebrasModel || 'cerebras/llama-3.1-70b';
+    return callCerebrasAI(credentials.cerebrasApiKey, systemInstruction, userContent, jsonMode, model);
   } else if (credentials.googleApiKey) {
-    const model = credentials.geminiModel || 'gemini-2.5-flash';
+    const model = credentials.geminiModel || 'gemini-2.0-flash';
     return callGeminiAI(credentials.googleApiKey, systemInstruction, userContent, jsonMode, model);
   } else {
     throw new Error('No valid AI API key configured');
@@ -127,7 +130,7 @@ async function callGeminiAI(
   systemInstruction: string,
   userContent: string,
   jsonMode: boolean = false,
-  model: string = 'gemini-2.5-flash'
+  model: string = 'gemini-2.0-flash'
 ): Promise<string> {
   console.log(`%c📡 Calling Gemini AI (${model})`, 'color: green; font-size: 11px;');
   const startTime = performance.now();
@@ -178,7 +181,7 @@ async function callGroqAI(
   systemInstruction: string,
   userContent: string,
   jsonMode: boolean = false,
-  model: string = 'llama-3.3-70b-versatile'
+  model: string = 'mixtral-8x7b-32768'
 ): Promise<string> {
   console.log(`%c📡 Calling Groq AI (${model})`, 'color: purple; font-size: 11px;');
   const startTime = performance.now();
@@ -256,7 +259,7 @@ async function callClaudeAI(
   systemInstruction: string,
   userContent: string,
   jsonMode: boolean = false,
-  model: string = 'claude-sonnet-4-6'
+  model: string = 'claude-3-5-sonnet-20241022'
 ): Promise<string> {
   console.log(`%c📡 Calling Claude AI (${model})`, 'color: orange; font-size: 11px;');
   const startTime = performance.now();
@@ -325,5 +328,96 @@ async function callClaudeAI(
       return jsonMatch[1];
     }
     return responseText;
+  }
+}
+
+async function callCerebrasAI(
+  apiKey: string,
+  systemInstruction: string,
+  userContent: string,
+  jsonMode: boolean = false,
+  model: string = 'cerebras/llama-3.1-70b'
+): Promise<string> {
+  console.log(`%c📡 Calling Cerebras AI (${model})`, 'color: #FF6B35; font-size: 11px;');
+  const startTime = performance.now();
+  
+  try {
+    const response = await fetch('https://api.cerebras.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: userContent }
+        ],
+        temperature: 0.3,
+        max_tokens: 2048,
+        top_p: 0.9
+      })
+    });
+
+    if (!response.ok) {
+      const duration = performance.now() - startTime;
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      console.error(`%c❌ Cerebras Error: ${response.status}`, 'color: red; font-weight: bold;');
+      console.error('Details:', errorData);
+      
+      apiCallTracker.logCall({
+        timestamp: Date.now(),
+        provider: 'cerebras' as any,
+        model,
+        duration,
+        success: false,
+        error: `${response.status}: ${JSON.stringify(errorData)}`
+      });
+      
+      throw new Error(`Cerebras API error (${response.status}): ${JSON.stringify(errorData)}`);
+    }
+
+    const duration = performance.now() - startTime;
+    console.log(`%c✅ Cerebras Response in ${duration.toFixed(2)}ms`, 'color: #FF6B35; font-size: 11px;');
+    
+    const data = await response.json();
+    const tokensUsed = data.usage?.total_tokens || 0;
+    const responseText = data.choices?.[0]?.message?.content || '{}';
+    
+    apiCallTracker.logCall({
+      timestamp: Date.now(),
+      provider: 'cerebras' as any,
+      model,
+      duration,
+      success: true,
+      tokensUsed
+    });
+    
+    if (!jsonMode) {
+      return responseText;
+    }
+    
+    // Extract JSON if wrapped in code blocks
+    try {
+      return JSON.stringify(JSON.parse(responseText));
+    } catch (e) {
+      const jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/) || responseText.match(/```\n?([\s\S]*?)\n?```/);
+      if (jsonMatch) {
+        return jsonMatch[1];
+      }
+      return responseText;
+    }
+  } catch (error: any) {
+    const duration = performance.now() - startTime;
+    apiCallTracker.logCall({
+      timestamp: Date.now(),
+      provider: 'cerebras' as any,
+      model,
+      duration,
+      success: false,
+      error: error.message
+    });
+    throw error;
   }
 }
