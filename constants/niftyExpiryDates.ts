@@ -83,6 +83,7 @@ export const NIFTY_EXPIRY_DATES: NiftyExpiry[] = [
   { date: "2026-08-25", type: "MONTHLY", dayOfWeek: "Tuesday", month: "August", year: 2026 },
   
   // September 2026
+  { date: "2026-09-01", type: "WEEKLY", dayOfWeek: "Tuesday", month: "September", year: 2026 },
   { date: "2026-09-08", type: "WEEKLY", dayOfWeek: "Tuesday", month: "September", year: 2026 },
   { date: "2026-09-15", type: "WEEKLY", dayOfWeek: "Tuesday", month: "September", year: 2026 },
   { date: "2026-09-22", type: "WEEKLY", dayOfWeek: "Tuesday", month: "September", year: 2026 },
