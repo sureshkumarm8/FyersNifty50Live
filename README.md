@@ -113,13 +113,21 @@ No API key needed — the model runs on your own machine.
     ```
 3.  **Start the server** (allow the browser to call it):
     ```bash
+    # When using the local dashboard (http://localhost:5173)
+    ollama serve
+
+    # When using a deployed/HTTPS dashboard, whitelist that exact origin
+    OLLAMA_ORIGINS="https://your-app.vercel.app" ollama serve
+    # ...or allow everything during testing
     OLLAMA_ORIGINS="*" ollama serve
     ```
 4.  **In the app**: Settings → *Intelligence Engine* → **AI Provider = Local Llama / Ollama**, click **Test**, pick a model and Save.
 
 Notes:
 *   Default server URL is `http://localhost:11434`. Point it at another machine on your LAN if you prefer.
+*   Ollama replies **403** to any origin it does not recognise, so `OLLAMA_ORIGINS` must match the URL in your address bar. The Settings screen shows the exact value to use.
 *   If the browser blocks the direct call, requests automatically fall back through the local proxy at `/api/ollama` (available when `npm run server` is running).
+*   Safari blocks HTTPS pages from calling `http://localhost`; use the local dashboard (`npm run dev`) or Chrome in that case.
 *   Live **Voice Mode** remains Gemini-only; chat, Quant Deck, Sniper Scope and sentiment analysis all work with local Llama.
 
 ## 📁 Project Structure

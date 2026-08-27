@@ -1044,7 +1044,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                           <span className="text-cyan-400 font-mono"> ollama serve</span>.
                                       </p>
                                       <p className="text-[10px] text-yellow-500/80">
-                                          Tip: start Ollama with <span className="font-mono">OLLAMA_ORIGINS="*"</span> so the browser is allowed to call it.
+                                          Tip: allow this page to call Ollama by starting it with{' '}
+                                          <span className="font-mono">OLLAMA_ORIGINS="{typeof window !== 'undefined' ? window.location.origin : '*'}"</span>
+                                          {' '}(or <span className="font-mono">"*"</span>).
                                       </p>
                                   </div>
                               </div>

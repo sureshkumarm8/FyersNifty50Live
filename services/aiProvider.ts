@@ -448,6 +448,29 @@ export function normalizeOllamaBaseUrl(baseUrl?: string): string {
 }
 
 /**
+ * Builds an actionable message for the exact reason the local server is unreachable.
+ */
+function buildOllamaUnreachableError(baseUrl: string, directError: any): Error {
+  const pageOrigin = typeof window !== 'undefined' ? window.location.origin : 'this app';
+  const isSecurePage = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const isPlainTarget = baseUrl.startsWith('http://');
+
+  if (isSecurePage && isPlainTarget) {
+    return new Error(
+      `Could not reach ${baseUrl} from ${pageOrigin}. Two things to check: (1) allow this origin - restart ` +
+      `Ollama with OLLAMA_ORIGINS="${pageOrigin}"; (2) Safari and some browsers block an HTTPS page from ` +
+      `calling a plain http:// address, so if it still fails run the dashboard locally ` +
+      `("npm run dev" -> http://localhost:5173).`
+    );
+  }
+
+  return new Error(
+    `Cannot reach Ollama at ${baseUrl}. Check that "ollama serve" is running, then allow this origin by ` +
+    `starting it with OLLAMA_ORIGINS="${pageOrigin}" (or "*"). Original error: ${directError?.message || directError}`
+  );
+}
+
+/**
  * Calls the local Ollama server directly. If the browser blocks the request
  * (CORS or https->http mixed content) we retry through the local dev proxy.
  */
@@ -457,14 +480,28 @@ async function ollamaFetch(baseUrl: string, path: string, init?: RequestInit): P
   } catch (directError: any) {
     try {
       const proxied = await fetch(`${OLLAMA_DEV_PROXY}${path}?target=${encodeURIComponent(baseUrl)}`, init);
-      if (proxied.status !== 404) return proxied;
+      // The SPA fallback answers unknown routes with index.html, so a 200 alone is
+      // not proof the proxy exists - only trust a genuine JSON reply.
+      const contentType = proxied.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        return proxied;
+      }
     } catch {
       // fall through to the descriptive error below
     }
+    throw buildOllamaUnreachableError(baseUrl, directError);
+  }
+}
+
+/** Parses an Ollama reply, converting non-JSON bodies into a readable error. */
+async function parseOllamaJson(response: Response, baseUrl: string): Promise<any> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
     throw new Error(
-      `Cannot reach Ollama at ${baseUrl}. Make sure "ollama serve" is running and that this origin is allowed ` +
-      `(start Ollama with OLLAMA_ORIGINS="*"). Note: a site served over HTTPS cannot call http://localhost. ` +
-      `Original error: ${directError?.message || directError}`
+      `${baseUrl} did not return JSON - it does not look like an Ollama server. ` +
+      `Received: ${text.slice(0, 80).replace(/\s+/g, ' ')}...`
     );
   }
 }
@@ -478,7 +515,7 @@ export async function listOllamaModels(baseUrl?: string): Promise<string[]> {
     throw new Error(`Ollama returned ${response.status} while listing models.`);
   }
 
-  const data = await response.json();
+  const data = await parseOllamaJson(response, url);
   return (data?.models || [])
     .map((m: any) => m?.name)
     .filter((name: any): name is string => typeof name === 'string' && name.length > 0)
@@ -562,7 +599,7 @@ async function callOllamaAI(
     const duration = performance.now() - startTime;
     console.log(`%c✅ Ollama Response in ${duration.toFixed(2)}ms`, 'color: #22d3ee; font-size: 11px;');
 
-    const data = await response.json();
+    const data = await parseOllamaJson(response, url);
     const tokensUsed = (data?.prompt_eval_count || 0) + (data?.eval_count || 0);
     const responseText = data?.message?.content || '{}';
 
