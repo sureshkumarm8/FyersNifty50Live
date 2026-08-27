@@ -474,9 +474,9 @@ function buildOllamaUnreachableError(baseUrl: string, directError: any): Error {
  * Calls the local Ollama server directly. If the browser blocks the request
  * (CORS or https->http mixed content) we retry through the local dev proxy.
  */
-async function ollamaFetch(baseUrl: string, path: string, init?: RequestInit): Promise<Response> {
+async function ollamaFetch(baseUrl: string, path: string, init?: RequestInit): Promise<{ response: Response; viaProxy: boolean }> {
   try {
-    return await fetch(`${baseUrl}${path}`, init);
+    return { response: await fetch(`${baseUrl}${path}`, init), viaProxy: false };
   } catch (directError: any) {
     try {
       const proxied = await fetch(`${OLLAMA_DEV_PROXY}${path}?target=${encodeURIComponent(baseUrl)}`, init);
@@ -484,7 +484,7 @@ async function ollamaFetch(baseUrl: string, path: string, init?: RequestInit): P
       // not proof the proxy exists - only trust a genuine JSON reply.
       const contentType = proxied.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
-        return proxied;
+        return { response: proxied, viaProxy: true };
       }
     } catch {
       // fall through to the descriptive error below
@@ -509,7 +509,7 @@ async function parseOllamaJson(response: Response, baseUrl: string): Promise<any
 /** Lists models available on the local Ollama instance (`ollama list`). */
 export async function listOllamaModels(baseUrl?: string): Promise<string[]> {
   const url = normalizeOllamaBaseUrl(baseUrl);
-  const response = await ollamaFetch(url, '/api/tags', { method: 'GET' });
+  const { response } = await ollamaFetch(url, '/api/tags', { method: 'GET' });
 
   if (!response.ok) {
     throw new Error(`Ollama returned ${response.status} while listing models.`);
@@ -556,7 +556,7 @@ async function callOllamaAI(
   const startTime = performance.now();
 
   try {
-    const response = await ollamaFetch(url, '/api/chat', {
+    const { response, viaProxy } = await ollamaFetch(url, '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -577,9 +577,28 @@ async function callOllamaAI(
 
     if (!response.ok) {
       const duration = performance.now() - startTime;
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      const rawBody = await response.text().catch(() => '');
+      let details = rawBody.slice(0, 200).replace(/\s+/g, ' ').trim();
+      let hint = '';
+
+      try {
+        details = JSON.stringify(JSON.parse(rawBody));
+        if (response.status === 404) {
+          hint = ` Model "${model}" is not installed. Run: ollama pull ${model}`;
+        }
+      } catch {
+        // A non-JSON body means the endpoint is not really Ollama's chat API.
+        hint = viaProxy
+          ? ` That reply came from this site's server, not from Ollama - it cannot see your machine. ` +
+            `Allow the browser to call Ollama directly by restarting it with ` +
+            `OLLAMA_ORIGINS="${typeof window !== 'undefined' ? window.location.origin : '*'}", ` +
+            `or run the dashboard locally with "npm run dev".`
+          : ` ${url} is not an Ollama chat endpoint. The Server URL should be just the host ` +
+            `(e.g. ${DEFAULT_OLLAMA_BASE_URL}) with no path - check it in Settings.`;
+      }
+
       console.error(`%c❌ Ollama Error: ${response.status}`, 'color: red; font-weight: bold;');
-      console.error('Details:', errorData);
+      console.error('Details:', details);
 
       apiCallTracker.logCall({
         timestamp: Date.now(),
@@ -587,13 +606,10 @@ async function callOllamaAI(
         model,
         duration,
         success: false,
-        error: `${response.status}: ${JSON.stringify(errorData)}`
+        error: `${response.status}: ${details}`
       });
 
-      const hint = response.status === 404
-        ? ` Model "${model}" is not installed. Run: ollama pull ${model}`
-        : '';
-      throw new Error(`Ollama API error (${response.status}): ${JSON.stringify(errorData)}.${hint}`);
+      throw new Error(`Ollama API error (${response.status}): ${details || '(empty response)'}.${hint}`);
     }
 
     const duration = performance.now() - startTime;
