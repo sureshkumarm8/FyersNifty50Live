@@ -13,11 +13,15 @@ export interface FyersCredentials {
   claudeApiKey?: string;
   cerebrasApiKey?: string;
   aiEnabled?: boolean;
-  aiProvider?: 'gemini' | 'groq' | 'claude' | 'cerebras';
+  aiProvider?: 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama';
   groqModel?: string;
   geminiModel?: string;
   claudeModel?: string;
   cerebrasModel?: string;
+
+  // Local Llama (Ollama) - runs on the user's own machine, no API key required
+  ollamaBaseUrl?: string;
+  ollamaModel?: string;
   
   // AI Feature Switches by Screen/Component
   aiAutoTradeEnabled?: boolean;     // SniperScope in AutoTrade
@@ -106,6 +110,20 @@ export const CEREBRAS_MODELS = [
   { id: 'cerebras/llama-3.1-8b', name: '🚀 Llama 3.1 8B - Lightest & fastest', contextWindow: '8K', speed: 'FASTEST', pricing: '$0.30/$0.60' },
   { id: 'cerebras/llama-2-70b-chat', name: '💬 Llama 2 70B Chat - Conversational', contextWindow: '4K', speed: 'VERY FAST', pricing: '$0.30/$0.60' },
 ];
+
+// Local Llama models served by Ollama (http://localhost:11434)
+// These are only suggestions - any model pulled via `ollama pull <name>` works.
+export const OLLAMA_MODELS = [
+  { id: 'llama3.2:3b', name: '🦙 Llama 3.2 3B - Fastest, low RAM (~2GB)', size: '2GB', speed: 'FASTEST' },
+  { id: 'llama3.1:8b', name: '🦙 Llama 3.1 8B - RECOMMENDED balance (~4.7GB)', size: '4.7GB', speed: 'FAST' },
+  { id: 'llama3.3:70b', name: '🦙 Llama 3.3 70B - Highest quality (~40GB)', size: '40GB', speed: 'SLOW' },
+  { id: 'qwen2.5:7b', name: '🔷 Qwen 2.5 7B - Strong JSON/reasoning (~4.7GB)', size: '4.7GB', speed: 'FAST' },
+  { id: 'mistral:7b', name: '🌬️ Mistral 7B - Lightweight generalist (~4.1GB)', size: '4.1GB', speed: 'FAST' },
+  { id: 'gemma2:9b', name: '💎 Gemma 2 9B - Google open model (~5.4GB)', size: '5.4GB', speed: 'MEDIUM' },
+];
+
+export const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
+export const DEFAULT_OLLAMA_MODEL = 'llama3.1:8b';
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
 export interface FyersQuote {

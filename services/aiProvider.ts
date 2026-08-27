@@ -1,10 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
-import { FyersCredentials } from "../types";
+import { FyersCredentials, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL } from "../types";
+
+export type AIProviderId = 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama';
 
 // API Call Tracker
 interface APICallLog {
   timestamp: number;
-  provider: 'gemini' | 'groq' | 'claude';
+  provider: AIProviderId;
   model?: string;
   duration: number;
   success: boolean;
@@ -56,6 +58,8 @@ class APICallTracker {
     const geminiCalls = this.calls.filter(c => c.provider === 'gemini').length;
     const groqCalls = this.calls.filter(c => c.provider === 'groq').length;
     const claudeCalls = this.calls.filter(c => c.provider === 'claude').length;
+    const cerebrasCalls = this.calls.filter(c => c.provider === 'cerebras').length;
+    const ollamaCalls = this.calls.filter(c => c.provider === 'ollama').length;
 
     return {
       lastMinute: lastMinute.length,
@@ -68,6 +72,8 @@ class APICallTracker {
       geminiCalls,
       groqCalls,
       claudeCalls,
+      cerebrasCalls,
+      ollamaCalls,
       recentCalls: this.calls.slice(-10).reverse()
     };
   }
@@ -95,6 +101,8 @@ export interface APIStats {
   geminiCalls: number;
   groqCalls: number;
   claudeCalls: number;
+  cerebrasCalls: number;
+  ollamaCalls: number;
   recentCalls: APICallLog[];
 }
 
@@ -108,7 +116,10 @@ export async function callAI(
   const jsonMode = options?.jsonMode ?? false;
   
   // Check which provider to use
-  if (provider === 'groq' && credentials.groqApiKey) {
+  if (provider === 'ollama') {
+    const model = credentials.ollamaModel || DEFAULT_OLLAMA_MODEL;
+    return callOllamaAI(credentials.ollamaBaseUrl, systemInstruction, userContent, jsonMode, model);
+  } else if (provider === 'groq' && credentials.groqApiKey) {
     const model = credentials.groqModel || 'mixtral-8x7b-32768';
     return callGroqAI(credentials.groqApiKey, systemInstruction, userContent, jsonMode, model);
   } else if (provider === 'claude' && credentials.claudeApiKey) {
@@ -368,7 +379,7 @@ async function callCerebrasAI(
       
       apiCallTracker.logCall({
         timestamp: Date.now(),
-        provider: 'cerebras' as any,
+        provider: 'cerebras',
         model,
         duration,
         success: false,
@@ -387,7 +398,7 @@ async function callCerebrasAI(
     
     apiCallTracker.logCall({
       timestamp: Date.now(),
-      provider: 'cerebras' as any,
+      provider: 'cerebras',
       model,
       duration,
       success: true,
@@ -412,12 +423,186 @@ async function callCerebrasAI(
     const duration = performance.now() - startTime;
     apiCallTracker.logCall({
       timestamp: Date.now(),
-      provider: 'cerebras' as any,
+      provider: 'cerebras',
       model,
       duration,
       success: false,
       error: error.message
     });
     throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Local Llama (Ollama) — https://ollama.com
+// Runs entirely on the user's machine. No API key, no rate limits, no cost.
+// ---------------------------------------------------------------------------
+
+const OLLAMA_DEV_PROXY = '/api/ollama';
+
+/** Normalises user input like "localhost:11434/" or "127.0.0.1:11434/api" to a clean origin. */
+export function normalizeOllamaBaseUrl(baseUrl?: string): string {
+  const raw = (baseUrl || '').trim() || DEFAULT_OLLAMA_BASE_URL;
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+  return withScheme.replace(/\/+$/, '').replace(/\/(api|v1)$/i, '');
+}
+
+/**
+ * Calls the local Ollama server directly. If the browser blocks the request
+ * (CORS or https->http mixed content) we retry through the local dev proxy.
+ */
+async function ollamaFetch(baseUrl: string, path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${baseUrl}${path}`, init);
+  } catch (directError: any) {
+    try {
+      const proxied = await fetch(`${OLLAMA_DEV_PROXY}${path}?target=${encodeURIComponent(baseUrl)}`, init);
+      if (proxied.status !== 404) return proxied;
+    } catch {
+      // fall through to the descriptive error below
+    }
+    throw new Error(
+      `Cannot reach Ollama at ${baseUrl}. Make sure "ollama serve" is running and that this origin is allowed ` +
+      `(start Ollama with OLLAMA_ORIGINS="*"). Note: a site served over HTTPS cannot call http://localhost. ` +
+      `Original error: ${directError?.message || directError}`
+    );
+  }
+}
+
+/** Lists models available on the local Ollama instance (`ollama list`). */
+export async function listOllamaModels(baseUrl?: string): Promise<string[]> {
+  const url = normalizeOllamaBaseUrl(baseUrl);
+  const response = await ollamaFetch(url, '/api/tags', { method: 'GET' });
+
+  if (!response.ok) {
+    throw new Error(`Ollama returned ${response.status} while listing models.`);
+  }
+
+  const data = await response.json();
+  return (data?.models || [])
+    .map((m: any) => m?.name)
+    .filter((name: any): name is string => typeof name === 'string' && name.length > 0)
+    .sort();
+}
+
+/** Verifies the local Ollama server is reachable and returns its installed models. */
+export async function testOllamaConnection(baseUrl?: string): Promise<{ ok: boolean; models: string[]; error?: string }> {
+  try {
+    const models = await listOllamaModels(baseUrl);
+    return { ok: true, models };
+  } catch (error: any) {
+    return { ok: false, models: [], error: error?.message || 'Unknown error' };
+  }
+}
+
+function extractJsonText(responseText: string): string {
+  try {
+    return JSON.stringify(JSON.parse(responseText));
+  } catch (e) {
+    const jsonMatch = responseText.match(/```json\n?([\s\S]*?)\n?```/) || responseText.match(/```\n?([\s\S]*?)\n?```/);
+    if (jsonMatch) {
+      return jsonMatch[1];
+    }
+    return responseText;
+  }
+}
+
+async function callOllamaAI(
+  baseUrl: string | undefined,
+  systemInstruction: string,
+  userContent: string,
+  jsonMode: boolean = false,
+  model: string = DEFAULT_OLLAMA_MODEL
+): Promise<string> {
+  const url = normalizeOllamaBaseUrl(baseUrl);
+  console.log(`%c📡 Calling Local Llama via Ollama (${model} @ ${url})`, 'color: #22d3ee; font-size: 11px;');
+  const startTime = performance.now();
+
+  try {
+    const response = await ollamaFetch(url, '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: userContent }
+        ],
+        stream: false,
+        ...(jsonMode ? { format: 'json' } : {}),
+        options: {
+          temperature: 0.3,
+          top_p: 0.9,
+          num_predict: 2048
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const duration = performance.now() - startTime;
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      console.error(`%c❌ Ollama Error: ${response.status}`, 'color: red; font-weight: bold;');
+      console.error('Details:', errorData);
+
+      apiCallTracker.logCall({
+        timestamp: Date.now(),
+        provider: 'ollama',
+        model,
+        duration,
+        success: false,
+        error: `${response.status}: ${JSON.stringify(errorData)}`
+      });
+
+      const hint = response.status === 404
+        ? ` Model "${model}" is not installed. Run: ollama pull ${model}`
+        : '';
+      throw new Error(`Ollama API error (${response.status}): ${JSON.stringify(errorData)}.${hint}`);
+    }
+
+    const duration = performance.now() - startTime;
+    console.log(`%c✅ Ollama Response in ${duration.toFixed(2)}ms`, 'color: #22d3ee; font-size: 11px;');
+
+    const data = await response.json();
+    const tokensUsed = (data?.prompt_eval_count || 0) + (data?.eval_count || 0);
+    const responseText = data?.message?.content || '{}';
+
+    apiCallTracker.logCall({
+      timestamp: Date.now(),
+      provider: 'ollama',
+      model,
+      duration,
+      success: true,
+      tokensUsed
+    });
+
+    return jsonMode ? extractJsonText(responseText) : responseText;
+  } catch (error: any) {
+    const duration = performance.now() - startTime;
+    // Connection failures never reach the logger above, so record them here.
+    if (!/Ollama API error/.test(error?.message || '')) {
+      apiCallTracker.logCall({
+        timestamp: Date.now(),
+        provider: 'ollama',
+        model,
+        duration,
+        success: false,
+        error: error?.message
+      });
+    }
+    throw error;
+  }
+}
+
+/**
+ * True when the selected provider has everything it needs to run.
+ * Ollama needs no key because it runs locally.
+ */
+export function isAIConfigured(credentials: FyersCredentials): boolean {
+  switch (credentials.aiProvider || 'gemini') {
+    case 'ollama': return true;
+    case 'groq': return !!credentials.groqApiKey;
+    case 'claude': return !!credentials.claudeApiKey;
+    case 'cerebras': return !!credentials.cerebrasApiKey;
+    default: return !!credentials.googleApiKey;
   }
 }

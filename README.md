@@ -25,6 +25,12 @@ A high-performance real-time stock tracking and analysis dashboard for **Nifty50
 *   **Voice Mode**: Real-time two-way voice conversation with your market data using Gemini Live API.
 *   **Markdown Reports**: Chat responses are formatted with bold metrics, lists, and clear headers.
 
+### 🦙 Local Llama (Ollama) — Offline & Private
+*   **Zero Cost, Zero Limits**: Runs models on your own machine, so there are no API keys, quotas or per-token charges.
+*   **Full Privacy**: Your market data and trading protocol never leave your computer.
+*   **Any Model**: Works with any model pulled via `ollama pull` (Llama 3.1/3.2/3.3, Qwen, Mistral, Gemma, ...).
+*   **Auto-Discovery**: Settings detects your installed models and lets you pick one with a single click.
+
 ### 📊 Live Equity Dashboard
 *   **Real-time Quotes**: Fetches live data for all Nifty50 stocks instantly.
 *   **Session Metrics**: Tracks **Day % Change** relative to the session start.
@@ -93,6 +99,28 @@ To run this application, you need to start **both** the backend proxy server and
 3.  **App Settings**:
     *   Click the **Settings (Gear Icon)** in the dashboard.
     *   Enter credentials and save.
+
+### 🦙 Using a Local Llama Model (Ollama)
+
+No API key needed — the model runs on your own machine.
+
+1.  **Install Ollama** from [ollama.com](https://ollama.com).
+2.  **Pull a model**:
+    ```bash
+    ollama pull llama3.1:8b        # recommended (~4.7GB)
+    # ollama pull llama3.2:3b      # fastest / low RAM
+    # ollama pull llama3.3:70b     # highest quality
+    ```
+3.  **Start the server** (allow the browser to call it):
+    ```bash
+    OLLAMA_ORIGINS="*" ollama serve
+    ```
+4.  **In the app**: Settings → *Intelligence Engine* → **AI Provider = Local Llama / Ollama**, click **Test**, pick a model and Save.
+
+Notes:
+*   Default server URL is `http://localhost:11434`. Point it at another machine on your LAN if you prefer.
+*   If the browser blocks the direct call, requests automatically fall back through the local proxy at `/api/ollama` (available when `npm run server` is running).
+*   Live **Voice Mode** remains Gemini-only; chat, Quant Deck, Sniper Scope and sentiment analysis all work with local Llama.
 
 ## 📁 Project Structure
 

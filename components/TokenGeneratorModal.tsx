@@ -210,6 +210,8 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
         geminiModel: currentCreds?.geminiModel || "gemini-2.0-flash",
         claudeModel: currentCreds?.claudeModel || "claude-3-5-sonnet-20241022",
         cerebrasModel: currentCreds?.cerebrasModel || "cerebras/llama-3.1-70b",
+        ollamaBaseUrl: currentCreds?.ollamaBaseUrl || "http://localhost:11434",
+        ollamaModel: currentCreds?.ollamaModel || "llama3.1:8b",
         dataProvider: "paytm",
         liveOrdersEnabled: currentCreds?.liveOrdersEnabled || false
       },

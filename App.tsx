@@ -97,6 +97,8 @@ const App: React.FC = () => {
     geminiCalls: 0,
     groqCalls: 0,
     claudeCalls: 0,
+    cerebrasCalls: 0,
+    ollamaCalls: 0,
     recentCalls: []
   });
 

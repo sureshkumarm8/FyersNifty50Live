@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FyersCredentials, MarketSnapshot, EnrichedFyersQuote, TradingSystemProtocol, SniperAnalysis, PivotPoints } from '../types';
-import { callAI } from '../services/aiProvider';
+import { callAI, isAIConfigured } from '../services/aiProvider';
 import { Crosshair, ShieldAlert, CheckCircle, XCircle, Search, Target, Zap, Activity, Play, Lock, AlertTriangle, Volume2, VolumeX, History, Clock, ChevronDown, StopCircle, PauseCircle, Trash2, Eye } from 'lucide-react';
 
 interface SniperScopeProps {
@@ -159,10 +159,8 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
   };
 
   const runSniperScan = async () => {
-    const apiKey = credentials.aiProvider === 'groq' ? credentials.groqApiKey : credentials.googleApiKey;
-    
-    if (!apiKey || aiEnabled === false) {
-        setError(!apiKey ? "API Key missing. Please add it in Settings." : "AI Features Disabled");
+    if (!isAIConfigured(credentials) || aiEnabled === false) {
+        setError(!isAIConfigured(credentials) ? "API Key missing. Please add it in Settings." : "AI Features Disabled");
         setIsLooping(false);
         return;
     }

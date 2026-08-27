@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FyersCredentials, TradingSystemProtocol } from '../types';
+import { FyersCredentials, TradingSystemProtocol, OLLAMA_MODELS, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL } from '../types';
 import { 
   Save, ShieldCheck, Upload, Download, Trash2, 
   ArrowLeft, ToggleLeft, ToggleRight, 
@@ -8,11 +8,12 @@ import {
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
   ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair,
-  Volume2, Layers, Key, Lock, Cpu, TrendingDown, Zap as ZapIcon
+  Volume2, Layers, Key, Lock, Cpu, TrendingDown, Zap as ZapIcon,
+  Server, RefreshCw, HardDrive
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
-import { apiCallTracker, APIStats } from '../services/aiProvider';
+import { apiCallTracker, APIStats, testOllamaConnection } from '../services/aiProvider';
 import { TokenGeneratorModal } from './TokenGeneratorModal';
 
 interface SettingsScreenProps {
@@ -89,12 +90,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
   const [claudeApiKey, setClaudeApiKey] = useState(currentCreds.claudeApiKey || '');
-  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq' | 'claude'>(currentCreds.aiProvider || 'gemini');
+  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama'>(currentCreds.aiProvider || 'gemini');
   const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'mixtral-8x7b-32768');
   const [geminiModel, setGeminiModel] = useState(currentCreds.geminiModel || 'gemini-2.0-flash');
   const [claudeModel, setClaudeModel] = useState(currentCreds.claudeModel || 'claude-3-5-sonnet-20241022');
   const [cerebrasApiKey, setCerebrasApiKey] = useState(currentCreds.cerebrasApiKey || '');
   const [cerebrasModel, setCerebrasModel] = useState(currentCreds.cerebrasModel || 'cerebras/llama-3.1-70b');
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState(currentCreds.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL);
+  const [ollamaModel, setOllamaModel] = useState(currentCreds.ollamaModel || DEFAULT_OLLAMA_MODEL);
+  const [ollamaInstalledModels, setOllamaInstalledModels] = useState<string[]>([]);
+  const [ollamaStatus, setOllamaStatus] = useState<{type: 'idle' | 'checking' | 'success' | 'error', text: string}>({ type: 'idle', text: '' });
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
@@ -158,6 +163,38 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     };
   }, []);
 
+  const handleTestOllama = async () => {
+    setOllamaStatus({ type: 'checking', text: 'Connecting to Ollama...' });
+    const result = await testOllamaConnection(ollamaBaseUrl);
+
+    if (!result.ok) {
+      setOllamaInstalledModels([]);
+      setOllamaStatus({ type: 'error', text: result.error || 'Could not reach Ollama.' });
+      return;
+    }
+
+    setOllamaInstalledModels(result.models);
+
+    if (result.models.length === 0) {
+      setOllamaStatus({ type: 'error', text: 'Connected, but no models installed. Run: ollama pull llama3.1:8b' });
+      return;
+    }
+
+    // Auto-select an installed model if the current selection is not available locally
+    if (!result.models.includes(ollamaModel)) {
+      setOllamaModel(result.models[0]);
+    }
+    setOllamaStatus({ type: 'success', text: `Connected. ${result.models.length} model(s) installed.` });
+  };
+
+  // Probe the local Ollama server whenever the user switches to it
+  useEffect(() => {
+    if (selectedAiProvider === 'ollama' && ollamaStatus.type === 'idle') {
+      handleTestOllama();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAiProvider]);
+
   const handleSave = () => {
     console.log('💾 [SettingsScreen] Saving credentials with refreshInterval:', refreshInterval);
     onSave({ 
@@ -171,6 +208,8 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       geminiModel,
       claudeModel,
       cerebrasModel,
+      ollamaBaseUrl,
+      ollamaModel,
       bypassMarketHours, 
       refreshInterval, 
       aiEnabled, 
@@ -764,13 +803,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 </div>
                                 <select 
                                     value={selectedAiProvider} 
-                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq' | 'claude' | 'cerebras')}
+                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama')}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                 >
                                     <option value="gemini">Gemini AI (Free: 1M tokens/day)</option>
                                     <option value="groq">Groq AI (Free: 10K tokens/min)</option>
                                     <option value="claude">Claude AI (Paid: $0.80-$15/1M)</option>
                                     <option value="cerebras">Cerebras AI (Fast: 600 req/min)</option>
+                                    <option value="ollama">Local Llama / Ollama (Offline: Free & Private)</option>
                                 </select>
                                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -986,6 +1026,100 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                    <span className="text-orange-400 font-bold">Llama 3.1 70B</span> = Best balance | 
                                    <span className="text-blue-400 font-bold ml-1">11ms latency</span> = Ultra-fast |
                                    <span className="text-green-400 font-bold ml-1">600 RPM</span> = High rate limit
+                               </p>
+                              </div>
+                            </>
+                         )}
+
+                          {selectedAiProvider === 'ollama' && (
+                            <>
+                              <div className="flex items-start gap-3 p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-xl">
+                                  <div className="p-2 bg-cyan-500/10 rounded-lg text-cyan-400 shrink-0"><HardDrive size={18}/></div>
+                                  <div className="space-y-1">
+                                      <h3 className="text-sm font-bold text-white">Runs 100% On Your Machine</h3>
+                                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                                          No API key, no cost, no rate limits and your market data never leaves this computer.
+                                          Install <span className="text-cyan-400 font-mono">ollama.com</span>, then run
+                                          <span className="text-cyan-400 font-mono"> ollama pull {DEFAULT_OLLAMA_MODEL}</span> and
+                                          <span className="text-cyan-400 font-mono"> ollama serve</span>.
+                                      </p>
+                                      <p className="text-[10px] text-yellow-500/80">
+                                          Tip: start Ollama with <span className="font-mono">OLLAMA_ORIGINS="*"</span> so the browser is allowed to call it.
+                                      </p>
+                                  </div>
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Ollama Server URL</label>
+                               <div className="flex gap-2">
+                                   <div className="relative group flex-1">
+                                       <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-cyan-400 transition-colors">
+                                           <Server size={16} />
+                                       </div>
+                                       <input 
+                                           type="text" 
+                                           value={ollamaBaseUrl} 
+                                           onChange={(e) => { setOllamaBaseUrl(e.target.value); setOllamaStatus({ type: 'idle', text: '' }); }} 
+                                           placeholder={DEFAULT_OLLAMA_BASE_URL}
+                                           className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent outline-none transition-all font-mono"
+                                       />
+                                   </div>
+                                   <button 
+                                       onClick={handleTestOllama}
+                                       disabled={ollamaStatus.type === 'checking'}
+                                       className="px-4 py-3 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0"
+                                   >
+                                       <RefreshCw size={14} className={ollamaStatus.type === 'checking' ? 'animate-spin' : ''} />
+                                       <span className="hidden sm:inline">Test</span>
+                                   </button>
+                               </div>
+                               {ollamaStatus.text && (
+                                   <p className={`text-[10px] flex items-start gap-1.5 ${ollamaStatus.type === 'success' ? 'text-emerald-400' : ollamaStatus.type === 'error' ? 'text-red-400' : 'text-slate-500'}`}>
+                                       {ollamaStatus.type === 'success' ? <CheckCircle size={12} className="mt-0.5 shrink-0"/> : ollamaStatus.type === 'error' ? <AlertTriangle size={12} className="mt-0.5 shrink-0"/> : null}
+                                       <span>{ollamaStatus.text}</span>
+                                   </p>
+                               )}
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Local Model</label>
+                               <div className="relative group">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-cyan-400 transition-colors">
+                                       <BrainCircuit size={16} />
+                                   </div>
+                                   <input 
+                                       type="text"
+                                       list="ollama-model-options"
+                                       value={ollamaModel} 
+                                       onChange={(e) => setOllamaModel(e.target.value)}
+                                       placeholder={DEFAULT_OLLAMA_MODEL}
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent outline-none transition-all font-mono"
+                                   />
+                                   <datalist id="ollama-model-options">
+                                       {ollamaInstalledModels.map(m => <option key={m} value={m}>Installed</option>)}
+                                       {OLLAMA_MODELS.filter(m => !ollamaInstalledModels.includes(m.id)).map(m => (
+                                           <option key={m.id} value={m.id}>{m.name}</option>
+                                       ))}
+                                   </datalist>
+                               </div>
+                               {ollamaInstalledModels.length > 0 && (
+                                   <div className="flex flex-wrap gap-1.5 pt-1">
+                                       {ollamaInstalledModels.map(m => (
+                                           <button 
+                                               key={m}
+                                               onClick={() => setOllamaModel(m)}
+                                               className={`px-2 py-1 rounded text-[10px] font-mono font-bold transition-all border ${ollamaModel === m ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 text-slate-400 border-white/5 hover:bg-slate-700/50'}`}
+                                           >
+                                               {m}
+                                           </button>
+                                       ))}
+                                   </div>
+                               )}
+                               <p className="text-[10px] text-slate-500">
+                                   <span className="text-cyan-400 font-bold">llama3.1:8b</span> = Recommended |
+                                   <span className="text-green-400 font-bold ml-1">llama3.2:3b</span> = Fastest / low RAM |
+                                   <span className="text-purple-400 font-bold ml-1">llama3.3:70b</span> = Highest quality |
+                                   <span className="text-yellow-400 font-bold ml-1">Any pulled model</span> works
                                </p>
                               </div>
                             </>
@@ -1570,7 +1704,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                         <BarChart4 size={20} className="text-purple-400" />
                         Provider Breakdown
                     </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
                         <div>
                             <div className="text-sm text-slate-400 mb-2">Total Calls</div>
                             <div className="text-3xl font-bold text-white">{apiStats.total}</div>
@@ -1594,6 +1728,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             <div className="text-3xl font-bold text-orange-400">{apiStats.claudeCalls}</div>
                             <div className="text-xs text-slate-500 mt-1">
                                 {apiStats.total > 0 ? ((apiStats.claudeCalls / apiStats.total) * 100).toFixed(1) : 0}%
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Cerebras Calls</div>
+                            <div className="text-3xl font-bold text-amber-400">{apiStats.cerebrasCalls}</div>
+                            <div className="text-xs text-slate-500 mt-1">
+                                {apiStats.total > 0 ? ((apiStats.cerebrasCalls / apiStats.total) * 100).toFixed(1) : 0}%
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Local Llama Calls</div>
+                            <div className="text-3xl font-bold text-cyan-400">{apiStats.ollamaCalls}</div>
+                            <div className="text-xs text-slate-500 mt-1">
+                                {apiStats.total > 0 ? ((apiStats.ollamaCalls / apiStats.total) * 100).toFixed(1) : 0}% · Free
                             </div>
                         </div>
                     </div>

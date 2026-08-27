@@ -67,7 +67,7 @@ function saveTokensToFile(broker, tokens) {
   }
 }
 
-const PORT = 5001; 
+const PORT = process.env.PORT ? Number(process.env.PORT) : 5001; 
 const LOCAL_MODE = process.env.LOCAL_MODE === 'true' || process.env.NODE_ENV === 'development';
 
 // In-memory storage for local testing
@@ -78,8 +78,16 @@ const localStore = {
   latestSnapshot: null
 };
 
-const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
+const server = http.createServer(async (req, res) => {  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
 
@@ -103,12 +111,45 @@ const server = http.createServer(async (req, res) => {
                           reqUrl.pathname.startsWith('/api/clear-history') ||
                           reqUrl.pathname.startsWith('/api/paytm-generate') ||
                           reqUrl.pathname.startsWith('/api/paytm-market-data') ||
-                          reqUrl.pathname.startsWith('/api/save-paytm-token-direct');
+                          reqUrl.pathname.startsWith('/api/save-paytm-token-direct') ||
+                          reqUrl.pathname.startsWith('/api/ollama');
 
   if (!LOCAL_MODE && !isLocalEndpoint && !authHeader) {
      res.writeHead(401, { 'Content-Type': 'application/json' });
      res.end(JSON.stringify({ error: 'Missing Authorization header' }));
      return;
+  }
+
+  // --- LOCAL LLAMA (OLLAMA) PROXY ---
+  // Browsers block direct calls to http://localhost:11434 unless Ollama is started
+  // with OLLAMA_ORIGINS. This same-origin proxy is the fallback used by aiProvider.ts.
+  if (reqUrl.pathname.startsWith('/api/ollama')) {
+    const target = reqUrl.searchParams.get('target') || 'http://localhost:11434';
+    const upstreamPath = reqUrl.pathname.replace('/api/ollama', '') || '/api/tags';
+    const targetUrl = `${target.replace(/\/+$/, '')}${upstreamPath}`;
+
+    try {
+      const body = req.method === 'POST' ? await readRequestBody(req) : undefined;
+      console.log(`[Ollama Proxy] ${req.method} ${targetUrl}`);
+
+      const upstream = await fetch(targetUrl, {
+        method: req.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body || undefined
+      });
+
+      const text = await upstream.text();
+      res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
+      res.end(text);
+    } catch (error) {
+      console.error('[Ollama Proxy] Error:', error.message);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: `Cannot reach Ollama at ${target}. Is "ollama serve" running?`,
+        details: error.message
+      }));
+    }
+    return;
   }
 
   // --- LOCAL TESTING ENDPOINTS ---
