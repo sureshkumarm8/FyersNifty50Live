@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FyersCredentials, TradingSystemProtocol, OLLAMA_MODELS, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL } from '../types';
+import { FyersCredentials, TradingSystemProtocol, OLLAMA_MODELS, OLLAMA_VISION_MODELS, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_VISION_MODEL } from '../types';
 import { 
   Save, ShieldCheck, Upload, Download, Trash2, 
   ArrowLeft, ToggleLeft, ToggleRight, 
@@ -9,7 +9,7 @@ import {
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
   ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair,
   Volume2, Layers, Key, Lock, Cpu, TrendingDown, Zap as ZapIcon,
-  Server, RefreshCw, HardDrive
+  Server, RefreshCw, HardDrive, Eye
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
@@ -98,7 +98,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [cerebrasModel, setCerebrasModel] = useState(currentCreds.cerebrasModel || 'cerebras/llama-3.1-70b');
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState(currentCreds.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL);
   const [ollamaModel, setOllamaModel] = useState(currentCreds.ollamaModel || DEFAULT_OLLAMA_MODEL);
+  const [ollamaVisionModel, setOllamaVisionModel] = useState(currentCreds.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL);
   const [ollamaInstalledModels, setOllamaInstalledModels] = useState<string[]>([]);
+  const [ollamaInstalledVisionModels, setOllamaInstalledVisionModels] = useState<string[]>([]);
   const [ollamaStatus, setOllamaStatus] = useState<{type: 'idle' | 'checking' | 'success' | 'error', text: string}>({ type: 'idle', text: '' });
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
@@ -169,11 +171,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
     if (!result.ok) {
       setOllamaInstalledModels([]);
+      setOllamaInstalledVisionModels([]);
       setOllamaStatus({ type: 'error', text: result.error || 'Could not reach Ollama.' });
       return;
     }
 
     setOllamaInstalledModels(result.models);
+    setOllamaInstalledVisionModels(result.visionModels);
 
     if (result.models.length === 0) {
       setOllamaStatus({ type: 'error', text: 'Connected, but no models installed. Run: ollama pull llama3.1:8b' });
@@ -184,7 +188,19 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     if (!result.models.includes(ollamaModel)) {
       setOllamaModel(result.models[0]);
     }
-    setOllamaStatus({ type: 'success', text: `Connected. ${result.models.length} model(s) installed.` });
+
+    // Same for the vision model, but only ever pick a multimodal one
+    if (!result.models.includes(ollamaVisionModel) && result.visionModels.length > 0) {
+      setOllamaVisionModel(result.visionModels[0]);
+    }
+
+    setOllamaStatus({
+      type: 'success',
+      text: `Connected. ${result.models.length} model(s) installed.` +
+        (result.visionModels.length > 0
+          ? ` ${result.visionModels.length} vision-capable.`
+          : ` No vision model found - run: ollama pull ${DEFAULT_OLLAMA_VISION_MODEL} for pre-market chart analysis.`)
+    });
   };
 
   // Probe the local Ollama server whenever the user switches to it
@@ -210,6 +226,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       cerebrasModel,
       ollamaBaseUrl,
       ollamaModel,
+      ollamaVisionModel,
       bypassMarketHours, 
       refreshInterval, 
       aiEnabled, 
@@ -1122,6 +1139,47 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                    <span className="text-green-400 font-bold ml-1">llama3.2:3b</span> = Fastest / low RAM |
                                    <span className="text-purple-400 font-bold ml-1">llama3.3:70b</span> = Highest quality |
                                    <span className="text-yellow-400 font-bold ml-1">Any pulled model</span> works
+                               </p>
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Vision Model (Pre-Market Charts)</label>
+                               <div className="relative group">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-cyan-400 transition-colors">
+                                       <Eye size={16} />
+                                   </div>
+                                   <input 
+                                       type="text"
+                                       list="ollama-vision-model-options"
+                                       value={ollamaVisionModel} 
+                                       onChange={(e) => setOllamaVisionModel(e.target.value)}
+                                       placeholder={DEFAULT_OLLAMA_VISION_MODEL}
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent outline-none transition-all font-mono"
+                                   />
+                                   <datalist id="ollama-vision-model-options">
+                                       {ollamaInstalledVisionModels.map(m => <option key={m} value={m}>Installed · vision</option>)}
+                                       {OLLAMA_VISION_MODELS.filter(m => !ollamaInstalledVisionModels.includes(m.id)).map(m => (
+                                           <option key={m.id} value={m.id}>{m.name}</option>
+                                       ))}
+                                   </datalist>
+                               </div>
+                               {ollamaInstalledVisionModels.length > 0 && (
+                                   <div className="flex flex-wrap gap-1.5 pt-1">
+                                       {ollamaInstalledVisionModels.map(m => (
+                                           <button 
+                                               key={m}
+                                               onClick={() => setOllamaVisionModel(m)}
+                                               className={`px-2 py-1 rounded text-[10px] font-mono font-bold transition-all border ${ollamaVisionModel === m ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 text-slate-400 border-white/5 hover:bg-slate-700/50'}`}
+                                           >
+                                               {m}
+                                           </button>
+                                       ))}
+                                   </div>
+                               )}
+                               <p className="text-[10px] text-slate-500">
+                                   Chart screenshots need a multimodal model - text models ignore images. Run
+                                   <span className="text-cyan-400 font-mono"> ollama pull {DEFAULT_OLLAMA_VISION_MODEL}</span> (or
+                                   <span className="text-cyan-400 font-mono"> llava:7b</span> for low RAM).
                                </p>
                               </div>
                             </>

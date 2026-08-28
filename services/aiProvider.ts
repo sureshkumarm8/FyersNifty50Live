@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { FyersCredentials, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL } from "../types";
+import { FyersCredentials, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_VISION_MODEL } from "../types";
 
 export type AIProviderId = 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama';
 
@@ -522,13 +522,45 @@ export async function listOllamaModels(baseUrl?: string): Promise<string[]> {
     .sort();
 }
 
+/** Name patterns of well-known multimodal models, used to complement reported capabilities. */
+const VISION_MODEL_NAME_PATTERN = /vision|llava|-vl|vl:|minicpm-v|moondream|bakllava|pixtral|gemma3|gemma4/i;
+
+/**
+ * Lists only the multimodal models installed locally.
+ * Newer Ollama builds report a `vision` capability per model, but the list is not
+ * always complete, so well-known multimodal model names are accepted too.
+ */
+export async function listOllamaVisionModels(baseUrl?: string): Promise<string[]> {
+  const url = normalizeOllamaBaseUrl(baseUrl);
+  const { response } = await ollamaFetch(url, '/api/tags', { method: 'GET' });
+
+  if (!response.ok) {
+    throw new Error(`Ollama returned ${response.status} while listing models.`);
+  }
+
+  const data = await parseOllamaJson(response, url);
+  return (data?.models || [])
+    .filter((m: any) => {
+      const capabilities = Array.isArray(m?.capabilities) ? m.capabilities : [];
+      return capabilities.includes('vision') || VISION_MODEL_NAME_PATTERN.test(m?.name || '');
+    })
+    .map((m: any) => m?.name)
+    .filter((name: any): name is string => typeof name === 'string' && name.length > 0)
+    .sort();
+}
+
 /** Verifies the local Ollama server is reachable and returns its installed models. */
-export async function testOllamaConnection(baseUrl?: string): Promise<{ ok: boolean; models: string[]; error?: string }> {
+export async function testOllamaConnection(
+  baseUrl?: string
+): Promise<{ ok: boolean; models: string[]; visionModels: string[]; error?: string }> {
   try {
-    const models = await listOllamaModels(baseUrl);
-    return { ok: true, models };
+    const [models, visionModels] = await Promise.all([
+      listOllamaModels(baseUrl),
+      listOllamaVisionModels(baseUrl).catch(() => [] as string[])
+    ]);
+    return { ok: true, models, visionModels };
   } catch (error: any) {
-    return { ok: false, models: [], error: error?.message || 'Unknown error' };
+    return { ok: false, models: [], visionModels: [], error: error?.message || 'Unknown error' };
   }
 }
 
@@ -640,6 +672,252 @@ async function callOllamaAI(
         duration,
         success: false,
         error: error?.message
+      });
+    }
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Vision (image) support - used by the Pre-Market chart analyser.
+// Only Gemini (cloud) and Ollama (local) are wired up; the remaining providers
+// fall back to whichever of those two is configured.
+// ---------------------------------------------------------------------------
+
+export type VisionProviderId = 'gemini' | 'ollama';
+
+/** Strips a `data:image/png;base64,` prefix so only raw base64 is sent. */
+function toBase64Payload(image: string): string {
+  return image.includes(',') ? image.split(',')[1] : image;
+}
+
+function detectMimeType(image: string): string {
+  const match = image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+  return match ? match[1] : 'image/jpeg';
+}
+
+/**
+ * Picks the provider used for image prompts.
+ * Ollama is honoured as-is; text-only cloud providers degrade to Gemini when a
+ * key exists, otherwise to a local Ollama vision model.
+ */
+export function resolveVisionProvider(credentials: FyersCredentials): VisionProviderId {
+  const provider = credentials.aiProvider || 'gemini';
+  if (provider === 'ollama') return 'ollama';
+  if (credentials.googleApiKey) return 'gemini';
+  return 'ollama';
+}
+
+/** Human readable label for the vision engine, for UI badges. */
+export function getVisionProviderLabel(credentials: FyersCredentials): string {
+  if (resolveVisionProvider(credentials) === 'ollama') {
+    return `Local Llama · ${credentials.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL}`;
+  }
+  return `Gemini · ${credentials.geminiModel || 'gemini-2.0-flash'}`;
+}
+
+/** True when an image prompt can actually be served right now. */
+export function isVisionConfigured(credentials: FyersCredentials): boolean {
+  // Ollama needs no key - it is local - so vision is always attemptable there.
+  return resolveVisionProvider(credentials) === 'ollama' || !!credentials.googleApiKey;
+}
+
+/**
+ * Sends a prompt plus one or more images to the configured vision provider.
+ * Images may be data URLs or bare base64.
+ */
+export async function callAIVision(
+  credentials: FyersCredentials,
+  prompt: string,
+  images: string[],
+  options?: { maxTokens?: number; temperature?: number; jsonMode?: boolean }
+): Promise<string> {
+  const maxTokens = options?.maxTokens ?? 400;
+  const temperature = options?.temperature ?? 0.3;
+  const jsonMode = options?.jsonMode ?? false;
+
+  if (resolveVisionProvider(credentials) === 'ollama') {
+    return callOllamaVision(
+      credentials.ollamaBaseUrl,
+      prompt,
+      images,
+      credentials.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL,
+      maxTokens,
+      temperature,
+      jsonMode
+    );
+  }
+
+  if (!credentials.googleApiKey) {
+    throw new Error('No vision-capable AI configured. Add a Gemini API key or switch to Ollama with a vision model.');
+  }
+
+  return callGeminiVision(
+    credentials.googleApiKey,
+    prompt,
+    images,
+    credentials.geminiModel || 'gemini-2.0-flash',
+    maxTokens,
+    temperature,
+    jsonMode
+  );
+}
+
+async function callGeminiVision(
+  apiKey: string,
+  prompt: string,
+  images: string[],
+  model: string,
+  maxTokens: number,
+  temperature: number,
+  jsonMode: boolean = false
+): Promise<string> {
+  console.log(`%c📡 Calling Gemini Vision (${model})`, 'color: green; font-size: 11px;');
+  const startTime = performance.now();
+
+  try {
+    const parts: any[] = images.map(img => ({
+      inlineData: { mimeType: detectMimeType(img), data: toBase64Payload(img) }
+    }));
+    parts.push({ text: prompt });
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            temperature,
+            maxOutputTokens: maxTokens,
+            ...(jsonMode ? { responseMimeType: 'application/json' } : {})
+          }
+        })
+      }
+    );
+
+    const duration = performance.now() - startTime;
+
+    if (!response.ok) {
+      const details = (await response.text().catch(() => '')).slice(0, 300);
+      apiCallTracker.logCall({
+        timestamp: Date.now(), provider: 'gemini', model, duration,
+        success: false, error: `${response.status}: ${details}`
+      });
+      throw new Error(`Gemini vision error (${response.status}): ${details}`);
+    }
+
+    const data = await response.json();
+    apiCallTracker.logCall({ timestamp: Date.now(), provider: 'gemini', model, duration, success: true });
+
+    return (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+  } catch (error: any) {
+    if (!/Gemini vision error/.test(error?.message || '')) {
+      apiCallTracker.logCall({
+        timestamp: Date.now(), provider: 'gemini', model,
+        duration: performance.now() - startTime, success: false, error: error?.message
+      });
+    }
+    throw error;
+  }
+}
+
+async function callOllamaVision(
+  baseUrl: string | undefined,
+  prompt: string,
+  images: string[],
+  model: string,
+  maxTokens: number,
+  temperature: number,
+  jsonMode: boolean = false
+): Promise<string> {
+  const url = normalizeOllamaBaseUrl(baseUrl);
+  console.log(`%c📡 Calling Local Llama Vision (${model} @ ${url})`, 'color: #22d3ee; font-size: 11px;');
+  const startTime = performance.now();
+
+  try {
+    const buildBody = (disableThinking: boolean) => JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt, images: images.map(toBase64Payload) }],
+      stream: false,
+      ...(jsonMode ? { format: 'json' } : {}),
+      // Reasoning models spend the whole budget in `thinking` and return empty content,
+      // so a second pass explicitly turns thinking off.
+      ...(disableThinking ? { think: false } : {}),
+      options: { temperature, num_predict: maxTokens }
+    });
+
+    let { response, viaProxy } = await ollamaFetch(url, '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: buildBody(false)
+    });
+
+    if (!response.ok) {
+      const duration = performance.now() - startTime;
+      const rawBody = await response.text().catch(() => '');
+      let details = rawBody.slice(0, 200).replace(/\s+/g, ' ').trim();
+      let hint = '';
+
+      try {
+        details = JSON.stringify(JSON.parse(rawBody));
+        if (response.status === 404) {
+          hint = ` Vision model "${model}" is not installed. Run: ollama pull ${model}`;
+        }
+      } catch {
+        hint = viaProxy
+          ? ` That reply came from this site's server, not from Ollama. Restart Ollama with ` +
+            `OLLAMA_ORIGINS="${typeof window !== 'undefined' ? window.location.origin : '*'}" ` +
+            `or run the dashboard locally with "npm run dev".`
+          : ` ${url} is not an Ollama chat endpoint. The Server URL should be just the host ` +
+            `(e.g. ${DEFAULT_OLLAMA_BASE_URL}) with no path - check it in Settings.`;
+      }
+
+      apiCallTracker.logCall({
+        timestamp: Date.now(), provider: 'ollama', model, duration,
+        success: false, error: `${response.status}: ${details}`
+      });
+
+      throw new Error(`Ollama vision error (${response.status}): ${details || '(empty response)'}.${hint}`);
+    }
+
+    const duration = performance.now() - startTime;
+    let data = await parseOllamaJson(response, url);
+    let text = (data?.message?.content || '').trim();
+
+    // A reasoning model can burn the whole token budget on `thinking` and answer
+    // with empty content - retry once with thinking disabled.
+    if (!text && data?.message?.thinking) {
+      const retry = await ollamaFetch(url, '/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: buildBody(true)
+      });
+      if (retry.response.ok) {
+        data = await parseOllamaJson(retry.response, url);
+        text = (data?.message?.content || '').trim();
+      }
+    }
+
+    apiCallTracker.logCall({
+      timestamp: Date.now(), provider: 'ollama', model, duration: performance.now() - startTime, success: true,
+      tokensUsed: (data?.prompt_eval_count || 0) + (data?.eval_count || 0)
+    });
+
+    if (!text) {
+      throw new Error(
+        `Ollama model "${model}" returned no text. Make sure it is a multimodal model ` +
+        `(e.g. ${DEFAULT_OLLAMA_VISION_MODEL}) - text-only models ignore images.`
+      );
+    }
+
+    return text;
+  } catch (error: any) {
+    if (!/Ollama vision error/.test(error?.message || '')) {
+      apiCallTracker.logCall({
+        timestamp: Date.now(), provider: 'ollama', model,
+        duration: performance.now() - startTime, success: false, error: error?.message
       });
     }
     throw error;

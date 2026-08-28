@@ -92,6 +92,64 @@ export const imageStorageService = {
     });
   },
 
+  // Save/replace a single image without touching the others
+  async putImage(key: string, dataUrl: string): Promise<void> {
+    if (!db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = db!.transaction(IMAGES_STORE, 'readwrite');
+      transaction.objectStore(IMAGES_STORE).put(dataUrl, key);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.oncomplete = () => resolve();
+    });
+  },
+
+  // Load every stored image as a key -> dataUrl map
+  async getAllImages(): Promise<Record<string, string>> {
+    if (!db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = db!.transaction(IMAGES_STORE, 'readonly');
+      const store = transaction.objectStore(IMAGES_STORE);
+      const keysRequest = store.getAllKeys();
+      const valuesRequest = store.getAll();
+
+      transaction.onerror = () => reject(transaction.error);
+      transaction.oncomplete = () => {
+        const keys = (keysRequest.result || []) as string[];
+        const values = (valuesRequest.result || []) as string[];
+        const result: Record<string, string> = {};
+        keys.forEach((key, i) => {
+          if (typeof values[i] === 'string') result[key] = values[i];
+        });
+        resolve(result);
+      };
+    });
+  },
+
+  // Generic keyed state (chart metadata, saved decisions, ...)
+  async saveState(key: string, value: any): Promise<void> {
+    if (!db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = db!.transaction(ANALYSIS_STORE, 'readwrite');
+      transaction.objectStore(ANALYSIS_STORE).put(value, key);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.oncomplete = () => resolve();
+    });
+  },
+
+  async loadState<T = any>(key: string): Promise<T | undefined> {
+    if (!db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = db!.transaction(ANALYSIS_STORE, 'readonly');
+      const request = transaction.objectStore(ANALYSIS_STORE).get(key);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result as T | undefined);
+    });
+  },
+
   // Save analysis data (text only - newsAnalysis, preMarketAnalysis, postAnalysis, liveChecks)
   async saveAnalysis(data: any): Promise<void> {
     if (!db) await this.init();

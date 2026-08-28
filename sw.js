@@ -1,80 +1,83 @@
 
-const CACHE_NAME = 'nifty50-live-v3-2026-05-07';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  // Vite usually bundles css/js, so we rely on runtime caching for those
-];
+const CACHE_NAME = 'nifty50-live-v4-2026-08-28';
+
+const PRECACHE = ['/', '/index.html'];
+
+/**
+ * Caching code is what broke the Pre-Market screen: Vite serves dev modules
+ * from paths like /components/PreMarketAnalyzer.tsx, which are neither in
+ * /assets/ nor named *.js, so the old stale-while-revalidate rule handed the
+ * browser a stale component forever while incognito (no service worker) ran
+ * the current one. Only documents and images are cached now - never code.
+ */
+const CACHEABLE_DESTINATIONS = ['image', 'font'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(urlsToCache);
-    })
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE)));
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    caches
+      .keys()
+      // Drop every previous cache - older versions may hold stale modules.
+      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-self.addEventListener('fetch', (event) => {
-  // 1. API Requests: Network Only (Never cache live stock data)
-  if (event.request.url.includes('/api/')) {
-    event.respondWith(fetch(event.request));
-    return; 
-  }
+/** Lets `npm run dev` behave exactly like incognito. */
+const isLocalDev = ['localhost', '127.0.0.1'].includes(self.location.hostname);
 
-  // 2. Skip caching for JS/CSS assets in production (let Vercel handle them)
-  const url = new URL(event.request.url);
-  if (url.pathname.includes('/assets/') || url.pathname.match(/\.(js|css|map)$/)) {
-    event.respondWith(fetch(event.request));
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  // Never touch live data, and never get between the developer and their code.
+  if (isLocalDev || url.pathname.startsWith('/api/')) {
     return;
   }
 
-  // 3. Static Assets: Stale-While-Revalidate (only for HTML and images)
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
-        // Only cache basic/cors responses that can be cloned
-        if (networkResponse && networkResponse.status === 200 && 
-            (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
-          try {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache).catch(() => {
-                // Silently ignore cache write failures
-              });
-            });
-          } catch (e) {
-            // Silently ignore clone/cache errors
+  // HTML: network first so a deploy is picked up immediately, cache as offline
+  // fallback only.
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
           }
-        }
-        return networkResponse;
-      }).catch(() => {
-        // If network fails, return cached response or undefined
-        return cachedResponse;
-      });
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/index.html')))
+    );
+    return;
+  }
 
-      // Return cached response immediately if available, else wait for network
-      return cachedResponse || fetchPromise;
-    }).catch(() => {
-      // Fallback if caches.match fails
-      return fetch(event.request).catch(() => {
-        // Both cache and network failed, return nothing
-      });
-    })
-  );
+  // Images and fonts only: stale-while-revalidate.
+  if (CACHEABLE_DESTINATIONS.includes(request.destination)) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        const network = fetch(request)
+          .then((response) => {
+            if (response && response.status === 200 && (response.type === 'basic' || response.type === 'cors')) {
+              const copy = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
+            }
+            return response;
+          })
+          .catch(() => cached);
+        return cached || network;
+      })
+    );
+    return;
+  }
+
+  // Scripts, styles, modules, source files: always straight from the network.
 });

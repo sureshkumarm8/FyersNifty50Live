@@ -68,6 +68,8 @@ function saveTokensToFile(broker, tokens) {
 }
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5001; 
+// Local chart-capture + vision-analysis engine (the liveImageAnalsis project).
+const VISION_SIDECAR_URL = (process.env.VISION_SIDECAR_URL || 'http://localhost:4321').replace(/\/+$/, '');
 const LOCAL_MODE = process.env.LOCAL_MODE === 'true' || process.env.NODE_ENV === 'development';
 
 // In-memory storage for local testing
@@ -112,7 +114,8 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
                           reqUrl.pathname.startsWith('/api/paytm-generate') ||
                           reqUrl.pathname.startsWith('/api/paytm-market-data') ||
                           reqUrl.pathname.startsWith('/api/save-paytm-token-direct') ||
-                          reqUrl.pathname.startsWith('/api/ollama');
+                          reqUrl.pathname.startsWith('/api/ollama') ||
+                          reqUrl.pathname.startsWith('/api/vision');
 
   if (!LOCAL_MODE && !isLocalEndpoint && !authHeader) {
      res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -120,8 +123,67 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
      return;
   }
 
-  // --- LOCAL LLAMA (OLLAMA) PROXY ---
-  // Browsers block direct calls to http://localhost:11434 unless Ollama is started
+  // --- VISION SIDECAR PROXY ---
+  // The chart-capture engine (Playwright + Ollama vision) runs as a separate local
+  // process because it needs a real, non-headless Chrome with a persistent broker
+  // login - something serverless cannot host. We reverse-proxy it so the SPA can
+  // talk to it same-origin. Everything under /api/vision maps to the sidecar.
+  if (reqUrl.pathname.startsWith('/api/vision')) {
+    const rest = reqUrl.pathname.replace('/api/vision', '') || '/';
+    // Screenshots are served by the sidecar at /shots/<file>, everything else under /api.
+    const upstreamPath = rest.startsWith('/shots/') ? rest : `/api${rest === '/' ? '/status' : rest}`;
+    const targetUrl = `${VISION_SIDECAR_URL}${upstreamPath}${reqUrl.search}`;
+    const isEventStream = rest.startsWith('/events');
+
+    try {
+      const body = ['POST', 'PUT', 'DELETE'].includes(req.method) ? await readRequestBody(req) : undefined;
+      const upstream = await fetch(targetUrl, {
+        method: req.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body || undefined
+      });
+
+      // Server-Sent Events must be streamed through untouched, or the dashboard
+      // would sit waiting for a response that never ends.
+      if (isEventStream && upstream.body) {
+        res.writeHead(upstream.status, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no'
+        });
+        const reader = upstream.body.getReader();
+        req.on('close', () => reader.cancel().catch(() => {}));
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(Buffer.from(value));
+        }
+        res.end();
+        return;
+      }
+
+      const contentType = upstream.headers.get('content-type') || 'application/json';
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      res.writeHead(upstream.status, {
+        'Content-Type': contentType,
+        'Cache-Control': contentType.startsWith('image/') ? 'public, max-age=3600' : 'no-store'
+      });
+      res.end(buffer);
+    } catch (error) {
+      console.error('[Vision Proxy] Error:', error.message);
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'vision_sidecar_unreachable',
+        message: `Cannot reach the vision capture engine at ${VISION_SIDECAR_URL}. Start it with "npm start" in the liveImageAnalsis project.`,
+        sidecarUrl: VISION_SIDECAR_URL,
+        details: error.message
+      }));
+    }
+    return;
+  }
+
+  // --- LOCAL LLAMA (OLLAMA) PROXY ---  // Browsers block direct calls to http://localhost:11434 unless Ollama is started
   // with OLLAMA_ORIGINS. This same-origin proxy is the fallback used by aiProvider.ts.
   if (reqUrl.pathname.startsWith('/api/ollama')) {
     const target = reqUrl.searchParams.get('target') || 'http://localhost:11434';

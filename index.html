@@ -155,13 +155,35 @@
     <div id="root" class="h-full relative z-10"></div>
     <script type="module" src="/index.tsx"></script>
     <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
+      // On localhost the service worker only ever gets in the way: it used to
+      // cache Vite's dev modules and serve stale components. Tear it down and
+      // drop its caches so a dev browser behaves exactly like incognito.
+      (function () {
+        if (!('serviceWorker' in navigator)) return;
+
+        var isLocalDev = ['localhost', '127.0.0.1'].indexOf(location.hostname) !== -1;
+
+        if (isLocalDev) {
+          navigator.serviceWorker.getRegistrations().then(function (regs) {
+            regs.forEach(function (reg) { reg.unregister(); });
+          }).catch(function () {});
+          if (window.caches) {
+            caches.keys().then(function (keys) {
+              keys.forEach(function (k) { caches.delete(k); });
+            }).catch(function () {});
+          }
+          return;
+        }
+
+        window.addEventListener('load', function () {
           navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('PWA Service Worker registered'))
-            .catch(err => console.log('PWA Service Worker failed:', err));
+            .then(function (reg) {
+              console.log('PWA Service Worker registered');
+              reg.update();
+            })
+            .catch(function (err) { console.log('PWA Service Worker failed:', err); });
         });
-      }
+      })();
     </script>
   </body>
 </html>

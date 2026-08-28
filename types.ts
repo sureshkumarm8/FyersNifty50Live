@@ -1,7 +1,7 @@
 
 
 
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'premarket' | 'autotrade' | 'patterns';
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'premarket' | 'autotrade' | 'patterns' | 'vision';
 
 export interface FyersCredentials {
   appId: string;
@@ -22,6 +22,8 @@ export interface FyersCredentials {
   // Local Llama (Ollama) - runs on the user's own machine, no API key required
   ollamaBaseUrl?: string;
   ollamaModel?: string;
+  // Separate multimodal model - text models like llama3.1 cannot read chart images
+  ollamaVisionModel?: string;
   
   // AI Feature Switches by Screen/Component
   aiAutoTradeEnabled?: boolean;     // SniperScope in AutoTrade
@@ -122,8 +124,20 @@ export const OLLAMA_MODELS = [
   { id: 'gemma2:9b', name: '💎 Gemma 2 9B - Google open model (~5.4GB)', size: '5.4GB', speed: 'MEDIUM' },
 ];
 
+// Multimodal (image-capable) Ollama models - required for chart/screenshot analysis.
+// A text-only model will simply ignore the attached image, so vision runs use these.
+export const OLLAMA_VISION_MODELS = [
+  { id: 'llama3.2-vision:11b', name: '👁️ Llama 3.2 Vision 11B - RECOMMENDED (~7.9GB)', size: '7.9GB', speed: 'MEDIUM' },
+  { id: 'llava:7b', name: '👁️ LLaVA 7B - Light & fast (~4.7GB)', size: '4.7GB', speed: 'FAST' },
+  { id: 'llava:13b', name: '👁️ LLaVA 13B - Better detail (~8GB)', size: '8GB', speed: 'MEDIUM' },
+  { id: 'qwen2.5vl:7b', name: '👁️ Qwen 2.5 VL 7B - Strong chart/OCR reading (~6GB)', size: '6GB', speed: 'FAST' },
+  { id: 'minicpm-v:8b', name: '👁️ MiniCPM-V 8B - High-res screenshots (~5.5GB)', size: '5.5GB', speed: 'FAST' },
+  { id: 'moondream:1.8b', name: '👁️ Moondream 1.8B - Tiny, lowest RAM (~1.7GB)', size: '1.7GB', speed: 'FASTEST' },
+];
+
 export const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
 export const DEFAULT_OLLAMA_MODEL = 'llama3.1:8b';
+export const DEFAULT_OLLAMA_VISION_MODEL = 'llama3.2-vision:11b';
 
 // Fyers V3 Quote Response Interface (Internal UI Model)
 export interface FyersQuote {
@@ -475,4 +489,88 @@ export interface PivotPoints {
   cpr_tc: number;
   dayHigh?: number;
   dayLow?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Vision Analysis - live chart screenshots read by a local Ollama vision model.
+// Produced by the capture sidecar (Playwright + Ollama) and proxied via /api/vision.
+// ---------------------------------------------------------------------------
+
+export type VisionBias = 'bullish' | 'bearish' | 'neutral' | 'choppy' | 'unclear';
+
+export interface VisionVerdict {
+  readable: boolean;
+  bias: VisionBias;
+  confidence: number;            // 1-100, how clearly both charts could be read
+  spot_estimate: string;
+  timeframe_seen?: string;
+  price_action: string;
+  supports: string[];
+  resistances: string[];
+  oi_read: string;
+  highest_call_oi_strike: string;
+  highest_put_oi_strike: string;
+  expected_range: string;
+  combined_view: string;
+  watch_for: string[];
+  risks: string[];
+  notes?: string;
+}
+
+export interface VisionShot {
+  id: string;                    // 'kite' | 'sensibull'
+  label: string;
+  url: string;
+  ok: boolean;
+  awaitingLogin?: boolean;
+  notes?: string[];
+  file?: string;
+  shotUrl?: string;              // sidecar-relative, e.g. /shots/<file>.png
+  bytes?: number;
+  error?: string;
+}
+
+export interface VisionAnalysis {
+  ok: boolean;
+  skipped?: boolean;
+  error?: string;
+  durationMs?: number;
+  raw?: string;
+  model?: string;
+  parsed: VisionVerdict | null;
+}
+
+export interface VisionRun {
+  id: string;                    // e.g. "20260828-101459"
+  manual: boolean;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  shots: VisionShot[];
+  analysis: VisionAnalysis;
+}
+
+export interface VisionTargetStatus {
+  id: string;
+  label: string;
+  url: string;
+  currentUrl: string | null;
+  awaitingLogin: boolean | null;
+}
+
+export interface VisionStatus {
+  paused: boolean;
+  phase: 'idle' | 'capturing' | 'analysing';
+  running: boolean;
+  nextRunAt: number | null;
+  intervalMs: number;
+  intervalOptions: number[];     // cadences in minutes
+  model: string;
+  lastError: string | null;
+  cycle: number;
+  marketOpen: boolean;
+  windowVisible?: boolean;
+  windowControl?: boolean;
+  ollama?: { ok: boolean; models?: string[]; hasModel?: boolean; error?: string };
+  targets: VisionTargetStatus[];
 }

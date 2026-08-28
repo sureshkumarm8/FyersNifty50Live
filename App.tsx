@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain, Sparkles } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain, Sparkles, Eye } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
@@ -11,8 +11,10 @@ import { SettingsScreen } from './components/SettingsScreen';
 import { AIView } from './components/AIView';
 import AILab from './components/AILab';
 import { PreMarketAnalyzer } from './components/PreMarketAnalyzer';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import UnifiedAutoTrade from './components/UnifiedAutoTrade';
 import PatternDashboard from './components/PatternDashboard';
+import VisionAnalysis from './components/VisionAnalysis';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP, fetchPayTMFromRedis } from './services/paytmService';
@@ -1491,6 +1493,9 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('patterns')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'patterns' ? 'bg-purple-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Brain size={14} /> Patterns
                </button>
+               <button onClick={() => handleSetViewMode('vision')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'vision' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Eye size={14} /> Vision
+               </button>
                <button onClick={() => handleSetViewMode('premarket')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'premarket' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <TrendingUp size={14} /> PreMkt
                </button>
@@ -1556,6 +1561,9 @@ const App: React.FC = () => {
 
       {/* --- Main Content Area --- */}
       <main className="flex-1 overflow-hidden relative flex flex-col">
+        {/* Keyed by view so switching screens clears a previous crash, and so a
+            single broken screen never blanks the whole dashboard. */}
+        <ErrorBoundary key={viewMode} label={viewMode}>
         
         {isPrivacyMode && (
             <div className="absolute inset-0 z-50 bg-slate-950/80 flex flex-col items-center justify-center gap-6 backdrop-blur-sm">
@@ -1759,7 +1767,7 @@ const App: React.FC = () => {
 
         {viewMode === 'premarket' && (
             <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
-                <PreMarketAnalyzer 
+                <PreMarketAnalyzer
                    credentials={credentials}
                    aiEnabled={credentials.aiEnabled}
                 />
@@ -1789,6 +1797,13 @@ const App: React.FC = () => {
             </div>
         )}
 
+        {viewMode === 'vision' && (
+            <div className="flex flex-col h-full overflow-hidden">
+                <VisionAnalysis niftyLtp={niftyLtp} />
+            </div>
+        )}
+
+        </ErrorBoundary>
       </main>
     </div>
   );
