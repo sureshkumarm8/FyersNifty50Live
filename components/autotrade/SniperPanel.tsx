@@ -75,11 +75,15 @@ interface Props {
   historyLog: MarketSnapshot[];
   pivots: PivotPoints | null;
   tradingMode: 'PAPER' | 'LIVE';
+  /** Lets the shell show that this panel is still working while its tab is hidden. */
+  onStatus?: (status: { active: boolean; openPositions: number }) => void;
 }
 
 const mmss = (mins: number | null) => (mins == null ? '—' : `${mins}m`);
 
-export const SniperPanel: React.FC<Props> = ({ credentials, niftyLtp, historyLog, pivots, tradingMode }) => {
+export const SniperPanel: React.FC<Props> = ({
+  credentials, niftyLtp, historyLog, pivots, tradingMode, onStatus
+}) => {
   const [armed, setArmed] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -111,6 +115,10 @@ export const SniperPanel: React.FC<Props> = ({ credentials, niftyLtp, historyLog
     orderRef.current = new OrderManager(credentials, tradingMode === 'PAPER');
     setPositions([]);
   }, [credentials, tradingMode]);
+
+  useEffect(() => {
+    onStatus?.({ active: armed, openPositions: positions.length });
+  }, [armed, positions.length, onStatus]);
 
   useEffect(() => {
     localStorage.setItem(LOTS_KEY, String(lots));

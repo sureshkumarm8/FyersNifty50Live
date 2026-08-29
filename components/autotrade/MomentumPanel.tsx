@@ -70,6 +70,8 @@ interface Props {
   historyLog: MarketSnapshot[];
   pivots: PivotPoints | null;
   tradingMode: 'PAPER' | 'LIVE';
+  /** Lets the shell show that this panel is still working while its tab is hidden. */
+  onStatus?: (status: { active: boolean; openPositions: number }) => void;
 }
 
 const fmt = (n: number | null | undefined) =>
@@ -101,7 +103,9 @@ const FactorBar: React.FC<{ label: string; value: number; hint?: string }> = ({ 
   );
 };
 
-export const MomentumPanel: React.FC<Props> = ({ credentials, niftyLtp, historyLog, pivots, tradingMode }) => {
+export const MomentumPanel: React.FC<Props> = ({
+  credentials, niftyLtp, historyLog, pivots, tradingMode, onStatus
+}) => {
   const [running, setRunning] = useState(false);
   const [settings, setSettings] = useState<MomentumSettings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
@@ -130,6 +134,10 @@ export const MomentumPanel: React.FC<Props> = ({ credentials, niftyLtp, historyL
     exitingRef.current = new Set();
     setPositions([]);
   }, [credentials, tradingMode]);
+
+  useEffect(() => {
+    onStatus?.({ active: running, openPositions: positions.length });
+  }, [running, positions.length, onStatus]);
 
   useEffect(() => {
     try {

@@ -8,6 +8,31 @@
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡️</text></svg>">
     <title>Nifty50 Live Terminal</title>
+
+    <!--
+      Paytm OAuth callback bridge.
+
+      If the Paytm app's redirect URL points back at this origin, the login popup
+      lands here carrying ?requestToken=… . Hand it to the opener and close before
+      anything else loads, so the token generator completes with zero extra clicks.
+      Runs first and returns immediately in every other case.
+    -->
+    <script>
+      (function () {
+        try {
+          var match = (window.location.search + window.location.hash).match(/requestToken=([^&\s]+)/i);
+          if (!match || !window.opener || window.opener === window) return;
+          window.opener.postMessage(
+            { type: 'paytm-auth', requestToken: decodeURIComponent(match[1]) },
+            window.location.origin
+          );
+          document.write('<p style="font:14px sans-serif;padding:24px">Login complete — you can close this window.</p>');
+          window.close();
+        } catch (e) {
+          /* not a callback, or the opener is gone: fall through and load the app */
+        }
+      })();
+    </script>
     
     <!-- Google Fonts: Inter & JetBrains Mono -->
     <link rel="preconnect" href="https://fonts.googleapis.com">

@@ -1793,6 +1793,7 @@ const App: React.FC = () => {
                    currentSnapshot={historyLog[0] || null}
                    niftyLtp={niftyLtp}
                    credentials={credentials}
+                   historyLog={historyLog || []}
                 />
             </div>
         )}

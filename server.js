@@ -617,27 +617,32 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
         }
 
         // Action 2: Complete auth with request token
-        if (data.action === 'complete-auth' && data.sessionId && data.requestToken) {
-          const session = localStore.paytmSessions.get(data.sessionId);
-          
+        if (data.action === 'complete-auth' && data.requestToken) {
+          // The session is bookkeeping only — the Paytm exchange is authenticated
+          // by the api key/secret checksum. A restarted dev server (or a second
+          // lambda in production) must not invalidate a perfectly good login.
+          const session = localStore.paytmSessions.get(data.sessionId) || null;
           if (!session) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'Session not found or expired' }));
-            return;
+            console.warn(`[Paytm] No in-memory session for ${data.sessionId} — continuing anyway`);
           }
 
           try {
+            // Accept a bare token, a query string, or the whole redirect URL.
+            const raw = String(data.requestToken).trim();
+            const fromUrl = raw.match(/[?&#]?requestToken=([^&\s]+)/i);
+            const requestTokenValue = fromUrl ? decodeURIComponent(fromUrl[1]) : raw;
+
             console.log(`[Paytm] Exchanging request token for session: ${data.sessionId}`);
-            console.log(`[Paytm] Request token length: ${data.requestToken?.length || 0}`);
+            console.log(`[Paytm] Request token length: ${requestTokenValue.length}`);
             
             const checksum = crypto
               .createHash('sha256')
-              .update(`${config.paytm.apiKey}${data.requestToken}${config.paytm.apiSecret}`)
+              .update(`${config.paytm.apiKey}${requestTokenValue}${config.paytm.apiSecret}`)
               .digest('hex');
             
             const requestBody = {
               api_key: config.paytm.apiKey,
-              request_token: data.requestToken,
+              request_token: requestTokenValue,
               api_secret_key: config.paytm.apiSecret,
               checksum: checksum,
             };
@@ -658,11 +663,13 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
             const tokenData = await paytmResponse.json();
 
             if (tokenData.access_token) {
-              session.status = 'completed';
-              session.accessToken = tokenData.access_token;
-              session.publicAccessToken = tokenData.public_access_token;
-              session.readAccessToken = tokenData.read_access_token;
-              localStore.paytmSessions.set(data.sessionId, session);
+              if (session) {
+                session.status = 'completed';
+                session.accessToken = tokenData.access_token;
+                session.publicAccessToken = tokenData.public_access_token;
+                session.readAccessToken = tokenData.read_access_token;
+                localStore.paytmSessions.set(data.sessionId, session);
+              }
 
               // Save tokens locally
               saveTokensToFile('paytm', {
@@ -686,9 +693,11 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
               throw new Error(tokenData.message || 'Failed to generate token');
             }
           } catch (error) {
-            session.status = 'failed';
-            session.errorMessage = error.message;
-            localStore.paytmSessions.set(data.sessionId, session);
+            if (session) {
+              session.status = 'failed';
+              session.errorMessage = error.message;
+              localStore.paytmSessions.set(data.sessionId, session);
+            }
 
             console.error(`[Paytm] Auth error for session ${data.sessionId}:`, error.message);
             res.writeHead(400, { 'Content-Type': 'application/json' });

@@ -8,7 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server.js",
-    "generate:paytm": "node scripts/generatePaytmMappings.cjs"
+    "generate:paytm": "node scripts/generatePaytmMappings.cjs",
+    "model:train": "node ml/export.mjs",
+    "model:validate": "node ml/train.mjs && node ml/calibrate.mjs",
+    "model:test": "npx --yes tsx ml/parity.test.mjs && npx --yes tsx ml/e2e.test.mjs && npx --yes tsx ml/multiday.test.mjs && npx --yes tsx ml/warmup.test.mjs && npx --yes tsx ml/memory.test.mjs && npx --yes tsx ml/regime.test.mjs && npx --yes tsx ml/scorecard.test.mjs && npx --yes tsx ml/panels.test.tsx"
   },
   "dependencies": {
     "@google/genai": "^1.33.0",

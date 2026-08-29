@@ -2,7 +2,7 @@
 import { MarketSnapshot, SessionCandle, SessionHistoryMap, DailyArchive, Pattern } from '../types';
 
 const DB_NAME = 'NiftyLiveDB';
-const DB_VERSION = 2; // Upgraded for multi-tier architecture
+const DB_VERSION = 3; // v3 adds the agent decision log used by the AI Lab scorecard
 
 export const STORES = {
   // Layer 1: TODAY (Temporary, cleared daily)
@@ -14,6 +14,9 @@ export const STORES = {
   
   // Layer 3: PATTERNS (Learned knowledge)
   PATTERNS: 'patterns',
+
+  // Layer 4: every agent call ever made, with its graded outcome
+  AGENT_CALLS: 'agent_calls',
   
   // Metadata
   META: 'meta'
@@ -72,7 +75,15 @@ const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORES.META)) {
         db.createObjectStore(STORES.META);
       }
-      
+
+      // Layer 4: AGENT CALLS — one record per agent decision, graded later.
+      if (!db.objectStoreNames.contains(STORES.AGENT_CALLS)) {
+        const callStore = db.createObjectStore(STORES.AGENT_CALLS, { keyPath: 'id' });
+        callStore.createIndex('agent', 'agent');
+        callStore.createIndex('timestamp', 'timestamp');
+        callStore.createIndex('graded', 'graded');
+      }
+
       console.log('✅ DB Upgrade Complete');
     };
 
@@ -269,6 +280,51 @@ export const dbService = {
     const db = await openDB();
     const tx = db.transaction(STORES.PATTERNS, 'readwrite');
     tx.objectStore(STORES.PATTERNS).delete(id);
+  },
+
+  // === AGENT CALL Operations (Layer 4: Track Record) ===
+
+  /** Insert or update a graded agent call. */
+  putAgentCall: async (call: any) => {
+    const db = await openDB();
+    return new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORES.AGENT_CALLS, 'readwrite');
+      tx.objectStore(STORES.AGENT_CALLS).put(call);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+
+  putAgentCalls: async (calls: any[]) => {
+    if (calls.length === 0) return;
+    const db = await openDB();
+    return new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORES.AGENT_CALLS, 'readwrite');
+      const store = tx.objectStore(STORES.AGENT_CALLS);
+      calls.forEach(c => store.put(c));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+
+  getAllAgentCalls: async (): Promise<any[]> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORES.AGENT_CALLS, 'readonly');
+      const req = tx.objectStore(STORES.AGENT_CALLS).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  },
+
+  clearAgentCalls: async () => {
+    const db = await openDB();
+    return new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORES.AGENT_CALLS, 'readwrite');
+      tx.objectStore(STORES.AGENT_CALLS).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
   },
 
   // === META Operations ===
