@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain, Sparkles, Eye } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain, Sparkles, Eye, GraduationCap } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
@@ -15,6 +15,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import UnifiedAutoTrade from './components/UnifiedAutoTrade';
 import PatternDashboard from './components/PatternDashboard';
 import VisionAnalysis from './components/VisionAnalysis';
+import PaperTrading from './components/PaperTrading';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP, fetchPayTMFromRedis } from './services/paytmService';
@@ -1496,6 +1497,9 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('vision')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'vision' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Eye size={14} /> Vision
                </button>
+               <button onClick={() => handleSetViewMode('paper')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'paper' ? 'bg-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <GraduationCap size={14} /> Paper
+               </button>
                <button onClick={() => handleSetViewMode('premarket')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'premarket' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <TrendingUp size={14} /> PreMkt
                </button>
@@ -1801,6 +1805,16 @@ const App: React.FC = () => {
         {viewMode === 'vision' && (
             <div className="flex flex-col h-full overflow-hidden">
                 <VisionAnalysis niftyLtp={niftyLtp} />
+            </div>
+        )}
+
+        {viewMode === 'paper' && (
+            <div className="flex flex-col h-full overflow-hidden">
+                <PaperTrading
+                    optionQuotes={optionQuotes}
+                    niftyLtp={niftyLtp}
+                    lastUpdated={lastUpdated}
+                />
             </div>
         )}
 

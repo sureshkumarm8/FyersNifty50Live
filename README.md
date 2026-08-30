@@ -31,6 +31,14 @@ A high-performance real-time stock tracking and analysis dashboard for **Nifty50
 *   **Any Model**: Works with any model pulled via `ollama pull` (Llama 3.1/3.2/3.3, Qwen, Mistral, Gemma, ...).
 *   **Auto-Discovery**: Settings detects your installed models and lets you pick one with a single click.
 
+### 🎓 Paper Trading — Practise on Live Prices
+*   **Option Buying, For Real Ticks**: Buy Nifty50 CE/PE at the live traded premium with no broker involved and no money at risk.
+*   **ATM-Centred Chain**: The ticket lists strikes around ATM with ITM/OTM tags, and follows the spot as it moves.
+*   **Bracket Discipline**: Optional stop loss and target as a % of premium, plus a trailing stop in points. All three are enforced automatically on every price refresh.
+*   **Honest Charges**: Brokerage, STT, exchange, SEBI, stamp duty and GST are modelled properly — the same friction that decides an option buyer's month.
+*   **Journal & Stats**: Every closed trade records MFE/MAE, hold time and exit reason, rolled up into win rate, expectancy, profit factor and streaks.
+*   **Survives Reloads**: The book is persisted locally, and open positions auto square off at 15:20.
+
 ### 👁️ Vision Analysis — Live Chart Screenshots
 *   **Sees What You See**: A real Chrome window stays logged in to Zerodha Kite and Sensibull, screenshots the NIFTY 50 price chart and the OI-vs-Strike chart every cycle.
 *   **Read by a Vision Model**: Both images are sent to a local Ollama vision model, which returns a structured verdict — bias, confidence, supports/resistances, OI walls, expected range and risks.
@@ -253,6 +261,43 @@ Notes:
 *   If a target shows *Login required*, use the monitor button to bring the capture browser on
     screen, log in, then hide it again.
 
+## 🎓 Paper Trading
+
+The **Paper** tab is a training ground: it uses the same live option chain as the
+rest of the dashboard, but every fill is simulated and nothing is ever sent to a
+broker. It is built specifically around **buying** Nifty50 options.
+
+How it works:
+*   Pick **CE** or **PE**, choose a strike (the list is centred on ATM and tagged
+    ITM/OTM), set your lots, and buy. Fills are marked at the live traded price —
+    there is no synthetic slippage or random rejection.
+*   **Stop loss** and **target** are entered as a percentage of the entry premium and
+    are shown in rupees before you commit, along with the resulting risk:reward.
+*   **Trail by N points** ratchets the stop up behind the high-water premium. The
+    effective stop is always the higher of your hard stop and the trailed stop.
+*   Brackets are evaluated on every price refresh. If a tick crosses both the stop
+    and the target, the **stop wins** — the simulator will not flatter your results.
+*   Positions auto square off at **15:20 IST** unless you turn that off.
+
+What it charges you (per leg, configurable brokerage):
+
+| Component | Rate |
+| --- | --- |
+| Brokerage | ₹20 flat per order |
+| STT | 0.10% of premium, **sell side only** |
+| Exchange transaction | 0.03503% of premium |
+| SEBI | ₹10 per crore |
+| Stamp duty | 0.003% of premium, **buy side only** |
+| GST | 18% on brokerage + transaction + SEBI |
+
+Closed trades are journalled with maximum favourable/adverse excursion, hold time
+and exit reason, and rolled up into win rate, expectancy, profit factor, average
+win/loss and win/loss streaks. The whole book is stored in IndexedDB, so it
+survives reloads; **Reset Account** in the settings drawer clears it.
+
+> Simulated results ignore real-world queue position, liquidity and slippage.
+> Treat them as practice for process and discipline, not as a proven edge.
+
 ## 📁 Project Structure
 
 *   `src/App.tsx`: Main application controller and data orchestration.
@@ -260,10 +305,12 @@ Notes:
 *   `src/components/SniperScope.tsx`: Protocol enforcement interface.
 *   `src/components/AIView.tsx`: Chat and Live Voice interface.
 *   `src/components/VisionAnalysis.tsx`: Live chart-screenshot vision analysis screen.
+*   `src/components/PaperTrading.tsx`: Simulated Nifty50 option-buying screen.
 *   `src/components/CumulativeView.tsx`: Weighted market analysis dashboard.
 *   `src/components/StockTable.tsx`: Advanced data grid with weighted totals.
 *   `src/services/fyersService.ts`: API interaction.
 *   `src/services/visionService.ts`: Client for the local chart-capture engine.
+*   `src/services/paperTradingService.ts`: Paper trading engine (fills, charges, brackets, stats).
 *   `src/services/db.ts`: IndexedDB persistence layer.
 *   `server.js`: Local Node.js proxy server.
 
