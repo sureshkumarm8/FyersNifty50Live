@@ -20,15 +20,18 @@ import { lifecycleManager } from '../services/lifecycleManager';
 import { dbService } from '../services/db';
 import { downloadCSV, importCSVFile } from '../services/csv';
 import { SentimentHistory } from './SentimentHistory';
+import PredictionsPanel from './PredictionsPanel';
 
 interface PatternDashboardProps {
   currentSnapshot: MarketSnapshot | null;
   niftyLtp: number | null;
   credentials: any; // For SentimentHistory
+  /** Live session snapshots, newest first — feeds the Predictions tab. */
+  historyLog?: MarketSnapshot[];
 }
 
-const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, niftyLtp, credentials }) => {
-  const [activeTab, setActiveTab] = useState<'patterns' | 'archives'>('patterns');
+const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, niftyLtp, credentials, historyLog = [] }) => {
+  const [activeTab, setActiveTab] = useState<'patterns' | 'predictions' | 'archives'>('patterns');
   const [liveMatches, setLiveMatches] = useState<Pattern[]>([]);
   const [allPatterns, setAllPatterns] = useState<Pattern[]>([]);
   const [similarDays, setSimilarDays] = useState<DailyArchive[]>([]);
@@ -465,6 +468,19 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
             </div>
           </button>
           <button
+            onClick={() => setActiveTab('predictions')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              activeTab === 'predictions'
+                ? 'bg-indigo-600 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Brain size={14} />
+              Predictions
+            </div>
+          </button>
+          <button
             onClick={() => setActiveTab('archives')}
             className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
               activeTab === 'archives'
@@ -481,7 +497,7 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
       </div>
 
       {/* Main Content */}
-      {activeTab === 'patterns' ? (
+      {activeTab === 'patterns' && (
         <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
         
         {/* Left Column: Live Matches & Similar Days */}
@@ -895,7 +911,17 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
           )}
         </div>
       </div>
-      ) : (
+      )}
+
+      {activeTab === 'predictions' && (
+        /* PREDICTIONS VIEW — the same forecaster AI Lab runs, sharing one
+           implementation so the two screens cannot report different numbers. */
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+          <PredictionsPanel historyLog={historyLog} currentSnapshot={currentSnapshot} />
+        </div>
+      )}
+
+      {activeTab === 'archives' && (
         /* ARCHIVES VIEW */
         <div className="flex-1 overflow-hidden p-4">
           {selectedDay ? (

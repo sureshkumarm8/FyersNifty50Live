@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { FyersCredentials, StrategySignal, AnalysisRecord } from '../types';
+import { isAIConfigured } from '../services/aiProvider';
 import { 
   Crosshair, Zap, TrendingUp, TrendingDown, 
   AlertTriangle, RefreshCw, Shield, 
@@ -33,7 +34,7 @@ export const AIQuantDeck: React.FC<AIQuantDeckProps> = ({
   // Logic determined by parent (App.tsx), here we just render based on props.
   // Provider selection is handled by parent via credentials
   
-  const isLocalMode = !credentials.googleApiKey && !credentials.groqApiKey || aiEnabled === false;
+  const isLocalMode = !isAIConfigured(credentials) || aiEnabled === false;
 
   return (
     <div className="flex flex-col h-full overflow-hidden p-4 max-w-7xl mx-auto w-full gap-4">

@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FyersCredentials, TradingSystemProtocol } from '../types';
+import { FyersCredentials, TradingSystemProtocol, OLLAMA_MODELS, OLLAMA_VISION_MODELS, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_VISION_MODEL } from '../types';
 import { 
   Save, ShieldCheck, Upload, Download, Trash2, 
   ArrowLeft, ToggleLeft, ToggleRight, 
@@ -8,11 +8,12 @@ import {
   CheckCircle, AlertTriangle, Zap, BarChart4, Clock,
   Layout, MousePointerClick, TrendingUp, Target, Activity, Bot,
   ClipboardList, CheckSquare, Edit3, FileJson, BrainCircuit, Crosshair,
-  Volume2, Layers, Key, Lock, Cpu, TrendingDown, Zap as ZapIcon
+  Volume2, Layers, Key, Lock, Cpu, TrendingDown, Zap as ZapIcon,
+  Server, RefreshCw, HardDrive, Eye
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
-import { apiCallTracker, APIStats } from '../services/aiProvider';
+import { apiCallTracker, APIStats, testOllamaConnection } from '../services/aiProvider';
 import { TokenGeneratorModal } from './TokenGeneratorModal';
 
 interface SettingsScreenProps {
@@ -21,7 +22,7 @@ interface SettingsScreenProps {
   currentCreds: FyersCredentials;
 }
 
-type Tab = 'configs' | 'guide' | 'glossary' | 'review' | 'system' | 'ai-usage' | 'data-management';
+type Tab = 'configs' | 'guide' | 'glossary' | 'review' | 'system' | 'ai-usage';
 
 const DEFAULT_PROTOCOL: TradingSystemProtocol = {
   "name": "Nifty Sniper: The Office Protocol",
@@ -89,12 +90,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
   const [claudeApiKey, setClaudeApiKey] = useState(currentCreds.claudeApiKey || '');
-  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq' | 'claude'>(currentCreds.aiProvider || 'gemini');
+  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama'>(currentCreds.aiProvider || 'gemini');
   const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'mixtral-8x7b-32768');
   const [geminiModel, setGeminiModel] = useState(currentCreds.geminiModel || 'gemini-2.0-flash');
   const [claudeModel, setClaudeModel] = useState(currentCreds.claudeModel || 'claude-3-5-sonnet-20241022');
   const [cerebrasApiKey, setCerebrasApiKey] = useState(currentCreds.cerebrasApiKey || '');
   const [cerebrasModel, setCerebrasModel] = useState(currentCreds.cerebrasModel || 'cerebras/llama-3.1-70b');
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState(currentCreds.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL);
+  const [ollamaModel, setOllamaModel] = useState(currentCreds.ollamaModel || DEFAULT_OLLAMA_MODEL);
+  const [ollamaVisionModel, setOllamaVisionModel] = useState(currentCreds.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL);
+  const [ollamaInstalledModels, setOllamaInstalledModels] = useState<string[]>([]);
+  const [ollamaInstalledVisionModels, setOllamaInstalledVisionModels] = useState<string[]>([]);
+  const [ollamaStatus, setOllamaStatus] = useState<{type: 'idle' | 'checking' | 'success' | 'error', text: string}>({ type: 'idle', text: '' });
   const [bypassMarketHours, setBypassMarketHours] = useState(currentCreds.bypassMarketHours || false);
   const [aiEnabled, setAiEnabled] = useState(currentCreds.aiEnabled !== undefined ? currentCreds.aiEnabled : true);
   const [refreshInterval, setRefreshInterval] = useState(currentCreds.refreshInterval || REFRESH_OPTIONS[3].value);
@@ -158,6 +165,52 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     };
   }, []);
 
+  const handleTestOllama = async () => {
+    setOllamaStatus({ type: 'checking', text: 'Connecting to Ollama...' });
+    const result = await testOllamaConnection(ollamaBaseUrl);
+
+    if (!result.ok) {
+      setOllamaInstalledModels([]);
+      setOllamaInstalledVisionModels([]);
+      setOllamaStatus({ type: 'error', text: result.error || 'Could not reach Ollama.' });
+      return;
+    }
+
+    setOllamaInstalledModels(result.models);
+    setOllamaInstalledVisionModels(result.visionModels);
+
+    if (result.models.length === 0) {
+      setOllamaStatus({ type: 'error', text: 'Connected, but no models installed. Run: ollama pull llama3.1:8b' });
+      return;
+    }
+
+    // Auto-select an installed model if the current selection is not available locally
+    if (!result.models.includes(ollamaModel)) {
+      setOllamaModel(result.models[0]);
+    }
+
+    // Same for the vision model, but only ever pick a multimodal one
+    if (!result.models.includes(ollamaVisionModel) && result.visionModels.length > 0) {
+      setOllamaVisionModel(result.visionModels[0]);
+    }
+
+    setOllamaStatus({
+      type: 'success',
+      text: `Connected. ${result.models.length} model(s) installed.` +
+        (result.visionModels.length > 0
+          ? ` ${result.visionModels.length} vision-capable.`
+          : ` No vision model found - run: ollama pull ${DEFAULT_OLLAMA_VISION_MODEL} for pre-market chart analysis.`)
+    });
+  };
+
+  // Probe the local Ollama server whenever the user switches to it
+  useEffect(() => {
+    if (selectedAiProvider === 'ollama' && ollamaStatus.type === 'idle') {
+      handleTestOllama();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAiProvider]);
+
   const handleSave = () => {
     console.log('💾 [SettingsScreen] Saving credentials with refreshInterval:', refreshInterval);
     onSave({ 
@@ -171,6 +224,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       geminiModel,
       claudeModel,
       cerebrasModel,
+      ollamaBaseUrl,
+      ollamaModel,
+      ollamaVisionModel,
       bypassMarketHours, 
       refreshInterval, 
       aiEnabled, 
@@ -579,19 +635,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             >
                 <Bot size={16} /> AI Usage
             </button>
-            <button 
-                onClick={() => setActiveTab('data-management')}
-                className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors whitespace-nowrap ${activeTab === 'data-management' ? 'border-red-500 text-red-400 font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
-            >
-                <Trash2 size={16} /> Data Management
-            </button>
         </div>
       </header>
       
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 bg-slate-950">
         
         {activeTab === 'configs' && (
-            <div className="max-w-4xl mx-auto space-y-6 animate-in slide-in-from-bottom-4 duration-300 pb-20">
+            /* Full window width, 2–3 blocks per row. `items-start` keeps every card
+               at its natural height instead of stretching short cards to match tall
+               neighbours like the Intelligence Engine. */
+            <div className="w-full grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-5 items-start animate-in slide-in-from-bottom-4 duration-300 pb-20">
                 
                 {/* CONNECTION CARD */}
                 <div className="glass-panel rounded-xl overflow-hidden border border-slate-800">
@@ -641,7 +694,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
                         {/* Conditional Rendering based on Provider */}
                         {dataProvider === 'fyers' ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 gap-6">
                                 <div className="space-y-2">
                                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Fyers App ID</label>
                                     <div className="relative group">
@@ -764,13 +817,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 </div>
                                 <select 
                                     value={selectedAiProvider} 
-                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq' | 'claude' | 'cerebras')}
+                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama')}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                 >
                                     <option value="gemini">Gemini AI (Free: 1M tokens/day)</option>
                                     <option value="groq">Groq AI (Free: 10K tokens/min)</option>
                                     <option value="claude">Claude AI (Paid: $0.80-$15/1M)</option>
                                     <option value="cerebras">Cerebras AI (Fast: 600 req/min)</option>
+                                    <option value="ollama">Local Llama / Ollama (Offline: Free & Private)</option>
                                 </select>
                                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -990,6 +1044,143 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                               </div>
                             </>
                          )}
+
+                          {selectedAiProvider === 'ollama' && (
+                            <>
+                              <div className="flex items-start gap-3 p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-xl">
+                                  <div className="p-2 bg-cyan-500/10 rounded-lg text-cyan-400 shrink-0"><HardDrive size={18}/></div>
+                                  <div className="space-y-1">
+                                      <h3 className="text-sm font-bold text-white">Runs 100% On Your Machine</h3>
+                                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                                          No API key, no cost, no rate limits and your market data never leaves this computer.
+                                          Install <span className="text-cyan-400 font-mono">ollama.com</span>, then run
+                                          <span className="text-cyan-400 font-mono"> ollama pull {DEFAULT_OLLAMA_MODEL}</span> and
+                                          <span className="text-cyan-400 font-mono"> ollama serve</span>.
+                                      </p>
+                                      <p className="text-[10px] text-yellow-500/80">
+                                          Tip: allow this page to call Ollama by starting it with{' '}
+                                          <span className="font-mono">OLLAMA_ORIGINS="{typeof window !== 'undefined' ? window.location.origin : '*'}"</span>
+                                          {' '}(or <span className="font-mono">"*"</span>).
+                                      </p>
+                                  </div>
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Ollama Server URL</label>
+                               <div className="flex gap-2">
+                                   <div className="relative group flex-1">
+                                       <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-cyan-400 transition-colors">
+                                           <Server size={16} />
+                                       </div>
+                                       <input 
+                                           type="text" 
+                                           value={ollamaBaseUrl} 
+                                           onChange={(e) => { setOllamaBaseUrl(e.target.value); setOllamaStatus({ type: 'idle', text: '' }); }} 
+                                           placeholder={DEFAULT_OLLAMA_BASE_URL}
+                                           className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent outline-none transition-all font-mono"
+                                       />
+                                   </div>
+                                   <button 
+                                       onClick={handleTestOllama}
+                                       disabled={ollamaStatus.type === 'checking'}
+                                       className="px-4 py-3 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0"
+                                   >
+                                       <RefreshCw size={14} className={ollamaStatus.type === 'checking' ? 'animate-spin' : ''} />
+                                       <span className="hidden sm:inline">Test</span>
+                                   </button>
+                               </div>
+                               {ollamaStatus.text && (
+                                   <p className={`text-[10px] flex items-start gap-1.5 ${ollamaStatus.type === 'success' ? 'text-emerald-400' : ollamaStatus.type === 'error' ? 'text-red-400' : 'text-slate-500'}`}>
+                                       {ollamaStatus.type === 'success' ? <CheckCircle size={12} className="mt-0.5 shrink-0"/> : ollamaStatus.type === 'error' ? <AlertTriangle size={12} className="mt-0.5 shrink-0"/> : null}
+                                       <span>{ollamaStatus.text}</span>
+                                   </p>
+                               )}
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Local Model</label>
+                               <div className="relative group">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-cyan-400 transition-colors">
+                                       <BrainCircuit size={16} />
+                                   </div>
+                                   <input 
+                                       type="text"
+                                       list="ollama-model-options"
+                                       value={ollamaModel} 
+                                       onChange={(e) => setOllamaModel(e.target.value)}
+                                       placeholder={DEFAULT_OLLAMA_MODEL}
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent outline-none transition-all font-mono"
+                                   />
+                                   <datalist id="ollama-model-options">
+                                       {ollamaInstalledModels.map(m => <option key={m} value={m}>Installed</option>)}
+                                       {OLLAMA_MODELS.filter(m => !ollamaInstalledModels.includes(m.id)).map(m => (
+                                           <option key={m.id} value={m.id}>{m.name}</option>
+                                       ))}
+                                   </datalist>
+                               </div>
+                               {ollamaInstalledModels.length > 0 && (
+                                   <div className="flex flex-wrap gap-1.5 pt-1">
+                                       {ollamaInstalledModels.map(m => (
+                                           <button 
+                                               key={m}
+                                               onClick={() => setOllamaModel(m)}
+                                               className={`px-2 py-1 rounded text-[10px] font-mono font-bold transition-all border ${ollamaModel === m ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 text-slate-400 border-white/5 hover:bg-slate-700/50'}`}
+                                           >
+                                               {m}
+                                           </button>
+                                       ))}
+                                   </div>
+                               )}
+                               <p className="text-[10px] text-slate-500">
+                                   <span className="text-cyan-400 font-bold">llama3.1:8b</span> = Recommended |
+                                   <span className="text-green-400 font-bold ml-1">llama3.2:3b</span> = Fastest / low RAM |
+                                   <span className="text-purple-400 font-bold ml-1">llama3.3:70b</span> = Highest quality |
+                                   <span className="text-yellow-400 font-bold ml-1">Any pulled model</span> works
+                               </p>
+                              </div>
+
+                              <div className={`space-y-2 transition-opacity duration-300 ${aiEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Vision Model (Pre-Market Charts)</label>
+                               <div className="relative group">
+                                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-cyan-400 transition-colors">
+                                       <Eye size={16} />
+                                   </div>
+                                   <input 
+                                       type="text"
+                                       list="ollama-vision-model-options"
+                                       value={ollamaVisionModel} 
+                                       onChange={(e) => setOllamaVisionModel(e.target.value)}
+                                       placeholder={DEFAULT_OLLAMA_VISION_MODEL}
+                                       className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent outline-none transition-all font-mono"
+                                   />
+                                   <datalist id="ollama-vision-model-options">
+                                       {ollamaInstalledVisionModels.map(m => <option key={m} value={m}>Installed · vision</option>)}
+                                       {OLLAMA_VISION_MODELS.filter(m => !ollamaInstalledVisionModels.includes(m.id)).map(m => (
+                                           <option key={m.id} value={m.id}>{m.name}</option>
+                                       ))}
+                                   </datalist>
+                               </div>
+                               {ollamaInstalledVisionModels.length > 0 && (
+                                   <div className="flex flex-wrap gap-1.5 pt-1">
+                                       {ollamaInstalledVisionModels.map(m => (
+                                           <button 
+                                               key={m}
+                                               onClick={() => setOllamaVisionModel(m)}
+                                               className={`px-2 py-1 rounded text-[10px] font-mono font-bold transition-all border ${ollamaVisionModel === m ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-800/50 text-slate-400 border-white/5 hover:bg-slate-700/50'}`}
+                                           >
+                                               {m}
+                                           </button>
+                                       ))}
+                                   </div>
+                               )}
+                               <p className="text-[10px] text-slate-500">
+                                   Chart screenshots need a multimodal model - text models ignore images. Run
+                                   <span className="text-cyan-400 font-mono"> ollama pull {DEFAULT_OLLAMA_VISION_MODEL}</span> (or
+                                   <span className="text-cyan-400 font-mono"> llava:7b</span> for low RAM).
+                               </p>
+                              </div>
+                            </>
+                         )}
                     </div>
                 </div>
 
@@ -1001,7 +1192,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             System Preferences
                         </h2>
                     </div>
-                    <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="p-6 grid grid-cols-1 gap-6">
                          <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Data Refresh Rate</label>
                             <div className="relative">
@@ -1062,6 +1253,226 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             </button>
                          </div>
                     </div>
+                </div>
+
+                {/* ============ DATA MANAGEMENT ============
+                    Lives here rather than in a tab of its own: these are
+                    configuration actions, and splitting them off meant the user had
+                    to know which tab owned "delete my snapshots". Full-width
+                    elements below use col-span-full so they read as section rules
+                    rather than as another card in the row. */}
+                <div className="col-span-full flex items-center gap-3 pt-2">
+                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Data Management</span>
+                    <div className="h-px flex-1 bg-slate-800" />
+                </div>
+
+                <div className="col-span-full glass-panel p-4 rounded-xl bg-yellow-500/5 border border-yellow-500/20">
+                    <div className="flex items-start gap-3">
+                        <AlertTriangle size={20} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+                        <div>
+                            <h3 className="font-bold text-yellow-400 mb-1">Caution: Irreversible Operations</h3>
+                            <p className="text-sm text-slate-300">
+                                These operations permanently delete data from your Redis/Upstash database.
+                                Local IndexedDB history is not affected.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {clearMessage && (
+                    <div className={`col-span-full glass-panel p-4 rounded-xl ${
+                        clearMessage.type === 'success'
+                            ? 'bg-green-500/5 border-green-500/20'
+                            : 'bg-red-500/5 border-red-500/20'
+                    }`}>
+                        <div className="flex items-center gap-3">
+                            {clearMessage.type === 'success' ? (
+                                <CheckCircle size={20} className="text-green-400 flex-shrink-0" />
+                            ) : (
+                                <AlertTriangle size={20} className="text-red-400 flex-shrink-0" />
+                            )}
+                            <p className={`text-sm font-medium ${
+                                clearMessage.type === 'success' ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                                {clearMessage.text}
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Admin Secret Input */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800">
+                    <div className="px-6 py-4 bg-purple-900/20 border-b border-purple-500/20 flex items-center gap-3">
+                        <Lock size={20} className="text-purple-400" />
+                        <h2 className="text-lg font-bold text-purple-400">Admin Authentication</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Authorises the operations below. This is the <span className="font-bold text-white">ADMIN_SECRET</span> or <span className="font-bold text-white">CRON_SECRET</span> environment variable from your Vercel deployment.
+                        </p>
+                        <div className="space-y-2">
+                            <label className="block text-sm font-medium text-slate-300">
+                                Admin Secret
+                            </label>
+                            <input
+                                type="password"
+                                value={adminSecret}
+                                onChange={(e) => setAdminSecret(e.target.value)}
+                                placeholder="Enter admin secret..."
+                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            />
+                            <p className="text-xs text-slate-500">
+                                Stored locally and used to authenticate data deletion requests.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Clear All History */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800">
+                    <div className="px-6 py-4 bg-red-900/20 border-b border-red-500/20 flex items-center gap-3">
+                        <Trash2 size={20} className="text-red-400" />
+                        <h2 className="text-lg font-bold text-red-400">Clear All History</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Delete <span className="font-bold text-white">all historical snapshots</span> from Redis —
+                            every session ever collected.
+                        </p>
+                        <div className="flex items-center gap-3 p-4 bg-red-500/5 rounded-lg border border-red-500/20">
+                            <AlertTriangle size={18} className="text-red-400 flex-shrink-0" />
+                            <span className="text-sm text-slate-300">This cannot be undone.</span>
+                        </div>
+                        <button
+                            onClick={() => handleClearHistory('all')}
+                            disabled={clearingHistory}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-500 disabled:bg-red-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                        >
+                            {clearingHistory ? (
+                                <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                                    <span>Clearing...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 size={18} />
+                                    <span>Clear All History</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Clear Today's Data */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800">
+                    <div className="px-6 py-4 bg-orange-900/20 border-b border-orange-500/20 flex items-center gap-3">
+                        <Clock size={20} className="text-orange-400" />
+                        <h2 className="text-lg font-bold text-orange-400">Clear Today's Data</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Delete <span className="font-bold text-white">today's snapshots only</span> (last 8 hours).
+                            Useful for clearing test data or resetting the current session.
+                        </p>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Scope:</span>
+                                <span className="text-white font-mono">Last 8 hours</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Preserves:</span>
+                                <span className="text-green-400">Previous days</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => handleClearHistory('today')}
+                            disabled={clearingHistory}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                        >
+                            {clearingHistory ? (
+                                <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                                    <span>Clearing...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Clock size={18} />
+                                    <span>Clear Today's Data</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Clear Old Data */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800">
+                    <div className="px-6 py-4 bg-blue-900/20 border-b border-blue-500/20 flex items-center gap-3">
+                        <Layers size={20} className="text-blue-400" />
+                        <h2 className="text-lg font-bold text-blue-400">Clear Old Data</h2>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <p className="text-slate-300 text-sm">
+                            Delete old snapshots while keeping the <span className="font-bold text-white">latest 100</span>.
+                            The routine maintenance option.
+                        </p>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Keeps:</span>
+                                <span className="text-green-400 font-mono">Latest 100 snapshots</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Deletes:</span>
+                                <span className="text-red-400">All older snapshots</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-400">Recommended:</span>
+                                <span className="text-yellow-400">For storage optimization</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => handleClearHistory('old')}
+                            disabled={clearingHistory}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+                        >
+                            {clearingHistory ? (
+                                <>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                                    <span>Clearing...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Layers size={18} />
+                                    <span>Clear Old Data</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Info Section */}
+                <div className="col-span-full glass-panel p-6 rounded-xl border border-slate-800">
+                    <h3 className="font-bold text-white mb-3 flex items-center gap-2">
+                        <ShieldCheck size={18} className="text-blue-400" />
+                        Important Notes
+                    </h3>
+                    <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm text-slate-300">
+                        <li className="flex items-start gap-2">
+                            <span className="text-blue-400 mt-0.5">•</span>
+                            <span>These operations affect only your <strong>Redis/Upstash database</strong>, not local IndexedDB storage</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-blue-400 mt-0.5">•</span>
+                            <span>Local browser history in IndexedDB remains intact and can be cleared separately with <strong>Reset</strong> above</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-blue-400 mt-0.5">•</span>
+                            <span>All operations require confirmation before execution</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-blue-400 mt-0.5">•</span>
+                            <span>Use "Clear Old Data" for regular maintenance to keep database size manageable</span>
+                        </li>
+                    </ul>
                 </div>
             </div>
         )}
@@ -1570,7 +1981,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                         <BarChart4 size={20} className="text-purple-400" />
                         Provider Breakdown
                     </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
                         <div>
                             <div className="text-sm text-slate-400 mb-2">Total Calls</div>
                             <div className="text-3xl font-bold text-white">{apiStats.total}</div>
@@ -1594,6 +2005,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             <div className="text-3xl font-bold text-orange-400">{apiStats.claudeCalls}</div>
                             <div className="text-xs text-slate-500 mt-1">
                                 {apiStats.total > 0 ? ((apiStats.claudeCalls / apiStats.total) * 100).toFixed(1) : 0}%
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Cerebras Calls</div>
+                            <div className="text-3xl font-bold text-amber-400">{apiStats.cerebrasCalls}</div>
+                            <div className="text-xs text-slate-500 mt-1">
+                                {apiStats.total > 0 ? ((apiStats.cerebrasCalls / apiStats.total) * 100).toFixed(1) : 0}%
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Local Llama Calls</div>
+                            <div className="text-3xl font-bold text-cyan-400">{apiStats.ollamaCalls}</div>
+                            <div className="text-xs text-slate-500 mt-1">
+                                {apiStats.total > 0 ? ((apiStats.ollamaCalls / apiStats.total) * 100).toFixed(1) : 0}% · Free
                             </div>
                         </div>
                     </div>
@@ -1684,223 +2109,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             <p className="text-xs mt-2">AI stats will appear when you use AI features</p>
                         </div>
                     )}
-                </div>
-            </div>
-        )}
-
-        {activeTab === 'data-management' && (
-            <div className="max-w-4xl mx-auto animate-in slide-in-from-bottom-4 duration-300 pb-20">
-                {/* Header Warning */}
-                <div className="glass-panel p-4 rounded-xl mb-6 bg-yellow-500/5 border border-yellow-500/20">
-                    <div className="flex items-start gap-3">
-                        <AlertTriangle size={20} className="text-yellow-400 flex-shrink-0 mt-0.5" />
-                        <div>
-                            <h3 className="font-bold text-yellow-400 mb-1">Caution: Irreversible Operations</h3>
-                            <p className="text-sm text-slate-300">
-                                These operations will permanently delete data from your Redis/Upstash database. 
-                                Please be careful when using these features.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Status Message */}
-                {clearMessage && (
-                    <div className={`glass-panel p-4 rounded-xl mb-6 ${
-                        clearMessage.type === 'success' 
-                            ? 'bg-green-500/5 border-green-500/20' 
-                            : 'bg-red-500/5 border-red-500/20'
-                    }`}>
-                        <div className="flex items-center gap-3">
-                            {clearMessage.type === 'success' ? (
-                                <CheckCircle size={20} className="text-green-400 flex-shrink-0" />
-                            ) : (
-                                <AlertTriangle size={20} className="text-red-400 flex-shrink-0" />
-                            )}
-                            <p className={`text-sm font-medium ${
-                                clearMessage.type === 'success' ? 'text-green-400' : 'text-red-400'
-                            }`}>
-                                {clearMessage.text}
-                            </p>
-                        </div>
-                    </div>
-                )}
-
-                {/* Admin Secret Input */}
-                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
-                    <div className="px-6 py-4 bg-purple-900/20 border-b border-purple-500/20 flex items-center gap-3">
-                        <Lock size={20} className="text-purple-400" />
-                        <h2 className="text-lg font-bold text-purple-400">Admin Authentication</h2>
-                    </div>
-                    <div className="p-6 space-y-4">
-                        <p className="text-slate-300 text-sm">
-                            Enter your admin secret to authorize data management operations. This is the <span className="font-bold text-white">ADMIN_SECRET</span> or <span className="font-bold text-white">CRON_SECRET</span> environment variable from your Vercel deployment.
-                        </p>
-                        <div className="space-y-2">
-                            <label className="block text-sm font-medium text-slate-300">
-                                Admin Secret
-                            </label>
-                            <input
-                                type="password"
-                                value={adminSecret}
-                                onChange={(e) => setAdminSecret(e.target.value)}
-                                placeholder="Enter admin secret..."
-                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                            />
-                            <p className="text-xs text-slate-500">
-                                This secret is stored locally and used to authenticate data deletion requests.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Clear All History */}
-                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
-                    <div className="px-6 py-4 bg-red-900/20 border-b border-red-500/20 flex items-center gap-3">
-                        <Trash2 size={20} className="text-red-400" />
-                        <h2 className="text-lg font-bold text-red-400">Clear All History</h2>
-                    </div>
-                    <div className="p-6 space-y-4">
-                        <p className="text-slate-300 text-sm">
-                            Delete <span className="font-bold text-white">all historical snapshots</span> from Redis. 
-                            This will remove all market data collected across all sessions.
-                        </p>
-                        <div className="flex items-center gap-3 p-4 bg-red-500/5 rounded-lg border border-red-500/20">
-                            <AlertTriangle size={18} className="text-red-400 flex-shrink-0" />
-                            <span className="text-sm text-slate-300">
-                                This action cannot be undone. All historical data will be permanently deleted.
-                            </span>
-                        </div>
-                        <button
-                            onClick={() => handleClearHistory('all')}
-                            disabled={clearingHistory}
-                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-500 disabled:bg-red-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
-                        >
-                            {clearingHistory ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                                    <span>Clearing...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Trash2 size={18} />
-                                    <span>Clear All History</span>
-                                </>
-                            )}
-                        </button>
-                    </div>
-                </div>
-
-                {/* Clear Today's Data */}
-                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
-                    <div className="px-6 py-4 bg-orange-900/20 border-b border-orange-500/20 flex items-center gap-3">
-                        <Clock size={20} className="text-orange-400" />
-                        <h2 className="text-lg font-bold text-orange-400">Clear Today's Data</h2>
-                    </div>
-                    <div className="p-6 space-y-4">
-                        <p className="text-slate-300 text-sm">
-                            Delete <span className="font-bold text-white">today's snapshots only</span> (last 8 hours). 
-                            Useful for clearing test data or resetting the current session.
-                        </p>
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-slate-400">Scope:</span>
-                                <span className="text-white font-mono">Last 8 hours</span>
-                            </div>
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-slate-400">Preserves:</span>
-                                <span className="text-green-400">Historical data from previous days</span>
-                            </div>
-                        </div>
-                        <button
-                            onClick={() => handleClearHistory('today')}
-                            disabled={clearingHistory}
-                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 hover:bg-orange-500 disabled:bg-orange-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
-                        >
-                            {clearingHistory ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                                    <span>Clearing...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Clock size={18} />
-                                    <span>Clear Today's Data</span>
-                                </>
-                            )}
-                        </button>
-                    </div>
-                </div>
-
-                {/* Clear Old Data */}
-                <div className="glass-panel rounded-xl overflow-hidden border border-slate-800 mb-6">
-                    <div className="px-6 py-4 bg-blue-900/20 border-b border-blue-500/20 flex items-center gap-3">
-                        <Layers size={20} className="text-blue-400" />
-                        <h2 className="text-lg font-bold text-blue-400">Clear Old Data</h2>
-                    </div>
-                    <div className="p-6 space-y-4">
-                        <p className="text-slate-300 text-sm">
-                            Delete old snapshots while keeping the <span className="font-bold text-white">latest 100 snapshots</span>. 
-                            Useful for managing storage without losing recent data.
-                        </p>
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-slate-400">Keeps:</span>
-                                <span className="text-green-400 font-mono">Latest 100 snapshots</span>
-                            </div>
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-slate-400">Deletes:</span>
-                                <span className="text-red-400">All older snapshots</span>
-                            </div>
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-slate-400">Recommended:</span>
-                                <span className="text-yellow-400">For storage optimization</span>
-                            </div>
-                        </div>
-                        <button
-                            onClick={() => handleClearHistory('old')}
-                            disabled={clearingHistory}
-                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
-                        >
-                            {clearingHistory ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                                    <span>Clearing...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Layers size={18} />
-                                    <span>Clear Old Data</span>
-                                </>
-                            )}
-                        </button>
-                    </div>
-                </div>
-
-                {/* Info Section */}
-                <div className="glass-panel p-6 rounded-xl border border-slate-800">
-                    <h3 className="font-bold text-white mb-3 flex items-center gap-2">
-                        <ShieldCheck size={18} className="text-blue-400" />
-                        Important Notes
-                    </h3>
-                    <ul className="space-y-2 text-sm text-slate-300">
-                        <li className="flex items-start gap-2">
-                            <span className="text-blue-400 mt-0.5">•</span>
-                            <span>These operations affect only your <strong>Redis/Upstash database</strong>, not local IndexedDB storage</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-blue-400 mt-0.5">•</span>
-                            <span>Local browser history in IndexedDB remains intact and can be cleared separately from Settings → Reset</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-blue-400 mt-0.5">•</span>
-                            <span>All operations require confirmation before execution</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-blue-400 mt-0.5">•</span>
-                            <span>Use "Clear Old Data" for regular maintenance to keep database size manageable</span>
-                        </li>
-                    </ul>
                 </div>
             </div>
         )}

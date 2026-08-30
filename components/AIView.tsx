@@ -117,6 +117,16 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
 };
 
 export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, optionQuotes, credentials, aiEnabled }) => {
+  const providerBadge = useMemo(() => {
+    switch (credentials.aiProvider || 'gemini') {
+      case 'groq': return { label: '🟣 Groq', chip: 'bg-purple-500/20 text-purple-300', dot: 'bg-purple-400' };
+      case 'claude': return { label: '🟠 Claude', chip: 'bg-orange-500/20 text-orange-300', dot: 'bg-orange-400' };
+      case 'cerebras': return { label: '🟡 Cerebras', chip: 'bg-amber-500/20 text-amber-300', dot: 'bg-amber-400' };
+      case 'ollama': return { label: '🦙 Local Llama', chip: 'bg-cyan-500/20 text-cyan-300', dot: 'bg-cyan-400' };
+      default: return { label: '🟢 Gemini', chip: 'bg-green-500/20 text-green-300', dot: 'bg-green-400' };
+    }
+  }, [credentials.aiProvider]);
+
   const [activeTab, setActiveTab] = useState<'chat' | 'live'>('chat');
   const [input, setInput] = useState('');
   
@@ -229,8 +239,8 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
         // Check if Groq supports Google Search (it doesn't - only Gemini has this feature)
         let responseText = '';
         
-        if (credentials.aiProvider === 'groq' || !credentials.googleApiKey) {
-            // Use callAI utility (supports both Groq and Gemini)
+        if (credentials.aiProvider && credentials.aiProvider !== 'gemini' || !credentials.googleApiKey) {
+            // Use callAI utility (supports Groq, Claude, Cerebras, local Ollama and Gemini)
             responseText = await callAI(credentials, systemInstruction, userMsg);
         } else {
             // Use Gemini directly for Google Search capability
@@ -308,9 +318,9 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
       setIsLiveConnecting(true);
 
       try {
-          // Live API only works with Gemini, show warning if user selected Groq
-          if (credentials.aiProvider === 'groq') {
-              throw new Error("Live streaming not supported with Groq. Please switch to Gemini in Settings.");
+          // Live API only works with Gemini, show warning if another provider is selected
+          if (credentials.aiProvider && credentials.aiProvider !== 'gemini') {
+              throw new Error(`Live streaming is not supported with ${credentials.aiProvider}. Please switch to Gemini in Settings.`);
           }
           
           if (!credentials.googleApiKey) throw new Error("Google Gemini API Key missing");
@@ -461,9 +471,9 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
               {/* Toolbar */}
               <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
                   {/* AI Provider Status */}
-                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${credentials.aiProvider === 'groq' ? 'bg-purple-500/20 text-purple-300' : 'bg-green-500/20 text-green-300'}`}>
-                      <div className={`w-2 h-2 rounded-full ${credentials.aiProvider === 'groq' ? 'bg-purple-400 animate-pulse' : 'bg-green-400 animate-pulse'}`}></div>
-                      {credentials.aiProvider === 'groq' ? '🟣 Groq' : '🟢 Gemini'}
+                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${providerBadge.chip}`}>
+                      <div className={`w-2 h-2 rounded-full animate-pulse ${providerBadge.dot}`}></div>
+                      {providerBadge.label}
                   </div>
                   <button onClick={clearHistory} className="p-2 rounded-lg bg-slate-800/50 text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors" title="Clear Chat History">
                       <Trash2 size={14} />
@@ -475,7 +485,7 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
                       <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[85%] rounded-2xl p-4 ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-800/80 rounded-bl-none border border-white/5'} ${m.isError ? 'bg-red-900/50 border-red-500' : ''}`}>
                               <div className="mb-2 flex items-center gap-2 opacity-60 text-[10px] font-bold uppercase tracking-wider">
-                                  {m.role === 'user' ? 'You' : <><Bot size={12}/> {credentials.aiProvider === 'groq' ? '🟣 Groq Analyst' : '🟢 Gemini Analyst'}</>}
+                                  {m.role === 'user' ? 'You' : <><Bot size={12}/> {providerBadge.label} Analyst</>}
                               </div>
                               {m.role === 'user' ? (
                                   <div className="text-sm leading-relaxed">{m.text}</div>

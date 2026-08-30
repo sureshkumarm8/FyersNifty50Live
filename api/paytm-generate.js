@@ -156,7 +156,7 @@ async function handlePost(req, res) {
   }
 
   // Action 1: Initialize session
-  if (action === 'init-session' || !sessionId) {
+  if (action === 'init-session' || (!action && !sessionId)) {
     const newSessionId = crypto.randomBytes(16).toString('hex');
     const stateKey = crypto.randomBytes(16).toString('hex');
 
@@ -184,21 +184,23 @@ async function handlePost(req, res) {
   }
 
   // Action 2: Complete auth with request token
-  if (action === 'complete-auth' && sessionId && requestToken) {
-    const session = sessions.get(sessionId);
-
+  if (action === 'complete-auth' && requestToken) {
+    // The session is bookkeeping, not a credential — the Paytm exchange is
+    // authenticated by the api key/secret checksum alone. On Vercel the init and
+    // the completion routinely land on different lambdas, so refusing to proceed
+    // without an in-memory session used to fail a login that was perfectly valid.
+    const session = sessions.get(sessionId) || null;
     if (!session) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Session not found or expired' }));
-      return;
+      console.warn(`[PaytmGenerate] No in-memory session for ${sessionId} — continuing anyway`);
     }
 
     try {
-      // Trim whitespace from request token
-      const trimmedToken = requestToken.trim();
-      
+      // Accept a bare token, a query string, or the whole redirect URL.
+      const raw = String(requestToken).trim();
+      const fromUrl = raw.match(/[?&#]?requestToken=([^&\s]+)/i);
+      const trimmedToken = fromUrl ? decodeURIComponent(fromUrl[1]) : raw;
+
       console.log(`[PaytmGenerate] Exchanging request token for session: ${sessionId}`);
-      console.log(`[PaytmGenerate] Request token: ${trimmedToken}`);
       console.log(`[PaytmGenerate] Request token length: ${trimmedToken.length}`);
       console.log(`[PaytmGenerate] API Key length: ${currentConfig.paytm.apiKey.length}`);
       console.log(`[PaytmGenerate] API Secret length: ${currentConfig.paytm.apiSecret.length}`);
@@ -236,11 +238,13 @@ async function handlePost(req, res) {
       if (tokenData.access_token) {
         console.log(`[PaytmGenerate] ✅ Token exchange successful`);
 
-        session.status = 'completed';
-        session.accessToken = tokenData.access_token;
-        session.publicAccessToken = tokenData.public_access_token;
-        session.readAccessToken = tokenData.read_access_token;
-        sessions.set(sessionId, session);
+        if (session) {
+          session.status = 'completed';
+          session.accessToken = tokenData.access_token;
+          session.publicAccessToken = tokenData.public_access_token;
+          session.readAccessToken = tokenData.read_access_token;
+          sessions.set(sessionId, session);
+        }
 
         // Save tokens locally
         saveTokensToFile('paytm', {
@@ -263,9 +267,11 @@ async function handlePost(req, res) {
         throw new Error(tokenData.message || 'Failed to generate token');
       }
     } catch (error) {
-      session.status = 'failed';
-      session.errorMessage = error.message;
-      sessions.set(sessionId, session);
+      if (session) {
+        session.status = 'failed';
+        session.errorMessage = error.message;
+        sessions.set(sessionId, session);
+      }
 
       console.error(`[PaytmGenerate] Auth error: ${error.message}`);
       res.writeHead(400, { 'Content-Type': 'application/json' });

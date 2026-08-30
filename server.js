@@ -67,7 +67,9 @@ function saveTokensToFile(broker, tokens) {
   }
 }
 
-const PORT = 5001; 
+const PORT = process.env.PORT ? Number(process.env.PORT) : 5001; 
+// Local chart-capture + vision-analysis engine (the liveImageAnalsis project).
+const VISION_SIDECAR_URL = (process.env.VISION_SIDECAR_URL || 'http://localhost:4321').replace(/\/+$/, '');
 const LOCAL_MODE = process.env.LOCAL_MODE === 'true' || process.env.NODE_ENV === 'development';
 
 // In-memory storage for local testing
@@ -78,8 +80,16 @@ const localStore = {
   latestSnapshot: null
 };
 
-const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
+const server = http.createServer(async (req, res) => {  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
 
@@ -103,12 +113,105 @@ const server = http.createServer(async (req, res) => {
                           reqUrl.pathname.startsWith('/api/clear-history') ||
                           reqUrl.pathname.startsWith('/api/paytm-generate') ||
                           reqUrl.pathname.startsWith('/api/paytm-market-data') ||
-                          reqUrl.pathname.startsWith('/api/save-paytm-token-direct');
+                          reqUrl.pathname.startsWith('/api/save-paytm-token-direct') ||
+                          reqUrl.pathname.startsWith('/api/ollama') ||
+                          reqUrl.pathname.startsWith('/api/vision');
 
   if (!LOCAL_MODE && !isLocalEndpoint && !authHeader) {
      res.writeHead(401, { 'Content-Type': 'application/json' });
      res.end(JSON.stringify({ error: 'Missing Authorization header' }));
      return;
+  }
+
+  // --- VISION SIDECAR PROXY ---
+  // The chart-capture engine (Playwright + Ollama vision) runs as a separate local
+  // process because it needs a real, non-headless Chrome with a persistent broker
+  // login - something serverless cannot host. We reverse-proxy it so the SPA can
+  // talk to it same-origin. Everything under /api/vision maps to the sidecar.
+  if (reqUrl.pathname.startsWith('/api/vision')) {
+    const rest = reqUrl.pathname.replace('/api/vision', '') || '/';
+    // Screenshots are served by the sidecar at /shots/<file>, everything else under /api.
+    const upstreamPath = rest.startsWith('/shots/') ? rest : `/api${rest === '/' ? '/status' : rest}`;
+    const targetUrl = `${VISION_SIDECAR_URL}${upstreamPath}${reqUrl.search}`;
+    const isEventStream = rest.startsWith('/events');
+
+    try {
+      const body = ['POST', 'PUT', 'DELETE'].includes(req.method) ? await readRequestBody(req) : undefined;
+      const upstream = await fetch(targetUrl, {
+        method: req.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body || undefined
+      });
+
+      // Server-Sent Events must be streamed through untouched, or the dashboard
+      // would sit waiting for a response that never ends.
+      if (isEventStream && upstream.body) {
+        res.writeHead(upstream.status, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no'
+        });
+        const reader = upstream.body.getReader();
+        req.on('close', () => reader.cancel().catch(() => {}));
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(Buffer.from(value));
+        }
+        res.end();
+        return;
+      }
+
+      const contentType = upstream.headers.get('content-type') || 'application/json';
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      res.writeHead(upstream.status, {
+        'Content-Type': contentType,
+        'Cache-Control': contentType.startsWith('image/') ? 'public, max-age=3600' : 'no-store'
+      });
+      res.end(buffer);
+    } catch (error) {
+      console.error('[Vision Proxy] Error:', error.message);
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'vision_sidecar_unreachable',
+        message: `Cannot reach the vision capture engine at ${VISION_SIDECAR_URL}. Start it with "npm start" in the liveImageAnalsis project.`,
+        sidecarUrl: VISION_SIDECAR_URL,
+        details: error.message
+      }));
+    }
+    return;
+  }
+
+  // --- LOCAL LLAMA (OLLAMA) PROXY ---  // Browsers block direct calls to http://localhost:11434 unless Ollama is started
+  // with OLLAMA_ORIGINS. This same-origin proxy is the fallback used by aiProvider.ts.
+  if (reqUrl.pathname.startsWith('/api/ollama')) {
+    const target = reqUrl.searchParams.get('target') || 'http://localhost:11434';
+    const upstreamPath = reqUrl.pathname.replace('/api/ollama', '') || '/api/tags';
+    const targetUrl = `${target.replace(/\/+$/, '')}${upstreamPath}`;
+
+    try {
+      const body = req.method === 'POST' ? await readRequestBody(req) : undefined;
+      console.log(`[Ollama Proxy] ${req.method} ${targetUrl}`);
+
+      const upstream = await fetch(targetUrl, {
+        method: req.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body || undefined
+      });
+
+      const text = await upstream.text();
+      res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
+      res.end(text);
+    } catch (error) {
+      console.error('[Ollama Proxy] Error:', error.message);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: `Cannot reach Ollama at ${target}. Is "ollama serve" running?`,
+        details: error.message
+      }));
+    }
+    return;
   }
 
   // --- LOCAL TESTING ENDPOINTS ---
@@ -514,27 +617,32 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Action 2: Complete auth with request token
-        if (data.action === 'complete-auth' && data.sessionId && data.requestToken) {
-          const session = localStore.paytmSessions.get(data.sessionId);
-          
+        if (data.action === 'complete-auth' && data.requestToken) {
+          // The session is bookkeeping only — the Paytm exchange is authenticated
+          // by the api key/secret checksum. A restarted dev server (or a second
+          // lambda in production) must not invalidate a perfectly good login.
+          const session = localStore.paytmSessions.get(data.sessionId) || null;
           if (!session) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'Session not found or expired' }));
-            return;
+            console.warn(`[Paytm] No in-memory session for ${data.sessionId} — continuing anyway`);
           }
 
           try {
+            // Accept a bare token, a query string, or the whole redirect URL.
+            const raw = String(data.requestToken).trim();
+            const fromUrl = raw.match(/[?&#]?requestToken=([^&\s]+)/i);
+            const requestTokenValue = fromUrl ? decodeURIComponent(fromUrl[1]) : raw;
+
             console.log(`[Paytm] Exchanging request token for session: ${data.sessionId}`);
-            console.log(`[Paytm] Request token length: ${data.requestToken?.length || 0}`);
+            console.log(`[Paytm] Request token length: ${requestTokenValue.length}`);
             
             const checksum = crypto
               .createHash('sha256')
-              .update(`${config.paytm.apiKey}${data.requestToken}${config.paytm.apiSecret}`)
+              .update(`${config.paytm.apiKey}${requestTokenValue}${config.paytm.apiSecret}`)
               .digest('hex');
             
             const requestBody = {
               api_key: config.paytm.apiKey,
-              request_token: data.requestToken,
+              request_token: requestTokenValue,
               api_secret_key: config.paytm.apiSecret,
               checksum: checksum,
             };
@@ -555,11 +663,13 @@ const server = http.createServer(async (req, res) => {
             const tokenData = await paytmResponse.json();
 
             if (tokenData.access_token) {
-              session.status = 'completed';
-              session.accessToken = tokenData.access_token;
-              session.publicAccessToken = tokenData.public_access_token;
-              session.readAccessToken = tokenData.read_access_token;
-              localStore.paytmSessions.set(data.sessionId, session);
+              if (session) {
+                session.status = 'completed';
+                session.accessToken = tokenData.access_token;
+                session.publicAccessToken = tokenData.public_access_token;
+                session.readAccessToken = tokenData.read_access_token;
+                localStore.paytmSessions.set(data.sessionId, session);
+              }
 
               // Save tokens locally
               saveTokensToFile('paytm', {
@@ -583,9 +693,11 @@ const server = http.createServer(async (req, res) => {
               throw new Error(tokenData.message || 'Failed to generate token');
             }
           } catch (error) {
-            session.status = 'failed';
-            session.errorMessage = error.message;
-            localStore.paytmSessions.set(data.sessionId, session);
+            if (session) {
+              session.status = 'failed';
+              session.errorMessage = error.message;
+              localStore.paytmSessions.set(data.sessionId, session);
+            }
 
             console.error(`[Paytm] Auth error for session ${data.sessionId}:`, error.message);
             res.writeHead(400, { 'Content-Type': 'application/json' });

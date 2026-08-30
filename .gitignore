@@ -28,3 +28,8 @@ dist-ssr
 !fyers_config_template.json
 *.key
 *.secret
+
+# Broker credential dumps — these contain live API keys, secrets and access tokens
+*_tokens_*.json
+paytm_tokens*.json
+Nifty50_AI_config_tokens*.json

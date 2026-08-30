@@ -10,11 +10,19 @@ import {
   Brain, TrendingUp, TrendingDown, Target, Shield, 
   Zap, Activity, AlertTriangle, CheckCircle, Crosshair,
   BarChart3, Clock, Layers, Scale, ArrowUpCircle, ArrowDownCircle,
-  Minus, Info, RefreshCw, Play, Pause, Bot, Upload, Sparkles, X, Download
+  Minus, Info, RefreshCw, Play, Pause, Bot, Upload, Sparkles, X, Download,
+  History, Radar, Award, ClipboardList
 } from 'lucide-react';
 import { EnrichedFyersQuote, MarketSnapshot } from '../types';
 import { dbService } from '../services/db';
 import { importCSVFile } from '../services/csv';
+import PredictionsPanel from './PredictionsPanel';
+import MarketMemoryPanel from './ailab/MarketMemoryPanel';
+import RegimeRadarPanel from './ailab/RegimeRadarPanel';
+import ScorecardPanel from './ailab/ScorecardPanel';
+import DebriefPanel from './ailab/DebriefPanel';
+import { useArchiveSeries } from './ailab/useArchiveSeries';
+import { agentScorecard } from '../services/agentScorecard';
 
 interface AILabProps {
   currentSnapshot: MarketSnapshot | null;
@@ -53,25 +61,19 @@ interface Recommendation {
   validUntil: Date;
 }
 
-// Predicted snapshot type - matching history view structure
-interface PredictedSnapshot {
-  time: string;
-  niftyLtp: number;
-  ptsChg: number;
-  overallSent: number;
-  adv: number;
-  dec: number;
-  stockSent: number;
-  callSent: number;
-  putSent: number;
-  pcr: number;
-  optionsSent: number;
-  callsBuyQty: number;
-  callsSellQty: number;
-  putsBuyQty: number;
-  putsSellQty: number;
-  confidence: number;
-}
+// Predicted snapshot type and the forecaster itself now live in PredictionsPanel.
+
+type AILabTab = 'agents' | 'scorecard' | 'predictions' | 'memory' | 'regime' | 'debrief' | 'research';
+
+const TABS: Array<{ id: AILabTab; label: string; icon: React.ReactNode }> = [
+  { id: 'agents', label: 'AI Agents', icon: <Bot size={14} /> },
+  { id: 'scorecard', label: 'Scorecard', icon: <Award size={14} /> },
+  { id: 'predictions', label: 'Predictions', icon: <Sparkles size={14} /> },
+  { id: 'memory', label: 'Market Memory', icon: <History size={14} /> },
+  { id: 'regime', label: 'Regime & Risk', icon: <Radar size={14} /> },
+  { id: 'debrief', label: 'Debrief', icon: <ClipboardList size={14} /> },
+  { id: 'research', label: 'Research', icon: <Brain size={14} /> }
+];
 
 const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, historyLog }) => {
   const [isActive, setIsActive] = useState(true);
@@ -81,142 +83,49 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
-  const [predictions, setPredictions] = useState<PredictedSnapshot[]>([]);
-  const [isPredicting, setIsPredicting] = useState(false);
-  const [showPredictions, setShowPredictions] = useState(false);
-  const [archivedPredictions, setArchivedPredictions] = useState<PredictedSnapshot[]>([]);
-  const [isArchivePredicting, setIsArchivePredicting] = useState(false);
-  const [showArchivedPredictions, setShowArchivedPredictions] = useState(false);
-  const [hybridPredictions, setHybridPredictions] = useState<PredictedSnapshot[]>([]);
-  const [isHybridPredicting, setIsHybridPredicting] = useState(false);
-  const [showHybridPredictions, setShowHybridPredictions] = useState(false);
   const [archivedSnapshots, setArchivedSnapshots] = useState<MarketSnapshot[]>([]);
-  const [activeTab, setActiveTab] = useState<'agents' | 'predictions' | 'research'>('agents');
+  const [activeTab, setActiveTab] = useState<AILabTab>('agents');
+  const [scorecardKey, setScorecardKey] = useState(0);
   const [researchQuery, setResearchQuery] = useState('');
   const [researchResults, setResearchResults] = useState<any>(null);
   const [isResearching, setIsResearching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Reusable Prediction Table Component
-  const PredictionTable: React.FC<{ predictions: PredictedSnapshot[]; type: string }> = ({ predictions, type }) => (
-    <div className="overflow-x-auto">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-xs text-slate-400">
-          {type === 'archived' && '📦 Based on historical data patterns'}
-          {type === 'hybrid' && '⚡ Combined live + archived data (Best accuracy)'}
-        </div>
-        <div className="text-xs font-mono text-slate-500">
-          {predictions.length} predictions • Next {predictions.length * 5} minutes
-        </div>
-      </div>
-      <table className="w-full text-sm text-center border-collapse">
-        <thead className="sticky top-0 glass-header text-slate-500 uppercase text-[9px] sm:text-[10px] font-bold tracking-widest">
-          <tr>
-            <th className="px-2 sm:px-4 py-2 sm:py-3 text-left">Time</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3">Nifty LTP</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3">Pts Chg</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Overall Sent.</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3">Adv/Dec</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3">Stk Str</th>
-            
-            <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Call Str</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3">Put Str</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3">PCR</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3 bg-white/5">Opt Str</th>
-            
-            <th className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5">Calls Buy/Sell (M)</th>
-            <th className="px-1 sm:px-2 py-2 sm:py-3">Puts Buy/Sell (M)</th>
-            <th className={`px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 ${type === 'archived' ? 'bg-blue-500/10' : 'bg-purple-500/10'}`}>Conf</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-white/5 bg-slate-900/20">
-          {predictions.map((pred, idx) => (
-            <tr key={idx} className="hover:bg-white/5 transition-colors group">
-              <td className={`px-2 sm:px-4 py-2 sm:py-3 text-left font-bold text-[10px] sm:text-sm font-mono border-r border-white/5 bg-slate-900/30 group-hover:text-${type === 'archived' ? 'blue' : 'purple'}-300 ${type === 'archived' ? 'text-blue-400' : 'text-purple-400'}`}>
-                {pred.time}
-              </td>
-              <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm text-slate-400 group-hover:text-white">
-                {pred.niftyLtp.toFixed(2)}
-              </td>
-              <td className={`px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm font-bold ${
-                pred.ptsChg >= 0 ? 'text-bull' : 'text-bear'
-              }`}>
-                {pred.ptsChg > 0 ? '+' : ''}{pred.ptsChg.toFixed(1)}
-              </td>
-              
-              <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 font-bold text-[10px] sm:text-sm bg-white/5">
-                <span className={pred.overallSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
-                  {pred.overallSent > 0 ? '+' : ''}{pred.overallSent.toFixed(1)}%
-                </span>
-              </td>
-              <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm">
-                <span className="text-bull font-bold">{pred.adv}</span> / <span className="text-bear font-bold">{pred.dec}</span>
-              </td>
-              <td className="px-1 sm:px-2 py-2 sm:py-3 text-[10px] sm:text-sm">
-                <span className={pred.stockSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
-                  {pred.stockSent > 0 ? '+' : ''}{pred.stockSent.toFixed(1)}%
-                </span>
-              </td>
-              
-              <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 text-[10px] sm:text-sm">
-                <span className={pred.callSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
-                  {pred.callSent > 0 ? '+' : ''}{pred.callSent.toFixed(1)}%
-                </span>
-              </td>
-              <td className="px-1 sm:px-2 py-2 sm:py-3 text-[10px] sm:text-sm">
-                <span className={pred.putSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
-                  {pred.putSent > 0 ? '+' : ''}{pred.putSent.toFixed(1)}%
-                </span>
-              </td>
-              <td className={`px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm font-bold ${
-                pred.pcr > 1 ? 'text-bull' : pred.pcr < 0.7 ? 'text-bear' : 'text-blue-200'
-              }`}>
-                {pred.pcr.toFixed(2)}
-              </td>
-              <td className="px-1 sm:px-2 py-2 sm:py-3 font-bold text-[10px] sm:text-sm bg-white/5 border-l border-white/5">
-                <span className={pred.optionsSent >= 0 ? 'text-bull text-glow-green' : 'text-bear text-glow-red'}>
-                  {pred.optionsSent > 0 ? '+' : ''}{pred.optionsSent.toFixed(1)}%
-                </span>
-              </td>
-              
-              <td className="px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 font-mono text-[9px] sm:text-xs opacity-80">
-                <span className="text-bull">{(pred.callsBuyQty / 1000000).toFixed(2)}M</span> <span className="text-slate-600">/</span> <span className="text-bear">{(pred.callsSellQty / 1000000).toFixed(2)}M</span>
-              </td>
-              <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[9px] sm:text-xs opacity-80">
-                <span className="text-bull">{(pred.putsBuyQty / 1000000).toFixed(2)}M</span> <span className="text-slate-600">/</span> <span className="text-bear">{(pred.putsSellQty / 1000000).toFixed(2)}M</span>
-              </td>
-              <td className={`px-1 sm:px-2 py-2 sm:py-3 border-l border-white/5 ${type === 'archived' ? 'bg-blue-500/10' : 'bg-purple-500/10'}`}>
-                <div className="flex items-center gap-1 justify-center">
-                  <div className="w-12 bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className={`h-full transition-all ${type === 'archived' ? 'bg-blue-500' : 'bg-purple-500'}`}
-                      style={{ width: `${pred.confidence}%` }}
-                    />
-                  </div>
-                  <span className={`text-[9px] font-bold min-w-[25px] ${type === 'archived' ? 'text-blue-400' : 'text-purple-400'}`}>
-                    {pred.confidence}%
-                  </span>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      
-      <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-start gap-3">
-        <AlertTriangle size={16} className="text-yellow-400 flex-shrink-0 mt-0.5" />
-        <div className="text-xs text-slate-300">
-          <p className="font-bold text-yellow-400 mb-1">Prediction Disclaimer</p>
-          <p>These are AI-generated forecasts based on {type === 'archived' ? 'historical patterns' : 'live market data + historical context'}. Actual market movements may vary significantly. Use for reference only.</p>
-        </div>
-      </div>
-    </div>
-  );
+  // Shared across Market Memory, Regime Radar and Debrief so the archive is
+  // converted into the model's feature space once rather than three times.
+  const archiveSeries = useArchiveSeries(historyLog);
 
   // Load archived data on mount for predictions
   useEffect(() => {
     loadArchivedData();
   }, []);
+
+  /**
+   * Grade outstanding agent calls against what the market actually did.
+   *
+   * Runs on an interval rather than after each analysis because a call made now
+   * cannot be graded until its horizon has elapsed. Without this loop the
+   * scorecard would fill with calls that are never scored, and the agents would
+   * go on claiming confidence that nothing ever checked.
+   */
+  useEffect(() => {
+    if (historyLog.length < 5) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const n = await agentScorecard.grade(historyLog as any);
+        if (n > 0 && !cancelled) setScorecardKey(k => k + 1);
+      } catch (e) {
+        console.error('Agent grading failed:', e);
+      }
+    };
+    run();
+    const id = setInterval(run, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [historyLog]);
 
   const loadArchivedData = async () => {
     try {
@@ -464,33 +373,36 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
       : 100;
     
     const volatilityPercent = (recentVolatility / niftyLtp) * 100;
-    
+
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let confidence = 50;
     const reasoning: string[] = [];
 
     if (volatilityPercent < 0.5) {
-      action = 'BUY';
       confidence = 70;
       reasoning.push(`Low volatility: ${volatilityPercent.toFixed(2)}%`);
-      reasoning.push('Favorable risk conditions');
+      reasoning.push('Favourable conditions — normal position size is appropriate');
     } else if (volatilityPercent > 1.5) {
-      action = 'HOLD';
       confidence = 75;
       reasoning.push(`High volatility: ${volatilityPercent.toFixed(2)}%`);
-      reasoning.push('Wait for stability');
+      reasoning.push('Reduce size — ordinary stops are hit by noise alone here');
     } else {
-      action = 'BUY';
       confidence = 60;
       reasoning.push(`Moderate volatility: ${volatilityPercent.toFixed(2)}%`);
       reasoning.push('Acceptable risk level');
     }
 
+    // This agent measures how much the market can move, not which way. It used
+    // to answer BUY whenever volatility was anything but high, which meant a
+    // "risk" agent cast a permanent bullish vote into the ensemble on evidence
+    // that says nothing about direction — walk-forward testing found no
+    // directional information in volatility at these horizons. It now abstains
+    // from the direction vote (score 0) and contributes only its read on size.
     return {
       action,
       confidence,
       reasoning,
-      score: confidence * (action === 'BUY' ? 1 : action === 'SELL' ? -1 : 0)
+      score: 0
     };
   }, [currentSnapshot, niftyLtp, historyLog]);
 
@@ -583,6 +495,41 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
     }
     
     setAgents(updatedAgents);
+
+    // Record what each agent claimed, so it can be graded against the outcome
+    // later. This is what turns a displayed confidence number into a testable
+    // one — duplicate suppression inside the scorecard keeps the refresh loop
+    // from manufacturing thousands of correlated "calls".
+    if (currentSnapshot && niftyLtp) {
+      const named: Array<[string, AgentDecision | null]> = [
+        ['Pattern Agent', patternAgent],
+        ['Sentiment Agent', sentimentAgent],
+        ['Momentum Agent', momentumAgent],
+        ['Levels Agent', levelsAgent],
+        ['Risk Agent', riskAgent],
+        ['Ensemble', ensembleDecision]
+      ];
+      try {
+        await agentScorecard.log(
+          named
+            .filter(([, d]) => d !== null)
+            .map(([name, d]) => ({
+              agent: name,
+              action: d!.action,
+              claimedConfidence: d!.confidence,
+              reasoning: d!.reasoning
+            })),
+          {
+            ltp: niftyLtp,
+            sent: (currentSnapshot as any).overallSent ?? 0,
+            pcr: (currentSnapshot as any).pcr ?? 0
+          }
+        );
+        setScorecardKey(k => k + 1);
+      } catch (e) {
+        console.error('Failed to record agent calls:', e);
+      }
+    }
     
     // Generate recommendation
     if (ensembleDecision && niftyLtp) {
@@ -624,276 +571,6 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
     if (action === 'BUY') return <ArrowUpCircle size={20} />;
     if (action === 'SELL') return <ArrowDownCircle size={20} />;
     return <Minus size={20} />;
-  };
-
-  // Generate predictions using ARCHIVED data only
-  const generateArchivedPredictions = async () => {
-    console.log(`🔮 Archived Prediction: archived=${archivedSnapshots.length}`);
-    
-    if (archivedSnapshots.length < 10) {
-      alert(`Need at least 10 archived snapshots. Currently have: ${archivedSnapshots.length}`);
-      return;
-    }
-
-    const latestSnapshot = archivedSnapshots[0];
-    setIsArchivePredicting(true);
-    try {
-      // Calculate trends from archived history
-      const recentHistory = archivedSnapshots.slice(0, 30); // Last 30 archived snapshots
-      // Calculate average momentum
-      const avgMomentum = recentHistory.slice(0, 10).reduce((sum, snap, idx) => {
-        if (idx === 0) return 0;
-        return sum + (snap.niftyLtp - recentHistory[idx - 1].niftyLtp);
-      }, 0) / 10;
-
-      // Calculate sentiment trends
-      const sentimentTrend = latestSnapshot.overallSent - 
-        (recentHistory.slice(0, 5).reduce((sum, s) => sum + s.overallSent, 0) / 5);
-      
-      const pcrTrend = latestSnapshot.pcr - 
-        (recentHistory.slice(0, 5).reduce((sum, s) => sum + s.pcr, 0) / 5);
-
-      // Calculate advance/decline trends
-      const avgAdv = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.adv || s.bullishCount || 25), 0) / 5;
-      const avgDec = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.dec || s.bearishCount || 25), 0) / 5;
-
-      // Calculate option volumes
-      const avgCallBuy = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.callsBuyQty || 5000000), 0) / 5;
-      const avgCallSell = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.callsSellQty || 5000000), 0) / 5;
-      const avgPutBuy = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.putsBuyQty || 5000000), 0) / 5;
-      const avgPutSell = recentHistory.slice(0, 5).reduce((sum, s) => sum + (s.putsSellQty || 5000000), 0) / 5;
-
-      // Generate predictions for next 6 intervals (30 minutes if 5-min intervals)
-      const newPredictions: PredictedSnapshot[] = [];
-      const currentTime = new Date();
-      let lastPrice = latestSnapshot.niftyLtp;
-      let lastSentiment = latestSnapshot.overallSent;
-      let lastPcr = latestSnapshot.pcr;
-      let lastAdv = latestSnapshot.adv || latestSnapshot.bullishCount || 25;
-      let lastDec = latestSnapshot.dec || latestSnapshot.bearishCount || 25;
-
-      for (let i = 1; i <= 6; i++) {
-        // Prediction time
-        const predTime = new Date(currentTime.getTime() + i * 5 * 60000); // 5 min intervals
-        
-        // Price prediction with momentum decay
-        const momentumDecay = 0.85; // Momentum reduces over time
-        const priceDelta = avgMomentum * Math.pow(momentumDecay, i);
-        const predictedPrice = lastPrice + priceDelta;
-
-        // Sentiment prediction with mean reversion
-        const sentimentMeanReversion = 0.7;
-        const sentimentDelta = sentimentTrend * Math.pow(sentimentMeanReversion, i);
-        const predictedSentiment = Math.max(-100, Math.min(100, 
-          lastSentiment + sentimentDelta
-        ));
-
-        // PCR prediction
-        const pcrDelta = pcrTrend * Math.pow(0.8, i);
-        const predictedPcr = Math.max(0.5, Math.min(2.0, lastPcr + pcrDelta));
-
-        // Advance/Decline prediction
-        const advDecDrift = (lastAdv - lastDec) * 0.3;
-        const predictedAdv = Math.max(0, Math.min(50, Math.round(lastAdv + advDecDrift * (Math.random() - 0.5))));
-        const predictedDec = Math.max(0, Math.min(50, 50 - predictedAdv));
-
-        // Derive other metrics
-        const predictedStockSent = predictedSentiment * (0.8 + Math.random() * 0.4);
-        const predictedCallSent = (predictedPcr < 1 ? 1 : -1) * (20 + Math.abs(1 - predictedPcr) * 40);
-        const predictedPutSent = (predictedPcr > 1 ? 1 : -1) * (20 + Math.abs(predictedPcr - 1) * 40);
-        const predictedOptionsSent = predictedCallSent - predictedPutSent;
-
-        // Option volumes with random walk
-        const volumeVariation = 0.9 + Math.random() * 0.2; // ±10% variation
-        const predictedCallBuy = avgCallBuy * volumeVariation;
-        const predictedCallSell = avgCallSell * volumeVariation;
-        const predictedPutBuy = avgPutBuy * volumeVariation;
-        const predictedPutSell = avgPutSell * volumeVariation;
-
-        // Confidence decreases over time
-        const confidence = Math.max(40, 85 - i * 8);
-
-        newPredictions.push({
-          time: predTime.toLocaleTimeString('en-IN', { 
-            hour: '2-digit', 
-            minute: '2-digit',
-            hour12: false 
-          }),
-          niftyLtp: predictedPrice,
-          ptsChg: predictedPrice - lastPrice,
-          overallSent: predictedSentiment,
-          adv: predictedAdv,
-          dec: predictedDec,
-          stockSent: predictedStockSent,
-          callSent: predictedCallSent,
-          putSent: predictedPutSent,
-          pcr: predictedPcr,
-          optionsSent: predictedOptionsSent,
-          callsBuyQty: predictedCallBuy,
-          callsSellQty: predictedCallSell,
-          putsBuyQty: predictedPutBuy,
-          putsSellQty: predictedPutSell,
-          confidence
-        });
-
-        lastPrice = predictedPrice;
-        lastSentiment = predictedSentiment;
-        lastPcr = predictedPcr;
-        lastAdv = predictedAdv;
-        lastDec = predictedDec;
-      }
-
-      setArchivedPredictions(newPredictions);
-      setShowArchivedPredictions(true);
-    } catch (error) {
-      console.error('Archived prediction error:', error);
-      alert('Failed to generate archived predictions');
-    } finally {
-      setIsArchivePredicting(false);
-    }
-  };
-
-  // Generate predictions using HYBRID approach (Live + Archived)
-  const generateHybridPredictions = async () => {
-    console.log(`🔮 Hybrid Prediction: live=${historyLog.length}, archived=${archivedSnapshots.length}`);
-    
-    if (historyLog.length < 5) {
-      alert(`Need at least 5 live snapshots for hybrid predictions. Currently have: ${historyLog.length}`);
-      return;
-    }
-
-    // Use live data as primary, archived as context
-    const latestSnapshot = historyLog[0] || currentSnapshot;
-    if (!latestSnapshot) {
-      alert('No current snapshot available');
-      return;
-    }
-
-    setIsHybridPredicting(true);
-    try {
-      // Combine live and archived data for trend analysis
-      const liveHistory = historyLog.slice(0, 10);
-      const archivedContext = archivedSnapshots.slice(0, 50);
-      
-      // Calculate live momentum (more weight)
-      const liveMomentum = liveHistory.slice(0, Math.min(5, liveHistory.length - 1)).reduce((sum, snap, idx) => {
-        if (idx === 0) return 0;
-        return sum + (snap.niftyLtp - liveHistory[idx - 1].niftyLtp);
-      }, 0) / Math.min(5, liveHistory.length - 1);
-
-      // Calculate archived momentum for context (less weight)
-      const archivedMomentum = archivedContext.length > 10 
-        ? archivedContext.slice(0, 10).reduce((sum, snap, idx) => {
-            if (idx === 0) return 0;
-            return sum + (snap.niftyLtp - archivedContext[idx - 1].niftyLtp);
-          }, 0) / 10
-        : 0;
-
-      // Weighted average: 70% live, 30% archived context
-      const avgMomentum = (liveMomentum * 0.7) + (archivedMomentum * 0.3);
-
-      // Calculate sentiment trends from live data
-      const sentimentTrend = latestSnapshot.overallSent - 
-        (liveHistory.slice(0, Math.min(5, liveHistory.length)).reduce((sum, s) => sum + s.overallSent, 0) / Math.min(5, liveHistory.length));
-      
-      const pcrTrend = latestSnapshot.pcr - 
-        (liveHistory.slice(0, Math.min(5, liveHistory.length)).reduce((sum, s) => sum + s.pcr, 0) / Math.min(5, liveHistory.length));
-
-      // Calculate advance/decline trends
-      const avgAdv = liveHistory.slice(0, Math.min(5, liveHistory.length)).reduce((sum, s) => sum + (s.adv || s.bullishCount || 25), 0) / Math.min(5, liveHistory.length);
-      const avgDec = liveHistory.slice(0, Math.min(5, liveHistory.length)).reduce((sum, s) => sum + (s.dec || s.bearishCount || 25), 0) / Math.min(5, liveHistory.length);
-
-      // Calculate option volumes
-      const avgCallBuy = liveHistory.slice(0, Math.min(5, liveHistory.length)).reduce((sum, s) => sum + (s.callsBuyQty || 5000000), 0) / Math.min(5, liveHistory.length);
-      const avgCallSell = liveHistory.slice(0, Math.min(5, liveHistory.length)).reduce((sum, s) => sum + (s.callsSellQty || 5000000), 0) / Math.min(5, liveHistory.length);
-      const avgPutBuy = liveHistory.slice(0, Math.min(5, liveHistory.length)).reduce((sum, s) => sum + (s.putsBuyQty || 5000000), 0) / Math.min(5, liveHistory.length);
-      const avgPutSell = liveHistory.slice(0, Math.min(5, liveHistory.length)).reduce((sum, s) => sum + (s.putsSellQty || 5000000), 0) / Math.min(5, liveHistory.length);
-
-      // Generate predictions for next 6 intervals
-      const newPredictions: PredictedSnapshot[] = [];
-      const currentTime = new Date();
-      let lastPrice = latestSnapshot.niftyLtp;
-      let lastSentiment = latestSnapshot.overallSent;
-      let lastPcr = latestSnapshot.pcr;
-      let lastAdv = latestSnapshot.adv || latestSnapshot.bullishCount || 25;
-      let lastDec = latestSnapshot.dec || latestSnapshot.bearishCount || 25;
-
-      for (let i = 1; i <= 6; i++) {
-        const predTime = new Date(currentTime.getTime() + i * 5 * 60000);
-        
-        // Price prediction with hybrid momentum
-        const momentumDecay = 0.88; // Slightly better retention with hybrid data
-        const priceDelta = avgMomentum * Math.pow(momentumDecay, i);
-        const predictedPrice = lastPrice + priceDelta;
-
-        // Sentiment prediction
-        const sentimentMeanReversion = 0.75;
-        const sentimentDelta = sentimentTrend * Math.pow(sentimentMeanReversion, i);
-        const predictedSentiment = Math.max(-100, Math.min(100, lastSentiment + sentimentDelta));
-
-        // PCR prediction
-        const pcrDelta = pcrTrend * Math.pow(0.82, i);
-        const predictedPcr = Math.max(0.5, Math.min(2.0, lastPcr + pcrDelta));
-
-        // Advance/Decline
-        const advDecDrift = (lastAdv - lastDec) * 0.25;
-        const predictedAdv = Math.max(0, Math.min(50, Math.round(lastAdv + advDecDrift * (Math.random() - 0.5))));
-        const predictedDec = Math.max(0, Math.min(50, 50 - predictedAdv));
-
-        // Derived metrics
-        const predictedStockSent = predictedSentiment * (0.85 + Math.random() * 0.3);
-        const predictedCallSent = (predictedPcr < 1 ? 1 : -1) * (20 + Math.abs(1 - predictedPcr) * 40);
-        const predictedPutSent = (predictedPcr > 1 ? 1 : -1) * (20 + Math.abs(predictedPcr - 1) * 40);
-        const predictedOptionsSent = predictedCallSent - predictedPutSent;
-
-        // Option volumes
-        const volumeVariation = 0.92 + Math.random() * 0.16;
-        const predictedCallBuy = avgCallBuy * volumeVariation;
-        const predictedCallSell = avgCallSell * volumeVariation;
-        const predictedPutBuy = avgPutBuy * volumeVariation;
-        const predictedPutSell = avgPutSell * volumeVariation;
-
-        // Higher confidence with hybrid approach
-        const confidence = Math.max(50, 90 - i * 6);
-
-        newPredictions.push({
-          time: predTime.toLocaleTimeString('en-IN', { 
-            hour: '2-digit', 
-            minute: '2-digit',
-            hour12: false 
-          }),
-          niftyLtp: predictedPrice,
-          ptsChg: predictedPrice - lastPrice,
-          overallSent: predictedSentiment,
-          adv: predictedAdv,
-          dec: predictedDec,
-          stockSent: predictedStockSent,
-          callSent: predictedCallSent,
-          putSent: predictedPutSent,
-          pcr: predictedPcr,
-          optionsSent: predictedOptionsSent,
-          callsBuyQty: predictedCallBuy,
-          callsSellQty: predictedCallSell,
-          putsBuyQty: predictedPutBuy,
-          putsSellQty: predictedPutSell,
-          confidence
-        });
-
-        lastPrice = predictedPrice;
-        lastSentiment = predictedSentiment;
-        lastPcr = predictedPcr;
-        lastAdv = predictedAdv;
-        lastDec = predictedDec;
-      }
-
-      setHybridPredictions(newPredictions);
-      setShowHybridPredictions(true);
-    } catch (error) {
-      console.error('Hybrid prediction error:', error);
-      alert('Failed to generate hybrid predictions');
-    } finally {
-      setIsHybridPredicting(false);
-    }
   };
 
   // Research function
@@ -1499,47 +1176,29 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
 
       <div className="p-4 sm:p-6 space-y-6">
         {/* Tab Navigation */}
-        <div className="flex gap-2 border-b border-white/10 pb-4">
-          <button
-            onClick={() => setActiveTab('agents')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-              activeTab === 'agents'
-                ? 'bg-purple-600 text-white shadow-lg'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Bot size={14} />
-              AI Agents
-            </div>
-          </button>
-          <button
-            onClick={() => setActiveTab('predictions')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-              activeTab === 'predictions'
-                ? 'bg-purple-600 text-white shadow-lg'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Sparkles size={14} />
-              Predictions
-            </div>
-          </button>
-          <button
-            onClick={() => setActiveTab('research')}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-              activeTab === 'research'
-                ? 'bg-purple-600 text-white shadow-lg'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Brain size={14} />
-              Research
-            </div>
-          </button>
+        <div className="flex gap-2 border-b border-white/10 pb-4 overflow-x-auto">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+                activeTab === tab.id
+                  ? 'bg-purple-600 text-white shadow-lg'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {tab.icon}
+                {tab.label}
+              </div>
+            </button>
+          ))}
         </div>
+
+        {activeTab === 'scorecard' && <ScorecardPanel refreshKey={scorecardKey} />}
+        {activeTab === 'memory' && <MarketMemoryPanel series={archiveSeries} />}
+        {activeTab === 'regime' && <RegimeRadarPanel series={archiveSeries} liveLog={historyLog} />}
+        {activeTab === 'debrief' && <DebriefPanel series={archiveSeries} />}
 
         {/* Agents Tab */}
         {activeTab === 'agents' && (
@@ -1734,127 +1393,14 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
         </>
         )}
 
-        {/* Predictions Tab */}
+        {/* Predictions Tab — the forecaster now lives in PredictionsPanel so
+            Pattern Recognition can render the very same thing. */}
         {activeTab === 'predictions' && (
-        <>
-        {/* Method 1: Archived Snapshot Predictions */}
-        <div className="glass-panel rounded-xl p-6 border border-blue-500/30 bg-blue-500/5 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-600 rounded-lg">
-                <Download size={20} className="text-white" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-white">Method 1: Archived Data Predictions</h2>
-                <p className="text-xs text-slate-400">
-                  Using historical snapshots only • {archivedSnapshots.length} archived snapshots
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={generateArchivedPredictions}
-              disabled={isArchivePredicting || archivedSnapshots.length < 10}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 transition-all text-sm"
-            >
-              {isArchivePredicting ? (
-                <>
-                  <Activity className="animate-spin" size={14} />
-                  Analyzing...
-                </>
-              ) : (
-                <>
-                  <Brain size={14} />
-                  Generate from Archive
-                </>
-              )}
-            </button>
-          </div>
-          
-          {archivedSnapshots.length < 10 && (
-            <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-              <p className="text-sm text-yellow-400 font-bold mb-1">⚠️ Insufficient archived data</p>
-              <p className="text-xs text-slate-400">
-                Need at least 10 archived snapshots. Currently have: {archivedSnapshots.length}. 
-                Import historical CSV data to use this method.
-              </p>
-            </div>
-          )}
-
-          {showArchivedPredictions && archivedPredictions.length > 0 && (
-            <PredictionTable predictions={archivedPredictions} type="archived" />
-          )}
-
-          {!showArchivedPredictions && archivedSnapshots.length >= 10 && (
-            <div className="text-center py-8 text-slate-500">
-              <Brain size={48} className="mx-auto mb-4 opacity-50" />
-              <p className="text-sm">Click "Generate from Archive" to forecast next 30 minutes</p>
-              <p className="text-xs mt-2 text-blue-400">
-                ✓ Using {archivedSnapshots.length} archived snapshots
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Method 2: Hybrid Live + Archived Predictions */}
-        <div className="glass-panel rounded-xl p-6 border border-purple-500/30 bg-purple-500/5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-600 rounded-lg">
-                <Sparkles size={20} className="text-white" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-white">Method 2: Hybrid Predictions</h2>
-                <p className="text-xs text-slate-400">
-                  Live data + archived context • Live: {historyLog.length} | Archived: {archivedSnapshots.length}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={generateHybridPredictions}
-              disabled={isHybridPredicting || historyLog.length < 5}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold rounded-lg flex items-center gap-2 transition-all text-sm"
-            >
-              {isHybridPredicting ? (
-                <>
-                  <Activity className="animate-spin" size={14} />
-                  Predicting...
-                </>
-              ) : (
-                <>
-                  <Zap size={14} />
-                  Generate Hybrid
-                </>
-              )}
-            </button>
-          </div>
-          
-          {historyLog.length < 5 && (
-            <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-              <p className="text-sm text-yellow-400 font-bold mb-1">⚠️ Insufficient live data</p>
-              <p className="text-xs text-slate-400">
-                Need at least 5 live snapshots. Currently have: {historyLog.length}. 
-                Wait for market data to accumulate.
-              </p>
-            </div>
-          )}
-
-          {showHybridPredictions && hybridPredictions.length > 0 && (
-            <PredictionTable predictions={hybridPredictions} type="hybrid" />
-          )}
-
-          {!showHybridPredictions && historyLog.length >= 5 && (
-            <div className="text-center py-8 text-slate-500">
-              <Sparkles size={48} className="mx-auto mb-4 opacity-50" />
-              <p className="text-sm">Click "Generate Hybrid" for best predictions</p>
-              <p className="text-xs mt-2 space-y-1">
-                <span className="text-green-400 block">✓ Live: {historyLog.length} snapshots</span>
-                <span className="text-blue-400 block">✓ Context: {archivedSnapshots.length} archived snapshots</span>
-                <span className="text-purple-400 block">Higher accuracy with combined data</span>
-              </p>
-            </div>
-          )}
-        </div>
-        </>
+          <PredictionsPanel
+            historyLog={historyLog}
+            currentSnapshot={currentSnapshot}
+            archivedSnapshots={archivedSnapshots}
+          />
         )}
 
         {/* Research Tab */}
