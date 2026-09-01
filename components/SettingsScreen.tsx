@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
-import { apiCallTracker, APIStats, testOllamaConnection } from '../services/aiProvider';
+import { apiCallTracker, APIStats, testOllamaConnection, isBlockedLocalOllama } from '../services/aiProvider';
 import { TokenGeneratorModal } from './TokenGeneratorModal';
 
 interface SettingsScreenProps {
@@ -1047,6 +1047,35 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
                           {selectedAiProvider === 'ollama' && (
                             <>
+                              {isBlockedLocalOllama(ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL) && (
+                                <div className="flex items-start gap-3 p-4 bg-amber-500/5 border border-amber-500/30 rounded-xl">
+                                    <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400 shrink-0"><AlertTriangle size={18}/></div>
+                                    <div className="space-y-2">
+                                        <h3 className="text-sm font-bold text-amber-300">Won't Work On This Deployed Site</h3>
+                                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                                            This page is served over <span className="font-mono text-amber-400">https://</span>, and every browser
+                                            refuses to let an HTTPS page connect to a plain <span className="font-mono text-amber-400">http://localhost</span> address.
+                                            That is a browser security rule, so <span className="font-mono">OLLAMA_ORIGINS</span> cannot fix it.
+                                        </p>
+                                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                                            Either run the dashboard locally:
+                                        </p>
+                                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[10px] text-cyan-400">
+                                            npm run dev &nbsp;→&nbsp; http://localhost:5173
+                                        </div>
+                                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                                            …or expose Ollama over HTTPS and paste that address below:
+                                        </p>
+                                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[10px] text-cyan-400">
+                                            cloudflared tunnel --url http://localhost:11434
+                                        </div>
+                                        <p className="text-[10px] text-slate-500">
+                                            The other providers (Gemini, Groq, Claude, Cerebras) work fine here.
+                                        </p>
+                                    </div>
+                                </div>
+                              )}
+
                               <div className="flex items-start gap-3 p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-xl">
                                   <div className="p-2 bg-cyan-500/10 rounded-lg text-cyan-400 shrink-0"><HardDrive size={18}/></div>
                                   <div className="space-y-1">
@@ -1058,9 +1087,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                           <span className="text-cyan-400 font-mono"> ollama serve</span>.
                                       </p>
                                       <p className="text-[10px] text-yellow-500/80">
-                                          Tip: allow this page to call Ollama by starting it with{' '}
-                                          <span className="font-mono">OLLAMA_ORIGINS="{typeof window !== 'undefined' ? window.location.origin : '*'}"</span>
-                                          {' '}(or <span className="font-mono">"*"</span>).
+                                          {isBlockedLocalOllama(ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL)
+                                            ? <>Tip: on a local <span className="font-mono">http://</span> page this works with no extra setup.</>
+                                            : <>Tip: allow this page to call Ollama by starting it with{' '}
+                                                <span className="font-mono">OLLAMA_ORIGINS="{typeof window !== 'undefined' ? window.location.origin : '*'}"</span>
+                                                {' '}(or <span className="font-mono">"*"</span>).</>}
                                       </p>
                                   </div>
                               </div>

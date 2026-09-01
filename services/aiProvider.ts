@@ -447,20 +447,36 @@ export function normalizeOllamaBaseUrl(baseUrl?: string): string {
   return withScheme.replace(/\/+$/, '').replace(/\/(api|v1)$/i, '');
 }
 
+/** True when the page is served over HTTPS but Ollama is a plain-http local address. */
+export function isBlockedLocalOllama(baseUrl: string): boolean {
+  if (typeof window === 'undefined') return false;
+  if (window.location.protocol !== 'https:') return false;
+  if (!/^http:\/\//i.test(baseUrl)) return false;
+  return /^http:\/\/(localhost|127\.0\.0\.1|\[?::1\]?|0\.0\.0\.0|[^/]*\.local)(:\d+)?/i.test(baseUrl);
+}
+
 /**
  * Builds an actionable message for the exact reason the local server is unreachable.
  */
 function buildOllamaUnreachableError(baseUrl: string, directError: any): Error {
   const pageOrigin = typeof window !== 'undefined' ? window.location.origin : 'this app';
-  const isSecurePage = typeof window !== 'undefined' && window.location.protocol === 'https:';
-  const isPlainTarget = baseUrl.startsWith('http://');
 
-  if (isSecurePage && isPlainTarget) {
+  // Browsers refuse to let an HTTPS page open a connection to a plain http://
+  // loopback address. This is enforced regardless of CORS, so OLLAMA_ORIGINS
+  // cannot fix it - verified in Chrome against a correctly whitelisted server.
+  if (isBlockedLocalOllama(baseUrl)) {
     return new Error(
-      `Could not reach ${baseUrl} from ${pageOrigin}. Two things to check: (1) allow this origin - restart ` +
-      `Ollama with OLLAMA_ORIGINS="${pageOrigin}"; (2) Safari and some browsers block an HTTPS page from ` +
-      `calling a plain http:// address, so if it still fails run the dashboard locally ` +
-      `("npm run dev" -> http://localhost:5173).`
+      `${pageOrigin} is served over HTTPS, and browsers block an HTTPS page from connecting to ` +
+      `${baseUrl}. This is a browser security rule, not an Ollama setting - OLLAMA_ORIGINS cannot ` +
+      `change it. Either run the dashboard locally ("npm run dev" then open http://localhost:5173), ` +
+      `or expose Ollama over HTTPS with a tunnel and put that https:// address in the Server URL field.`
+    );
+  }
+
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && /^http:\/\//i.test(baseUrl)) {
+    return new Error(
+      `${pageOrigin} is served over HTTPS and cannot load the insecure address ${baseUrl}. ` +
+      `Use an https:// URL for Ollama, or run the dashboard locally ("npm run dev").`
     );
   }
 
