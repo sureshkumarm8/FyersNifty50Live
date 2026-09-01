@@ -1567,7 +1567,7 @@ const App: React.FC = () => {
       <main className="flex-1 overflow-hidden relative flex flex-col">
         {/* Keyed by view so switching screens clears a previous crash, and so a
             single broken screen never blanks the whole dashboard. */}
-        <ErrorBoundary key={viewMode} label={viewMode}>
+        <ErrorBoundary label={viewMode}>
         
         {isPrivacyMode && (
             <div className="absolute inset-0 z-50 bg-slate-950/80 flex flex-col items-center justify-center gap-6 backdrop-blur-sm">
@@ -1778,18 +1778,18 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {viewMode === 'autotrade' && (
-            <div className="flex flex-col h-full overflow-hidden">
-                <UnifiedAutoTrade 
-                   credentials={credentials}
-                   stocks={stocks || []}
-                   niftyLtp={niftyLtp}
-                   historyLog={historyLog || []}
-                   pivots={pivots}
-                   aiEnabled={credentials.aiEnabled}
-                />
-            </div>
-        )}
+        {/* Keep UnifiedAutoTrade mounted to preserve running Sniper & Momentum processes
+            across tab switches. Only hide with CSS, never unmount. */}
+        <div className={viewMode === 'autotrade' ? 'flex flex-col h-full overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'autotrade'}>
+            <UnifiedAutoTrade 
+               credentials={credentials}
+               stocks={stocks || []}
+               niftyLtp={niftyLtp}
+               historyLog={historyLog || []}
+               pivots={pivots}
+               aiEnabled={credentials.aiEnabled}
+             />
+        </div>
 
         {viewMode === 'patterns' && (
             <div className="flex flex-col h-full overflow-hidden">
