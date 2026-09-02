@@ -541,10 +541,32 @@ export async function listOllamaModels(baseUrl?: string): Promise<string[]> {
 /** Name patterns of well-known multimodal models, used to complement reported capabilities. */
 const VISION_MODEL_NAME_PATTERN = /vision|llava|-vl|vl:|minicpm-v|moondream|bakllava|pixtral|gemma3|gemma4/i;
 
+/** Asks Ollama for one model's true capability list. Null when it cannot be determined. */
+async function fetchOllamaCapabilities(url: string, model: string): Promise<string[] | null> {
+  try {
+    const { response } = await ollamaFetch(url, '/api/show', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model })
+    });
+    if (!response.ok) return null;
+    const detail = await parseOllamaJson(response, url);
+    return Array.isArray(detail?.capabilities) ? detail.capabilities : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Lists only the multimodal models installed locally.
- * Newer Ollama builds report a `vision` capability per model, but the list is not
- * always complete, so well-known multimodal model names are accepted too.
+ *
+ * `/api/tags` does report a per-model capability list, but it is abridged: a
+ * gemma4 that answers `/api/show` with ["completion","vision","audio",...]
+ * appears in `/api/tags` as ["completion","tools","thinking"], with no mention
+ * of vision. Trusting `/api/tags` alone therefore hides working vision models,
+ * and trusting the name pattern alone only works for models we thought to
+ * hardcode. So anything not already established as multimodal is confirmed
+ * against `/api/show`, which is authoritative.
  */
 export async function listOllamaVisionModels(baseUrl?: string): Promise<string[]> {
   const url = normalizeOllamaBaseUrl(baseUrl);
@@ -555,13 +577,28 @@ export async function listOllamaVisionModels(baseUrl?: string): Promise<string[]
   }
 
   const data = await parseOllamaJson(response, url);
-  return (data?.models || [])
-    .filter((m: any) => {
-      const capabilities = Array.isArray(m?.capabilities) ? m.capabilities : [];
-      return capabilities.includes('vision') || VISION_MODEL_NAME_PATTERN.test(m?.name || '');
-    })
+  const models: { name: string; vision: boolean; unknown: boolean }[] = (data?.models || [])
     .map((m: any) => m?.name)
     .filter((name: any): name is string => typeof name === 'string' && name.length > 0)
+    .map((name: string) => {
+      const entry = (data.models as any[]).find(m => m?.name === name);
+      const capabilities = Array.isArray(entry?.capabilities) ? entry.capabilities : [];
+      const known = capabilities.includes('vision') || VISION_MODEL_NAME_PATTERN.test(name);
+      return { name, vision: known, unknown: !known };
+    });
+
+  // Only the leftovers cost an extra round trip, and they run in parallel.
+  const probes = await Promise.all(
+    models.filter(m => m.unknown).map(async m => ({
+      name: m.name,
+      vision: (await fetchOllamaCapabilities(url, m.name))?.includes('vision') ?? false
+    }))
+  );
+  const probed = new Map(probes.map(p => [p.name, p.vision]));
+
+  return models
+    .filter(m => (m.unknown ? probed.get(m.name) : m.vision))
+    .map(m => m.name)
     .sort();
 }
 

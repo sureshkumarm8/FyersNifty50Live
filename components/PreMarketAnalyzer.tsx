@@ -6,7 +6,7 @@ import { SNIPER, buildSniperPlaybook, resolvePhase, istMinutes, SniperPlaybook, 
 import { AlertCircle } from 'lucide-react';
 import {
   ActivityLog, CaptureChecklist, ChartWorkspace, CommandBar, EvidenceGrid, KeyNumbers,
-  PreviewModal, VerdictBoard
+  PreviewModal, ScenarioBoard, VerdictBoard
 } from './premarket/PreMarketViews';
 
 // ---------------------------------------------------------------------------
@@ -786,6 +786,7 @@ export const PreMarketAnalyzer: React.FC<{
               )}
 
               <KeyNumbers decision={preMarketDecision} />
+              <ScenarioBoard playbook={preMarketDecision.playbook} />
               <EvidenceGrid decision={preMarketDecision} visionLabel={visionLabel} />
               {workspace}
             </>

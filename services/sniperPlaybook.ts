@@ -108,9 +108,13 @@ export interface SniperPlaybook {
   phaseLabel: string;
   minutesToEntry: number | null;
   minutesToHardStop: number | null;
+  /** The reference close the whole plan is measured from. */
+  closePrice: number;
   plannedSupport: number;
   plannedResistance: number;
   zoneWidth: number;
+  /** Flat / ±50 / ±100 opens, each with its own levels, positions and clock. */
+  scenarios: GapScenario[];
   plays: ZonePlay[];
   primaryPlay: ZonePlay | null;
   gates: SniperGate[];
@@ -242,6 +246,336 @@ function buildPlay(
     approxPremiumStop: Math.round(SNIPER.stopPoints * SNIPER.itmDelta),
     status,
     notes
+  };
+}
+
+// --- gap scenarios ---------------------------------------------------------
+
+/**
+ * The five opens worth planning for. Nifty rarely opens exactly on yesterday's
+ * close, and a 100-point gap can open *beyond* a mapped level - which flips
+ * that level from resistance to support and changes the whole plan. Planning
+ * only for a flat open is what makes a pre-market plan useless by 09:16.
+ */
+export const GAP_OFFSETS = [
+  { id: 'GAP_UP_100', label: 'Gap up +100', offset: 100 },
+  { id: 'GAP_UP_50', label: 'Gap up +50', offset: 50 },
+  { id: 'FLAT', label: 'Flat open', offset: 0 },
+  { id: 'GAP_DOWN_50', label: 'Gap down −50', offset: -50 },
+  { id: 'GAP_DOWN_100', label: 'Gap down −100', offset: -100 }
+] as const;
+
+export type GapScenarioId = (typeof GAP_OFFSETS)[number]['id'];
+
+/** Where the open sits relative to the levels the charts actually mapped. */
+export type OpenLocation =
+  | 'INSIDE_ZONE'
+  | 'AT_SUPPORT'
+  | 'AT_RESISTANCE'
+  | 'ABOVE_ALL_LEVELS'
+  | 'BELOW_ALL_LEVELS';
+
+export interface GapScenario {
+  id: GapScenarioId;
+  label: string;
+  offset: number;
+  /** Where Nifty would open under this scenario. */
+  openPrice: number;
+  /** Rough odds of this open, split out of the blended gap read. */
+  likelihood: number;
+  support: number | null;
+  resistance: number | null;
+  zoneWidth: number | null;
+  location: OpenLocation;
+  /** True when a 30-point target actually fits between the two walls. */
+  tradable: boolean;
+  /** One line: what this open means for the protocol. */
+  headline: string;
+  plays: ZonePlay[];
+  invalidations: string[];
+  /** The clock, with this scenario's own levels written into each step. */
+  clock: PhaseStep[];
+}
+
+/**
+ * Collapses every level the charts reported into one sorted ladder.
+ *
+ * Support and resistance are positional, not intrinsic: yesterday's resistance
+ * is today's support the moment price opens above it. So both lists go into a
+ * single ladder and the role is decided per scenario by where the open sits.
+ * Levels within `cluster` points of each other are merged, because four charts
+ * reporting 24,000 / 24,005 / 24,010 describe one wall, not three.
+ */
+export function buildLevelLadder(
+  levelReports: SniperInput['levelReports'],
+  extra: number[] = [],
+  cluster = 20
+): number[] {
+  const all = [
+    ...levelReports.flatMap(r => [...r.supports, ...r.resistances]),
+    ...extra
+  ]
+    .filter(n => Number.isFinite(n) && n > 1000)
+    .sort((a, b) => a - b);
+
+  const merged: number[] = [];
+  for (const level of all) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && level - last <= cluster) {
+      // Keep the midpoint so a cluster is represented by its centre.
+      merged[merged.length - 1] = Math.round((last + level) / 2);
+    } else {
+      merged.push(Math.round(level));
+    }
+  }
+  return merged;
+}
+
+/** Splits the blended gap read across the five concrete opens. */
+function scenarioLikelihood(id: GapScenarioId, gap: SniperInput['gapScenario']): number {
+  // Small gaps are far more common than large ones, so the 50-point cases take
+  // the larger share of each directional bucket.
+  switch (id) {
+    case 'FLAT':
+      return Math.round(gap.flat);
+    case 'GAP_UP_50':
+      return Math.round(gap.gapUp * 0.65);
+    case 'GAP_UP_100':
+      return Math.round(gap.gapUp * 0.35);
+    case 'GAP_DOWN_50':
+      return Math.round(gap.gapDown * 0.65);
+    case 'GAP_DOWN_100':
+      return Math.round(gap.gapDown * 0.35);
+  }
+}
+
+function buildScenario(
+  spec: (typeof GAP_OFFSETS)[number],
+  close: number,
+  ladder: number[],
+  input: SniperInput,
+  mins: number
+): GapScenario {
+  const openPrice = Math.round(close + spec.offset);
+  const likelihood = scenarioLikelihood(spec.id, input.gapScenario);
+
+  // The bracketing pair. "At" a level means within the same buffer the live
+  // engine uses to arm a trade, so an open sitting on a wall counts as touching
+  // it rather than being safely inside the zone.
+  const below = [...ladder].reverse().find(l => l < openPrice - SNIPER.zoneBuffer) ?? null;
+  const above = ladder.find(l => l > openPrice + SNIPER.zoneBuffer) ?? null;
+  const atLevel = ladder.find(l => Math.abs(l - openPrice) <= SNIPER.zoneBuffer) ?? null;
+
+  let support: number | null;
+  let resistance: number | null;
+  let location: OpenLocation;
+
+  if (atLevel !== null) {
+    // Sitting on a wall. It acts as whichever side price approaches it from,
+    // so the far side of the pair is the next level beyond it.
+    const nextUp = ladder.find(l => l > atLevel + SNIPER.zoneBuffer) ?? null;
+    const nextDown = [...ladder].reverse().find(l => l < atLevel - SNIPER.zoneBuffer) ?? null;
+    if (spec.offset >= 0) {
+      support = atLevel;
+      resistance = nextUp;
+      location = 'AT_SUPPORT';
+    } else {
+      resistance = atLevel;
+      support = nextDown;
+      location = 'AT_RESISTANCE';
+    }
+  } else if (below === null && above !== null) {
+    support = null;
+    resistance = above;
+    location = 'BELOW_ALL_LEVELS';
+  } else if (above === null && below !== null) {
+    support = below;
+    resistance = null;
+    location = 'ABOVE_ALL_LEVELS';
+  } else {
+    support = below;
+    resistance = above;
+    location = 'INSIDE_ZONE';
+  }
+
+  const zoneWidth = support !== null && resistance !== null ? resistance - support : null;
+  const tradable = zoneWidth !== null && zoneWidth >= SNIPER.minZoneWidth;
+
+  // --- positions -----------------------------------------------------------
+  const plays: ZonePlay[] = [];
+  const gapped = spec.offset !== 0;
+  const bigGap = Math.abs(spec.offset) >= 100;
+
+  const sharedNotes = (side: 'CE' | 'PE'): string[] => {
+    const notes: string[] = [];
+    if (gapped) {
+      notes.push(
+        `Open is ${spec.offset > 0 ? '+' : ''}${spec.offset} from the ${fmt(close)} close. Do not buy the gap — let the 09:15–09:25 range form first.`
+      );
+    }
+    if (bigGap && ((spec.offset > 0 && side === 'CE') || (spec.offset < 0 && side === 'PE'))) {
+      notes.push('This side means trading with the gap. Only take it from the zone, never mid-range.');
+    }
+    return notes;
+  };
+
+  if (support !== null) {
+    const ceNotes = sharedNotes('CE');
+    if (location === 'ABOVE_ALL_LEVELS') {
+      ceNotes.push(
+        `Price gapped above every mapped level, so ${fmt(support)} has flipped from resistance to support. Treat a pullback to it as the only long worth taking.`
+      );
+    }
+    if (!tradable && zoneWidth !== null) {
+      ceNotes.push(`Only ${zoneWidth} points to the opposite wall — the 30-point target does not fit.`);
+    }
+    plays.push(
+      buildPlay(
+        'SUPPORT',
+        support,
+        resistance ?? support + SNIPER.maxUsefulZoneWidth,
+        !tradable ? 'BLOCKED' : location === 'AT_SUPPORT' ? 'PRIMARY' : 'SECONDARY',
+        ceNotes
+      )
+    );
+  }
+
+  if (resistance !== null) {
+    const peNotes = sharedNotes('PE');
+    if (location === 'BELOW_ALL_LEVELS') {
+      peNotes.push(
+        `Price gapped below every mapped level, so ${fmt(resistance)} has flipped from support to resistance. Treat a bounce into it as the only short worth taking.`
+      );
+    }
+    if (!tradable && zoneWidth !== null) {
+      peNotes.push(`Only ${zoneWidth} points to the opposite wall — the 30-point target does not fit.`);
+    }
+    plays.push(
+      buildPlay(
+        'RESISTANCE',
+        resistance,
+        support ?? resistance - SNIPER.maxUsefulZoneWidth,
+        !tradable ? 'BLOCKED' : location === 'AT_RESISTANCE' ? 'PRIMARY' : 'SECONDARY',
+        peNotes
+      )
+    );
+  }
+
+  // --- headline ------------------------------------------------------------
+  let headline: string;
+  if (support === null) {
+    headline = `Opens below every level the charts mapped. There is no support underneath — no long has a floor, and the only structure is ${fmt(resistance!)} overhead. Most likely a no-trade day.`;
+  } else if (resistance === null) {
+    headline = `Opens above every level the charts mapped. Nothing overhead to reverse against, so the 30-point target has no wall to aim at. ${fmt(support)} is now support — wait for a pullback or stand aside.`;
+  } else if (!tradable) {
+    headline = `${fmt(support)}–${fmt(resistance)} is only ${zoneWidth} points wide. The 30-point target cannot clear the opposite wall, so this open is a stand-aside.`;
+  } else if (location === 'AT_SUPPORT') {
+    headline = `Opens sitting on support at ${fmt(support)}. This is the cleanest case: if it holds through the Download, the ${plays[0]?.optionLabel} is armed the moment the window opens.`;
+  } else if (location === 'AT_RESISTANCE') {
+    headline = `Opens sitting on resistance at ${fmt(resistance)}. If it stalls there through the Download, the ${plays.find(p => p.side === 'PE')?.optionLabel} is armed at 09:25.`;
+  } else {
+    headline = `Opens mid-zone between ${fmt(support)} and ${fmt(resistance)}, ${zoneWidth} points of room. Nothing to do at the bell — wait for price to reach one of the two walls.`;
+  }
+
+  // --- invalidations, specific to these levels -----------------------------
+  const invalidations: string[] = [];
+  if (support !== null && resistance !== null) {
+    invalidations.push(
+      `The 09:15–09:25 range prints outside ${fmt(support)}–${fmt(resistance)} — these chart levels are void, use the live range instead.`
+    );
+    invalidations.push(
+      `Price closes a full candle beyond ${fmt(support)} or ${fmt(resistance)} — that is a breakout, and this system does not trade breakouts.`
+    );
+  } else {
+    invalidations.push(
+      'The open sits outside every mapped level, so there is no verified zone. Anything taken here is improvised — the protocol says stand aside.'
+    );
+  }
+  invalidations.push(`Neither wall is touched by ${SNIPER.reviewBy} — close the laptop, the day is done.`);
+  if (gapped) {
+    invalidations.push(
+      `The gap fills back through ${fmt(close)} in the first ten minutes — the open type has changed, re-read this table against the flat-open row.`
+    );
+  }
+  if (!tradable) {
+    invalidations.push('Already invalid: there is not enough room between the walls. Do not force it.');
+  }
+
+  // --- the clock, carrying this scenario's numbers -------------------------
+  const stepState = (from: string, to: string): PhaseStep['state'] => {
+    if (mins >= toMinutes(to)) return 'DONE';
+    if (mins >= toMinutes(from)) return 'ACTIVE';
+    return 'UPCOMING';
+  };
+
+  const ce = plays.find(p => p.side === 'CE');
+  const pe = plays.find(p => p.side === 'PE');
+
+  const entryItems: string[] = [];
+  if (ce && ce.status !== 'BLOCKED') {
+    entryItems.push(`If price reaches ${fmt(ce.triggerFrom)}–${fmt(ce.triggerTo)} → buy ${ce.optionLabel} → exit ${fmt(ce.targetSpot)} or ${fmt(ce.stopSpot)}.`);
+  }
+  if (pe && pe.status !== 'BLOCKED') {
+    entryItems.push(`If price reaches ${fmt(pe.triggerFrom)}–${fmt(pe.triggerTo)} → buy ${pe.optionLabel} → exit ${fmt(pe.targetSpot)} or ${fmt(pe.stopSpot)}.`);
+  }
+  if (entryItems.length === 0) {
+    entryItems.push('No armed side under this open. NO SETUP = NO TRADE.');
+  }
+  entryItems.push('Whichever triggers first is the only trade today.');
+
+  const clock: PhaseStep[] = [
+    {
+      time: `09:15 – ${SNIPER.entryStart}`,
+      title: 'The Download — watch only',
+      items: [
+        `Expect the open near ${fmt(openPrice)}. Confirm it before trusting this row.`,
+        support !== null && resistance !== null
+          ? `Mark the 5-min range and compare it with ${fmt(support)}–${fmt(resistance)}. A match is the highest-conviction day.`
+          : 'No mapped zone for this open — use the 5-min range as the only structure.',
+        'DO NOT TRADE.'
+      ],
+      state: stepState(SNIPER.downloadStart, SNIPER.entryStart)
+    },
+    {
+      time: `${SNIPER.entryStart} – ${SNIPER.reviewBy}`,
+      title: 'The Entry Window',
+      items: entryItems,
+      state: stepState(SNIPER.entryStart, SNIPER.reviewBy)
+    },
+    {
+      time: `${SNIPER.reviewBy} – ${SNIPER.hardStop}`,
+      title: 'Manage, do not initiate',
+      items: [
+        'No new entries.',
+        ce || pe
+          ? `Target ±${SNIPER.targetPoints} spot points, roughly ${Math.round(SNIPER.targetPoints * SNIPER.itmDelta)} points of premium.`
+          : 'Nothing to manage.'
+      ],
+      state: stepState(SNIPER.reviewBy, SNIPER.hardStop)
+    },
+    {
+      time: SNIPER.hardStop,
+      title: 'The Hard Stop',
+      items: ['Exit at market regardless of P&L.'],
+      state: mins >= toMinutes(SNIPER.hardStop) ? 'DONE' : 'UPCOMING'
+    }
+  ];
+
+  return {
+    id: spec.id,
+    label: spec.label,
+    offset: spec.offset,
+    openPrice,
+    likelihood,
+    support,
+    resistance,
+    zoneWidth,
+    location,
+    tradable,
+    headline,
+    plays,
+    invalidations,
+    clock
   };
 }
 
@@ -458,9 +792,9 @@ export function buildSniperPlaybook(input: SniperInput): SniperPlaybook {
 
   const openPlan =
     likeliestOpen === 'GAP_UP'
-      ? `Gap-up open is most likely (${gapUp}%). Your own rule flags this as a profit-booking risk: do not buy the gap. Let the 09:15-09:25 range form, then fade into ${fmt(resistance)} with the ${pePlay.optionLabel}, or wait for a full pullback to ${fmt(support)}.`
+      ? `Gap-up open is most likely (${gapUp}%). Your own rule flags this as a profit-booking risk: do not buy the gap. Let the 09:15-09:25 range form, then sell into ${fmt(resistance)} with the ${pePlay.optionLabel}, or wait for a full pullback to ${fmt(support)}.`
       : likeliestOpen === 'GAP_DOWN'
-        ? `Gap-down open is most likely (${gapDown}%). Do not sell into the hole. Let the 09:15-09:25 range form and look for the bounce off ${fmt(support)} with the ${cePlay.optionLabel}.`
+        ? `Gap-down open is most likely (${gapDown}%). Do not sell into the hole. Let the 09:15-09:25 range form and look for the reversal off ${fmt(support)} with the ${cePlay.optionLabel}.`
         : `Flat open is most likely (${flat}%). This is the cleanest case for the protocol: mark the 5-min range, then take whichever zone price touches first between 09:25 and 09:45.`;
 
   // --- invalidations -------------------------------------------------------
@@ -493,7 +827,7 @@ export function buildSniperPlaybook(input: SniperInput): SniperPlaybook {
       items: [
         'All four screenshots captured and analysed.',
         `Zones armed: support ${fmt(support)}, resistance ${fmt(resistance)}.`,
-        `Strikes noted: ${cePlay.optionLabel} for the bounce, ${pePlay.optionLabel} for the fade.`
+        `Strikes noted: ${cePlay.optionLabel} at support, ${pePlay.optionLabel} at resistance.`
       ],
       state: mins >= toMinutes(SNIPER.downloadStart) ? 'DONE' : 'ACTIVE'
     },
@@ -546,14 +880,18 @@ export function buildSniperPlaybook(input: SniperInput): SniperPlaybook {
 
   const confluence = findConfluence(input.levelReports);
 
+  // The five opens, each resolved against the full ladder of chart levels.
+  const ladder = buildLevelLadder(input.levelReports, [support, resistance]);
+  const scenarios = GAP_OFFSETS.map(spec => buildScenario(spec, input.spot, ladder, input, mins));
+
   const briefing = [
     `${SNIPER.name} — ${new Date(now).toLocaleDateString('en-IN')}`,
     `VERDICT: ${verdictHeadline} (grade ${grade})`,
     verdictReason,
     '',
     `Spot reference ${fmt(input.spot)} | Support ${fmt(support)} | Resistance ${fmt(resistance)} | Room ${zoneWidth} pts`,
-    `Bounce play : price ${fmt(cePlay.triggerFrom)}-${fmt(cePlay.triggerTo)} → buy ${cePlay.optionLabel} → target ${fmt(cePlay.targetSpot)} / stop ${fmt(cePlay.stopSpot)} [${cePlay.status}]`,
-    `Fade play   : price ${fmt(pePlay.triggerFrom)}-${fmt(pePlay.triggerTo)} → buy ${pePlay.optionLabel} → target ${fmt(pePlay.targetSpot)} / stop ${fmt(pePlay.stopSpot)} [${pePlay.status}]`,
+    `At support    : price ${fmt(cePlay.triggerFrom)}-${fmt(cePlay.triggerTo)} → buy ${cePlay.optionLabel} → target ${fmt(cePlay.targetSpot)} / stop ${fmt(cePlay.stopSpot)} [${cePlay.status}]`,
+    `At resistance : price ${fmt(pePlay.triggerFrom)}-${fmt(pePlay.triggerTo)} → buy ${pePlay.optionLabel} → target ${fmt(pePlay.targetSpot)} / stop ${fmt(pePlay.stopSpot)} [${pePlay.status}]`,
     '',
     openPlan,
     '',
@@ -562,7 +900,19 @@ export function buildSniperPlaybook(input: SniperInput): SniperPlaybook {
       : 'Confluence: none — no level was confirmed by two charts.',
     '',
     'Invalidations:',
-    ...invalidations.map(i => `- ${i}`)
+    ...invalidations.map(i => `- ${i}`),
+    '',
+    `Open scenarios (close ${fmt(input.spot)}):`,
+    ...scenarios.map(sc => {
+      const zone =
+        sc.support !== null && sc.resistance !== null
+          ? `S ${fmt(sc.support)} / R ${fmt(sc.resistance)} (${sc.zoneWidth} pts)`
+          : sc.support !== null
+            ? `S ${fmt(sc.support)} / R none`
+            : `S none / R ${fmt(sc.resistance!)}`;
+      const armed = sc.plays.filter(p => p.status !== 'BLOCKED').map(p => p.optionLabel).join(' or ') || 'no trade';
+      return `- ${sc.label.padEnd(14)} open ~${fmt(sc.openPrice)} | ${zone} | ${armed}`;
+    })
   ].join('\n');
 
   return {
@@ -574,9 +924,11 @@ export function buildSniperPlaybook(input: SniperInput): SniperPlaybook {
     phaseLabel: PHASE_LABELS[phase],
     minutesToEntry,
     minutesToHardStop,
+    closePrice: Math.round(input.spot),
     plannedSupport: support,
     plannedResistance: resistance,
     zoneWidth,
+    scenarios,
     plays,
     primaryPlay,
     gates,

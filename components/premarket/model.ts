@@ -246,7 +246,7 @@ export const DECISION_STATE_KEY = 'preMarketDecision';
  * Bumped whenever PreMarketDecision changes shape, so a plan saved by an older
  * build is discarded instead of being rendered against the current UI.
  */
-export const DECISION_SCHEMA = 3;
+export const DECISION_SCHEMA = 4;
 
 /**
  * Vision models sometimes answer "I cannot read this chart" in a perfectly

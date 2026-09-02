@@ -15,10 +15,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity, AlertCircle, BarChart2, Brain, CheckCircle2, ClipboardCopy, Clock, Copy, Crosshair,
-  Download, GitCompareArrows, Image as ImageIcon, Loader2, RefreshCw, Shield, Sparkles, Target,
+  ChevronDown, Download, GitCompareArrows, Image as ImageIcon, Loader2, RefreshCw, Shield, Sparkles, Target,
   Trash2, Upload, X, Zap
 } from 'lucide-react';
-import { SNIPER, SniperPlaybook, ZonePlay, istMinutes, resolvePhase } from '../../services/sniperPlaybook';
+import { GapScenario, SNIPER, SniperPlaybook, ZonePlay, istMinutes, resolvePhase } from '../../services/sniperPlaybook';
 import { Card, Meter, Pill, Stat } from '../ui/panels';
 import {
   CHART_SLOTS, ChartEntry, ChartSlotId, PendingImage, PreMarketDecision, SLOT_ICONS,
@@ -241,7 +241,7 @@ export const PlayCard: React.FC<{ play: ZonePlay }> = ({ play }) => {
       <div className="mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-wider ${accent}`}>
-            {isCe ? 'Bounce · buy call at support' : 'Fade · buy put at resistance'}
+            {isCe ? 'Buy CALL at support' : 'Buy PUT at resistance'}
           </p>
           <p className="mt-0.5 font-mono text-xl font-black text-slate-100">{play.optionLabel}</p>
           <p className="text-[10px] text-slate-500">
@@ -291,6 +291,190 @@ export const PlayCard: React.FC<{ play: ZonePlay }> = ({ play }) => {
         </ul>
       )}
     </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Open scenarios — the heart of the plan.
+//
+// Nifty almost never opens on yesterday's close, and a 100-point gap can open
+// beyond a mapped level, which flips that level's role and invalidates a plan
+// written only for a flat open. So every open gets its own levels, its own
+// position and its own clock, decided before the bell.
+// ---------------------------------------------------------------------------
+
+const LOCATION_COPY: Record<GapScenario['location'], { label: string; tone: string }> = {
+  INSIDE_ZONE: { label: 'Mid-zone', tone: 'border-slate-700 bg-slate-800/40 text-slate-300' },
+  AT_SUPPORT: { label: 'On support', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' },
+  AT_RESISTANCE: { label: 'On resistance', tone: 'border-rose-500/40 bg-rose-500/10 text-rose-300' },
+  ABOVE_ALL_LEVELS: { label: 'Above all levels', tone: 'border-amber-500/40 bg-amber-500/10 text-amber-300' },
+  BELOW_ALL_LEVELS: { label: 'Below all levels', tone: 'border-amber-500/40 bg-amber-500/10 text-amber-300' }
+};
+
+const ScenarioClock: React.FC<{ steps: GapScenario['clock'] }> = ({ steps }) => (
+  <ol className="space-y-2">
+    {(steps ?? []).map(step => {
+      const active = step.state === 'ACTIVE';
+      return (
+        <li key={step.time} className="flex gap-2.5">
+          <span
+            className={`w-24 shrink-0 font-mono text-[10px] font-bold ${
+              active ? 'text-amber-300' : step.state === 'DONE' ? 'text-slate-700' : 'text-slate-500'
+            }`}
+          >
+            {step.time}
+          </span>
+          <div className="min-w-0">
+            <p className={`text-[11px] font-semibold ${active ? 'text-slate-100' : 'text-slate-400'}`}>{step.title}</p>
+            {(step.items ?? []).map((it, i) => (
+              <p key={i} className={`text-[11px] leading-snug ${active ? 'text-slate-300' : 'text-slate-600'}`}>
+                {it}
+              </p>
+            ))}
+          </div>
+        </li>
+      );
+    })}
+  </ol>
+);
+
+const ScenarioCard: React.FC<{ scenario: GapScenario; closePrice: number; open: boolean; onToggle: () => void }> = ({
+  scenario: sc,
+  closePrice,
+  open,
+  onToggle
+}) => {
+  const loc = LOCATION_COPY[sc.location] ?? LOCATION_COPY.INSIDE_ZONE;
+  const armed = (sc.plays ?? []).filter(p => p.status !== 'BLOCKED');
+
+  return (
+    <div
+      className={`overflow-hidden rounded-xl border transition ${
+        sc.tradable ? 'border-slate-800 bg-slate-950/60' : 'border-slate-800/60 bg-slate-950/30'
+      }`}
+    >
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-900/50"
+      >
+        <div className="w-32 shrink-0">
+          <p className="text-xs font-bold text-slate-100">{sc.label}</p>
+          <p className="font-mono text-[10px] text-slate-500">
+            opens ≈ {num(sc.openPrice)}
+            {sc.offset !== 0 && (
+              <span className={sc.offset > 0 ? 'ml-1 text-emerald-400' : 'ml-1 text-rose-400'}>
+                {sc.offset > 0 ? '+' : ''}
+                {sc.offset}
+              </span>
+            )}
+          </p>
+        </div>
+
+        {/* the numbers that actually change per scenario */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="font-mono text-[11px]">
+            <span className="text-slate-600">S </span>
+            <span className={sc.support !== null ? 'font-bold text-emerald-300' : 'text-slate-700'}>
+              {sc.support !== null ? num(sc.support) : 'none'}
+            </span>
+          </span>
+          <span className="font-mono text-[11px]">
+            <span className="text-slate-600">R </span>
+            <span className={sc.resistance !== null ? 'font-bold text-rose-300' : 'text-slate-700'}>
+              {sc.resistance !== null ? num(sc.resistance) : 'none'}
+            </span>
+          </span>
+          {sc.zoneWidth !== null && (
+            <span className="font-mono text-[10px] text-slate-500">{sc.zoneWidth} pts</span>
+          )}
+          <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold ${loc.tone}`}>{loc.label}</span>
+          {armed.length > 0 ? (
+            <span className="font-mono text-[10px] font-bold text-sky-300">
+              {armed.map(p => p.optionLabel).join(' / ')}
+            </span>
+          ) : (
+            <span className="text-[10px] font-bold text-slate-600">NO TRADE</span>
+          )}
+        </div>
+
+        <span className="shrink-0 font-mono text-[10px] text-slate-600">{sc.likelihood}%</span>
+        <ChevronDown size={14} className={`shrink-0 text-slate-600 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="space-y-4 border-t border-slate-800 px-4 py-4">
+          <p className="text-xs leading-relaxed text-slate-300">{sc.headline}</p>
+
+          {(sc.plays?.length ?? 0) > 0 && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {sc.plays.map(p => (
+                <PlayCard key={p.side + p.zone} play={p} />
+              ))}
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3.5">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-rose-300">Tear the plan up if…</p>
+              <ul className="space-y-1.5">
+                {(sc.invalidations ?? []).map((line, i) => (
+                  <li key={i} className="flex gap-2 text-[11px] leading-snug text-slate-300">
+                    <span className="shrink-0 text-rose-400">✕</span>
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3.5">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Today's clock — if it opens {num(sc.openPrice)}
+              </p>
+              <ScenarioClock steps={sc.clock} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export const ScenarioBoard: React.FC<{ playbook?: SniperPlaybook }> = ({ playbook }) => {
+  const scenarios = playbook?.scenarios ?? [];
+  // The likeliest open is the one worth reading first, so it starts expanded.
+  const [openId, setOpenId] = useState<string | null>(() => {
+    if (scenarios.length === 0) return null;
+    return scenarios.reduce((best, s) => (s.likelihood > best.likelihood ? s : best), scenarios[0]).id;
+  });
+
+  if (scenarios.length === 0) return null;
+  const close = playbook?.closePrice ?? 0;
+
+  return (
+    <Card
+      title="If Nifty opens…"
+      icon={<GitCompareArrows size={15} className="text-sky-400" />}
+    >
+      <p className="mb-3 text-[11px] text-slate-500">
+        Measured from the <span className="font-mono font-semibold text-slate-300">{num(close)}</span> close on your
+        charts. Levels, position and clock are recalculated for each open.
+      </p>
+      <div className="space-y-2">
+        {scenarios.map(sc => (
+          <ScenarioCard
+            key={sc.id}
+            scenario={sc}
+            closePrice={close}
+            open={openId === sc.id}
+            onToggle={() => setOpenId(openId === sc.id ? null : sc.id)}
+          />
+        ))}
+      </div>
+      <p className="mt-3 text-[10px] leading-snug text-slate-600">
+        Percentages split the blended gap read across the five opens; they are a prior, not a forecast. Confirm the real
+        open at 09:15 and use only that row.
+      </p>
+    </Card>
   );
 };
 
@@ -377,13 +561,6 @@ export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: 
           </span>
         </div>
 
-        {/* the two plays */}
-        <div className="grid gap-3 md:grid-cols-2">
-          {(playbook.plays ?? []).map(play => (
-            <PlayCard key={play.side} play={play} />
-          ))}
-        </div>
-
         {/* open plan */}
         <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
           <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">The open</p>
@@ -454,54 +631,6 @@ export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: 
           </div>
         )}
 
-        {/* invalidations + timeline */}
-        <div className="grid gap-4 md:grid-cols-2">
-          {(playbook.invalidations ?? []).length > 0 && (
-            <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-rose-300">Tear the plan up if…</p>
-              <ul className="space-y-1.5">
-                {(playbook.invalidations ?? []).map((line, i) => (
-                  <li key={i} className="flex gap-2 text-[11px] leading-snug text-slate-300">
-                    <span className="shrink-0 text-rose-400">✕</span>
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {(playbook.timeline ?? []).length > 0 && (
-            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Today's clock</p>
-              <ol className="space-y-2">
-                {(playbook.timeline ?? []).map(step => {
-                  const active = step.state === 'ACTIVE';
-                  return (
-                    <li key={step.time} className="flex gap-3">
-                      <span
-                        className={`shrink-0 font-mono text-[11px] font-bold ${
-                          active ? 'text-amber-300' : step.state === 'DONE' ? 'text-slate-700' : 'text-slate-600'
-                        }`}
-                      >
-                        {step.time}
-                      </span>
-                      <div className="min-w-0">
-                        <p className={`text-[11px] font-semibold ${active ? 'text-slate-100' : 'text-slate-400'}`}>
-                          {step.title}
-                        </p>
-                        {(step.items ?? []).map((it, i) => (
-                          <p key={i} className={`text-[11px] leading-snug ${active ? 'text-slate-300' : 'text-slate-600'}`}>
-                            {it}
-                          </p>
-                        ))}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            </div>
-          )}
-        </div>
 
         {/* reality check */}
         <p className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-2.5 text-[11px] leading-relaxed text-amber-200/90">
