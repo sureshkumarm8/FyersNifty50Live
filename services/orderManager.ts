@@ -18,6 +18,14 @@ export interface Order {
   quantity: number;
   price?: number;
   triggerPrice?: number;
+  /**
+   * Simulated fill price, used only by paper trading and never sent to a broker.
+   *
+   * A MARKET order carries no `price` — brokers require it to be 0 — so without
+   * this the paper fill landed at avgPrice 0, which made every P&L percentage
+   * infinite and caused simulated positions to close instantly at "target".
+   */
+  paperFillPrice?: number;
   productType: ProductType;
   status: OrderStatus;
   filledQty: number;
@@ -70,7 +78,9 @@ export class OrderManager {
     quantity: number,
     type: OrderType = 'MARKET',
     price?: number,
-    triggerPrice?: number
+    triggerPrice?: number,
+    /** Paper-only fill reference. Ignored entirely when trading live. */
+    paperFillPrice?: number
   ): Promise<BrokerResponse> {
     const orderId = this.generateOrderId();
 
@@ -82,6 +92,7 @@ export class OrderManager {
       quantity,
       price,
       triggerPrice,
+      paperFillPrice,
       productType: 'INTRADAY',
       status: 'PENDING',
       filledQty: 0,
@@ -109,7 +120,14 @@ export class OrderManager {
     if (Math.random() > 0.05) {
       order.status = 'FILLED';
       order.filledQty = order.quantity;
-      order.avgPrice = order.price || 0; // Would need real LTP here
+      // Prefer the caller's fill reference, then a limit price. A zero here would
+      // make every downstream P&L percentage divide by zero.
+      order.avgPrice =
+        order.paperFillPrice && order.paperFillPrice > 0
+          ? order.paperFillPrice
+          : order.price && order.price > 0
+            ? order.price
+            : 0;
       order.brokerOrderId = `SIM-${order.id}`;
 
       this.orders.set(order.id, order);
@@ -338,7 +356,10 @@ export class OrderManager {
 
     position.ltp = ltp;
     position.pnl = (ltp - position.avgPrice) * position.quantity;
-    position.pnlPercent = ((ltp - position.avgPrice) / position.avgPrice) * 100;
+    // An unknown entry price yields no meaningful percentage. Reporting 0 keeps
+    // the target/stop comparisons inert instead of firing on an Infinity.
+    position.pnlPercent =
+      position.avgPrice > 0 ? ((ltp - position.avgPrice) / position.avgPrice) * 100 : 0;
 
     this.positions.set(symbol, position);
   }

@@ -17,15 +17,26 @@ import { FyersCredentials, MarketSnapshot, PivotPoints } from '../../types';
 import { OrderManager, Position } from '../../services/orderManager';
 import { EnhancedSignal, EnhancedSignalGenerator } from '../../services/enhancedSignalGenerator';
 import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
-import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, inr } from './shared';
+import { isMarketLive } from '../../services/marketSession';
+import { estimateOptionPremium } from '../../services/optionPricing';
+import { istDayKey } from '../../services/sniperEngine';
+import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
 
 const LOT_SIZE = 75;
 const SETTINGS_KEY = 'momentum_settings';
+/** EnhancedSignalGenerator returns NEUTRAL below this, so there is no point scanning. */
+const MIN_HISTORY = 5;
+const SCAN_MS = 30_000;
 
 interface MomentumSettings {
   minConfidence: number;
   lots: number;
+  /** Auto-execute with real money. Deliberately separate from the paper flag. */
   autoExecute: boolean;
+  /** Auto-execute on paper. On by default — this is what makes the engine trade. */
+  autoPaperExecute: boolean;
+  /** Start the scan loop by itself at the opening bell. */
+  autoStart: boolean;
   itmOffset: number;
   /** Exit once the option premium gains this %. */
   targetPct: number;
@@ -36,6 +47,8 @@ const DEFAULT_SETTINGS: MomentumSettings = {
   minConfidence: 70,
   lots: 1,
   autoExecute: false,
+  autoPaperExecute: true,
+  autoStart: true,
   itmOffset: 0,
   targetPct: 25,
   stopPct: 15
@@ -51,13 +64,18 @@ function loadSettings(): MomentumSettings {
     // otherwise survive the merge and turn every quantity into 0.
     const num = (v: unknown, fallback: number, min: number, max: number) =>
       typeof v === 'number' && isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
+    // The two new flags default ON for anyone whose settings predate them —
+    // `=== true` would leave every existing user with a silent engine.
+    const bool = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback);
     return {
       minConfidence: num(parsed.minConfidence, DEFAULT_SETTINGS.minConfidence, 50, 95),
       lots: num(parsed.lots, DEFAULT_SETTINGS.lots, 1, 20),
       itmOffset: num(parsed.itmOffset, DEFAULT_SETTINGS.itmOffset, 0, 500),
       targetPct: num(parsed.targetPct, DEFAULT_SETTINGS.targetPct, 5, 100),
       stopPct: num(parsed.stopPct, DEFAULT_SETTINGS.stopPct, 5, 60),
-      autoExecute: parsed.autoExecute === true
+      autoExecute: parsed.autoExecute === true,
+      autoPaperExecute: bool(parsed.autoPaperExecute, true),
+      autoStart: bool(parsed.autoStart, true)
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -118,11 +136,22 @@ export const MomentumPanel: React.FC<Props> = ({
   const orderRef = useRef<OrderManager | null>(null);
   /** Symbols with an exit order already in flight - the monitor ticks every 3s. */
   const exitingRef = useRef<Set<string>>(new Set());
+  /** Guards the entry path against the auto-execute effect firing twice. */
+  const enteringRef = useRef(false);
   const entryRef = useRef<Record<string, { entry: number; direction: 'LONG' | 'SHORT' }>>({});
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const signalRef = useRef(signal);
   signalRef.current = signal;
+  /**
+   * Live inputs are read through a ref inside the scan. Depending on them
+   * directly rebuilt the 30s interval on every incoming price tick, so the
+   * timer was cleared before it could ever fire.
+   */
+  const inputsRef = useRef({ niftyLtp, historyLog, pivots });
+  inputsRef.current = { niftyLtp, historyLog, pivots };
+  /** Last warm-up state logged, so a stalled feed is reported once, not every tick. */
+  const warmupRef = useRef('');
 
   const addLog = useCallback((text: string, level: LogEntry['level'] = 'info') => {
     setLog(prev => [{ ts: Date.now(), text, level }, ...prev].slice(0, 150));
@@ -138,6 +167,38 @@ export const MomentumPanel: React.FC<Props> = ({
   useEffect(() => {
     onStatus?.({ active: running, openPositions: positions.length });
   }, [running, positions.length, onStatus]);
+
+  /**
+   * Auto-start at the opening bell.
+   *
+   * A one-second clock drives the check, so the day key is latched the moment we
+   * start: without it this effect would immediately re-start an engine the user
+   * had just stopped. Pressing Stop writes today's key here for the same reason.
+   */
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const autoStartedDayRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!settings.autoStart) return;
+    const now = new Date(clock);
+    const today = istDayKey(clock);
+    const live = isMarketLive(now);
+
+    if (live && !running && autoStartedDayRef.current !== today) {
+      autoStartedDayRef.current = today;
+      setRunning(true);
+      addLog('🔔 Market open — momentum auto-started, scanning every 30s.', 'good');
+      return;
+    }
+    if (!live && running && autoStartedDayRef.current === today) {
+      setRunning(false);
+      addLog('🌙 Market closed — momentum stopped.', 'info');
+    }
+  }, [settings.autoStart, running, clock, addLog]);
 
   useEffect(() => {
     try {
@@ -169,19 +230,35 @@ export const MomentumPanel: React.FC<Props> = ({
 
   // --- analysis loop --------------------------------------------------------
   const analyse = useCallback(() => {
-    if (!niftyLtp) {
+    const { niftyLtp: ltp, historyLog: history, pivots: piv } = inputsRef.current;
+    if (!ltp) {
       addLog('No Nifty price yet.', 'warn');
       return;
     }
-    if (historyLog.length < 5) {
-      addLog(`Building history — ${historyLog.length}/5 snapshots.`, 'warn');
+    if (history.length < MIN_HISTORY) {
+      // Say *why* it is stuck. A count that never moves means snapshots are not
+      // arriving, which is a data problem, not a warm-up problem.
+      const newest = history[0]?.timestamp ?? 0;
+      const ageMin = newest ? Math.floor((Date.now() - newest) / 60000) : -1;
+      const stalled = ageMin >= 2;
+      const key = `${history.length}:${stalled}`;
+      if (warmupRef.current !== key) {
+        warmupRef.current = key;
+        addLog(
+          stalled
+            ? `⚠️ History stalled at ${history.length}/${MIN_HISTORY} — newest snapshot is ${ageMin}m old. Snapshots are not arriving, so momentum cannot signal.`
+            : `Building history — ${history.length}/${MIN_HISTORY} snapshots (~${MIN_HISTORY - history.length} min to first signal).`,
+          stalled ? 'bad' : 'warn'
+        );
+      }
       return;
     }
+    warmupRef.current = '';
     const s = EnhancedSignalGenerator.generateSignal(
-      historyLog,
-      pivots?.s1 ?? niftyLtp - 50,
-      pivots?.r1 ?? niftyLtp + 50,
-      niftyLtp
+      history,
+      piv?.s1 ?? ltp - 50,
+      piv?.r1 ?? ltp + 50,
+      ltp
     );
     setSignal(s);
     if (s.direction !== 'NEUTRAL' && s.confidence >= settingsRef.current.minConfidence) {
@@ -190,12 +267,12 @@ export const MomentumPanel: React.FC<Props> = ({
         'good'
       );
     }
-  }, [niftyLtp, historyLog, pivots, addLog]);
+  }, [addLog]);
 
   useEffect(() => {
     if (!running) return;
     analyse();
-    const id = window.setInterval(analyse, 30_000);
+    const id = window.setInterval(analyse, SCAN_MS);
     return () => window.clearInterval(id);
   }, [running, analyse]);
 
@@ -204,9 +281,14 @@ export const MomentumPanel: React.FC<Props> = ({
     const om = orderRef.current;
     const s = signalRef.current;
     if (!om || !s || !proposal || !niftyLtp) return;
+    // `busy` is React state and lands a render later; the auto-execute effect can
+    // re-fire before it does, so only a ref reliably prevents a duplicate order.
+    if (enteringRef.current) return;
+    enteringRef.current = true;
     setBusy(true);
     try {
-      const res = await om.placeOrder(proposal.symbol, 'BUY', proposal.qty, 'MARKET');
+      const fill = estimateOptionPremium(niftyLtp, proposal.strike, proposal.optionType);
+      const res = await om.placeOrder(proposal.symbol, 'BUY', proposal.qty, 'MARKET', undefined, undefined, fill);
       if (res.success) {
         entryRef.current[proposal.symbol] = { entry: niftyLtp, direction: s.direction as 'LONG' | 'SHORT' };
         setPositions(om.getPositions());
@@ -216,6 +298,7 @@ export const MomentumPanel: React.FC<Props> = ({
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }
     } finally {
+      enteringRef.current = false;
       setBusy(false);
     }
   }, [proposal, niftyLtp, addLog]);
@@ -275,14 +358,20 @@ export const MomentumPanel: React.FC<Props> = ({
   }, [running, niftyLtp, closeSymbol]);
 
   // --- auto execute ---------------------------------------------------------
+  // Paper and live have separate switches: enabling hands-off paper trading must
+  // never quietly authorise the same engine to spend real money.
+  const autoExecuteOn = tradingMode === 'PAPER' ? settings.autoPaperExecute : settings.autoExecute;
   useEffect(() => {
-    if (!running || !settings.autoExecute || busy) return;
+    if (!running || !autoExecuteOn || busy || enteringRef.current) return;
     if (!signal || signal.direction === 'NEUTRAL') return;
     if (signal.confidence < settings.minConfidence) return;
     if (positions.length > 0) return;
-    addLog('🤖 Auto-execute armed and the signal qualifies.', 'warn');
+    addLog(`🤖 Auto-execute (${tradingMode}) — the signal qualifies.`, 'warn');
     execute();
-  }, [running, settings.autoExecute, settings.minConfidence, signal, positions.length, busy, execute, addLog]);
+  }, [
+    running, autoExecuteOn, settings.minConfidence, signal, positions.length, busy,
+    tradingMode, execute, addLog
+  ]);
 
   const qualifies = !!signal && signal.direction !== 'NEUTRAL' && signal.confidence >= settings.minConfidence;
   const m = signal?.metrics;
@@ -309,6 +398,19 @@ export const MomentumPanel: React.FC<Props> = ({
               Runs all session on 15-minute trend, breadth, option flow, momentum and volatility. Independent of the
               Sniper — separate orders, separate P&amp;L.
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <Pill tone={settings.autoStart ? 'good' : 'muted'}>
+                {settings.autoStart ? 'Auto-start ON' : 'Auto-start OFF'}
+              </Pill>
+              <Pill tone={autoExecuteOn ? (tradingMode === 'LIVE' ? 'bad' : 'good') : 'muted'}>
+                {autoExecuteOn ? `Auto-execute ON · ${tradingMode}` : `Auto-execute OFF · ${tradingMode}`}
+              </Pill>
+              <Pill tone={historyLog.length >= MIN_HISTORY ? 'good' : 'warn'}>
+                {historyLog.length >= MIN_HISTORY
+                  ? `History ${historyLog.length}`
+                  : `Warming up ${historyLog.length}/${MIN_HISTORY}`}
+              </Pill>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -319,6 +421,9 @@ export const MomentumPanel: React.FC<Props> = ({
             </button>
             <button
               onClick={() => {
+                // Claim today for the manual choice so the auto-start effect,
+                // which re-runs every second, cannot immediately restart it.
+                autoStartedDayRef.current = istDayKey(Date.now());
                 setRunning(r => !r);
                 addLog(running ? '⏸️ Momentum stopped.' : '▶️ Momentum started — scanning every 30s.', 'info');
               }}
@@ -371,20 +476,35 @@ export const MomentumPanel: React.FC<Props> = ({
                 />
               </label>
             ))}
-            <label className="flex items-center gap-3 self-end rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5">
-              <input
-                type="checkbox"
-                checked={settings.autoExecute}
-                onChange={e => setSettings(s => ({ ...s, autoExecute: e.target.checked }))}
-                className="h-4 w-4 accent-sky-500"
-              />
-              <span className="text-xs text-slate-300">
-                Auto-execute
-                {settings.autoExecute && tradingMode === 'LIVE' && (
-                  <span className="ml-1 font-semibold text-rose-300">places real orders</span>
-                )}
+          </div>
+
+          <div className="mt-4 space-y-2 border-t border-slate-800 pt-4">
+            <Toggle
+              label="Auto-start at market open"
+              hint="Begins the 30s scan loop at 09:15 IST without anyone pressing Start."
+              checked={settings.autoStart}
+              onChange={v => setSettings(s => ({ ...s, autoStart: v }))}
+            />
+            <Toggle
+              label="Auto-execute on PAPER"
+              hint="Buys automatically whenever a signal clears the confidence threshold."
+              checked={settings.autoPaperExecute}
+              onChange={v => setSettings(s => ({ ...s, autoPaperExecute: v }))}
+            />
+            <Toggle
+              label="Auto-execute on LIVE"
+              hint="Real money, placed with no confirmation. Off unless you say otherwise."
+              checked={settings.autoExecute}
+              onChange={v => setSettings(s => ({ ...s, autoExecute: v }))}
+              danger
+            />
+            <p className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-400">
+              Currently in <span className="font-semibold text-slate-200">{tradingMode}</span> mode — auto-execute is{' '}
+              <span className={autoExecuteOn ? 'font-semibold text-emerald-300' : 'font-semibold text-slate-300'}>
+                {autoExecuteOn ? 'ON' : 'OFF'}
               </span>
-            </label>
+              . Entries still need ≥ {settings.minConfidence}% confidence and no open position.
+            </p>
           </div>
         </Card>
       )}

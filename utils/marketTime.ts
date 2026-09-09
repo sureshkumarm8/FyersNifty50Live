@@ -28,7 +28,7 @@ export function getMarketTimeInfo(): MarketTimeInfo {
   const timeVal = hour * 100 + min;
   
   const isWeekday = day >= 1 && day <= 5;
-  const isMarketHours = timeVal >= 915 && timeVal <= 1545;
+  const isMarketHours = timeVal >= 915 && timeVal <= 1530;
   const isBeforeMarketStart = timeVal < 917;
   
   // Calculate delay until 9:17 AM IST
@@ -78,7 +78,7 @@ export function getMarketStatusMessage(info: MarketTimeInfo): string {
   }
   
   if (!info.isMarketHours) {
-    return "Market Closed (9:15 AM - 3:45 PM IST)";
+    return "Market Closed (9:15 AM - 3:30 PM IST)";
   }
   
   return "Market Open";

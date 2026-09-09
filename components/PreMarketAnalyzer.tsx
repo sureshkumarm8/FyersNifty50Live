@@ -1,19 +1,24 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FyersCredentials, MarketSnapshot, EnrichedFyersQuote } from '../types';
 import { imageStorageService } from '../services/imageStorage';
 import { callAIVision, getVisionProviderLabel, isVisionConfigured, resolveVisionProvider } from '../services/aiProvider';
 import { SNIPER, buildSniperPlaybook, resolvePhase, istMinutes, SniperPlaybook, ZonePlay } from '../services/sniperPlaybook';
+import {
+  BASIS_LABEL, BASIS_NOTE, DecisionBasis, OPEN_MINS, basisFor, driftRevalidationDue,
+  dueRevalidation, isProvisional
+} from '../services/premarketSchedule';
 import { AlertCircle } from 'lucide-react';
 import {
   ActivityLog, CaptureChecklist, ChartWorkspace, CommandBar, EvidenceGrid, KeyNumbers,
-  PreviewModal, ScenarioBoard, VerdictBoard
+  PhaseBoard, PreviewModal, ScenarioBoard, VerdictBoard
 } from './premarket/PreMarketViews';
 
 // ---------------------------------------------------------------------------
 import {
   CHART_SLOTS, ChartContribution, ChartEntry, ChartSlotId, ChartVerdict, DECISION_SCHEMA,
-  DECISION_STATE_KEY, IMAGE_KEY, META_STATE_KEY, PendingImage, PreMarketDecision, SLOT_BY_ID,
-  SLOT_ICONS, STALE_AFTER_MS, SlotConfig, biasClasses, isStale, isUnreadable
+  DECISION_STATE_KEY, IMAGE_KEY, META_STATE_KEY, MarketContext, PendingImage, PhaseSnapshot,
+  PreMarketDecision, SLOT_BY_ID, SLOT_ICONS, STALE_AFTER_MS, SlotConfig, biasClasses, isStale,
+  isUnreadable
 } from './premarket/model';
 
 export { CHART_SLOTS } from './premarket/model';
@@ -142,11 +147,20 @@ export function buildDecision(params: {
   historyLog?: MarketSnapshot[];
   stocks?: EnrichedFyersQuote[];
   now?: number;
+  /** Quality of information available when this was cut. Defaults to the clock. */
+  basis?: DecisionBasis;
+  /** Carried forward across re-cuts. */
+  revalidations?: PreMarketDecision['revalidations'];
+  /** Previously captured phases, carried forward so history is not lost. */
+  phases?: PreMarketDecision['phases'];
+  /** Set when the operator recomputed this phase outside its window. */
+  forced?: boolean;
 }): PreMarketDecision {
   const { charts, spot, spotSource } = params;
   const historyLog = params.historyLog || [];
   const stocks = params.stocks || [];
   const now = params.now ?? Date.now();
+  const basis = params.basis ?? basisFor(new Date(now));
   const coverage = charts.length;
 
   // 1. Weighted chart bias ---------------------------------------------------
@@ -312,12 +326,39 @@ export function buildDecision(params: {
 
   // The plan is a zone play, never a breakout - this system buys AT support
   // and fades AT resistance, it does not chase closes through a level.
+  const provisional = isProvisional(basis);
+
+  // The Nifty50 read this phase was cut against, kept so each checkpoint can be
+  // audited later against the market it actually saw.
+  const num = (v: number | undefined | null): number | null =>
+    typeof v === 'number' && isFinite(v) ? Math.round(v * 100) / 100 : null;
+  const marketContext: MarketContext = {
+    niftyLtp: num(latest?.niftyLtp) ?? (spotSource === 'LIVE' ? Math.round(spot) : null),
+    ptsChg: num(latest?.ptsChg),
+    pcr: num(latest?.pcr),
+    optionsSent: num(latest?.optionsSent),
+    stockSent: num(latest?.stockSent),
+    adv: num(latest?.adv),
+    dec: num(latest?.dec),
+    snapshotTime: latest?.time ?? null,
+    snapshots: historyLog.length
+  };
+
+  // A STAND ASIDE cut from last session's charts is a forecast, not a ruling.
+  // Saying so prevents the day being written off at 07:00 on stale levels.
+  const verdictLine = provisional
+    ? `${playbook.verdictHeadline} (PROVISIONAL — ${BASIS_LABEL[basis]}) — ${playbook.verdictReason}`
+    : `${playbook.verdictHeadline} — ${playbook.verdictReason}`;
+
   const tradePlan: string[] = [
-    playbook.verdictHeadline + ' — ' + playbook.verdictReason,
+    verdictLine,
     `Bounce: price into ${ce.triggerFrom}–${ce.triggerTo} → buy ${ce.optionLabel} (${SNIPER.itmPoints} ITM) → target ${ce.targetSpot}, stop ${ce.stopSpot}. [${ce.status}]`,
     `Fade: price into ${pe.triggerFrom}–${pe.triggerTo} → buy ${pe.optionLabel} (${SNIPER.itmPoints} ITM) → target ${pe.targetSpot}, stop ${pe.stopSpot}. [${pe.status}]`,
     `No entries after ${SNIPER.reviewBy}. Everything is flat at ${SNIPER.hardStop}, win or lose.`
   ];
+  if (provisional) {
+    tradePlan.splice(1, 0, BASIS_NOTE[basis]);
+  }
   if (coverage < CHART_SLOTS.length) {
     const missing = CHART_SLOTS.filter(s => !charts.some(c => c.slot === s.id)).map(s => s.short);
     tradePlan.push(`Missing input: ${missing.join(', ')} - confidence stays capped until they are added.`);
@@ -334,7 +375,7 @@ export function buildDecision(params: {
     ...contributions.map(c => `${c.emoji} ${c.short} · ${c.bias} ${c.confidence}% — ${c.summary}`)
   ].join('\n');
 
-  return {
+  const core: PhaseSnapshot = {
     schema: DECISION_SCHEMA,
     generatedAt: now,
     generatedAtStr: new Date(now).toLocaleString('en-IN', { hour12: false }),
@@ -365,7 +406,81 @@ export function buildDecision(params: {
     tradePlan,
     aiSummary,
     playbook,
-    staleCharts
+    staleCharts,
+    basis,
+    provisional,
+    forced: params.forced ?? false,
+    marketContext
+  };
+
+  return {
+    ...core,
+    // Each checkpoint keeps its own recalculated analysis. A later cut replaces
+    // only its own phase, so the earlier reads stay inspectable.
+    phases: { ...(params.phases || {}), [basis]: core },
+    revalidations: [
+      ...(params.revalidations || []),
+      {
+        basis,
+        at: now,
+        atStr: new Date(now).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }),
+        spot: Math.round(spot),
+        verdict: playbook.verdictHeadline,
+        zoneWidth: expectedRange
+      }
+    ].slice(-8)
+  };
+}
+
+/**
+ * Bring a decision saved before phase tracking existed up to the current shape.
+ *
+ * These decisions carry a matching schema number, so they restore cleanly - but
+ * with no `phases` entry the phase board has nothing to render and silently
+ * disappears. Rather than discard the plan (and the user's morning work), the
+ * decision is treated as its own first phase, inferred from when it was cut.
+ */
+export function migrateDecision(saved: PreMarketDecision): PreMarketDecision {
+  if (saved.basis && saved.phases && Object.keys(saved.phases).length > 0) return saved;
+
+  const basis = saved.basis ?? basisFor(new Date(saved.generatedAt));
+  const { phases: _phases, revalidations: _revalidations, ...rest } = saved;
+  const core: PhaseSnapshot = {
+    ...rest,
+    basis,
+    provisional: saved.provisional ?? isProvisional(basis),
+    marketContext: saved.marketContext ?? {
+      niftyLtp: null,
+      ptsChg: null,
+      pcr: null,
+      optionsSent: null,
+      stockSent: null,
+      adv: null,
+      dec: null,
+      snapshotTime: null,
+      snapshots: 0
+    }
+  };
+
+  return {
+    ...core,
+    phases: { ...(saved.phases || {}), [basis]: core },
+    revalidations:
+      saved.revalidations && saved.revalidations.length
+        ? saved.revalidations
+        : [
+            {
+              basis,
+              at: saved.generatedAt,
+              atStr: new Date(saved.generatedAt).toLocaleTimeString('en-IN', {
+                hour12: false,
+                timeZone: 'Asia/Kolkata'
+              }),
+              spot: saved.spot,
+              verdict: saved.playbook?.verdictHeadline ?? '',
+              zoneWidth: saved.expectedRange
+            }
+          ]
   };
 }
 
@@ -447,7 +562,12 @@ export const PreMarketAnalyzer: React.FC<{
         // generated today - yesterday's zones are actively dangerous to trade.
         if (saved?.schema === DECISION_SCHEMA && saved.playbook) {
           if (istDateKey(saved.generatedAt) === istDateKey(Date.now())) {
-            setPreMarketDecision(saved);
+            const migrated = migrateDecision(saved);
+            setPreMarketDecision(migrated);
+            if (migrated !== saved) {
+              imageStorageService.saveState(DECISION_STATE_KEY, migrated).catch(() => {});
+              addLog(`💾 Restored today's plan · recorded as phase "${BASIS_LABEL[migrated.basis!]}"`);
+            }
           } else {
             imageStorageService.saveState(DECISION_STATE_KEY, null).catch(() => {});
             addLog('🗓️ Previous plan was from another day - discarded. Re-generate for today.');
@@ -640,26 +760,37 @@ export const PreMarketAnalyzer: React.FC<{
 
   // --- decision ------------------------------------------------------------
 
-  const resolveSpot = (): { spot: number; source: 'LIVE' | 'MANUAL' | 'CHARTS' } | null => {
-    const manual = parseFloat(manualSpot.replace(/[,\s]/g, ''));
-    if (isFinite(manual) && manual > 0) return { spot: manual, source: 'MANUAL' };
-    if (liveLtp) return { spot: liveLtp, source: 'LIVE' };
+  const resolveSpot = useCallback(
+    (preferLive = false): { spot: number; source: 'LIVE' | 'MANUAL' | 'CHARTS' } | null => {
+      // Once the market is open the traded price beats anything typed in by
+      // hand the night before, otherwise every re-cut stays pinned to a stale
+      // manual close and the levels are never re-anchored.
+      if (preferLive && liveLtp) return { spot: liveLtp, source: 'LIVE' };
 
-    // Prefer a price the models actually read off the charts, newest timeframe
-    // first - the median of support/resistance levels is a last resort.
-    const priority: ChartSlotId[] = ['INTRADAY_1M', 'OI_SNAPSHOT', 'MULTI_OI', 'DAILY_1Y'];
-    for (const slot of priority) {
-      const read = analyzedCharts.find(c => c.slot === slot)?.verdict?.lastPrice;
-      if (read && read > 1000) return { spot: Math.round(read), source: 'CHARTS' };
-    }
+      const manual = parseFloat(manualSpot.replace(/[,\s]/g, ''));
+      if (isFinite(manual) && manual > 0) return { spot: manual, source: 'MANUAL' };
+      if (liveLtp) return { spot: liveLtp, source: 'LIVE' };
 
-    const levels = analyzedCharts.flatMap(c => [...(c.verdict?.supports || []), ...(c.verdict?.resistances || [])]);
-    if (levels.length >= 2) {
-      const sorted = [...levels].sort((a, b) => a - b);
-      return { spot: Math.round(sorted[Math.floor(sorted.length / 2)]), source: 'CHARTS' };
-    }
-    return null;
-  };
+      // Prefer a price the models actually read off the charts, newest timeframe
+      // first - the median of support/resistance levels is a last resort.
+      const priority: ChartSlotId[] = ['INTRADAY_1M', 'OI_SNAPSHOT', 'MULTI_OI', 'DAILY_1Y'];
+      for (const slot of priority) {
+        const read = analyzedCharts.find(c => c.slot === slot)?.verdict?.lastPrice;
+        if (read && read > 1000) return { spot: Math.round(read), source: 'CHARTS' };
+      }
+
+      const levels = analyzedCharts.flatMap(c => [
+        ...(c.verdict?.supports || []),
+        ...(c.verdict?.resistances || [])
+      ]);
+      if (levels.length >= 2) {
+        const sorted = [...levels].sort((a, b) => a - b);
+        return { spot: Math.round(sorted[Math.floor(sorted.length / 2)]), source: 'CHARTS' };
+      }
+      return null;
+    },
+    [liveLtp, manualSpot, analyzedCharts]
+  );
 
   const generatePreMarketDecision = async () => {
     if (coverage === 0) {
@@ -667,7 +798,8 @@ export const PreMarketAnalyzer: React.FC<{
       return;
     }
 
-    const resolved = resolveSpot();
+    const openNow = istMinutes() >= OPEN_MINS;
+    const resolved = resolveSpot(openNow);
     if (!resolved) {
       addLog('❌ No spot price available - enter the previous close manually');
       return;
@@ -677,23 +809,147 @@ export const PreMarketAnalyzer: React.FC<{
     addLog('🧠 Building pre-market decision...');
 
     try {
+      const basis = basisFor();
       const decision = buildDecision({
         charts: analyzedCharts,
         spot: resolved.spot,
         spotSource: resolved.source,
         historyLog,
-        stocks
+        stocks,
+        basis,
+        // Earlier checkpoints stay on the record. They are timestamped and
+        // labelled, so they remain a truthful account of what was known then.
+        phases: preMarketDecision?.phases,
+        revalidations: preMarketDecision?.revalidations
       });
 
       setPreMarketDecision(decision);
       imageStorageService.saveState(DECISION_STATE_KEY, decision).catch(() => {});
       addLog(`✅ Decision ready · ${decision.primaryBias} · confidence ${decision.confidence}%`);
+      if (isProvisional(basis)) {
+        addLog(`🕘 Provisional (${BASIS_LABEL[basis]}) — auto re-checks at 09:10 and 09:15 IST.`);
+      }
     } catch (e: any) {
       addLog(`❌ Error: ${e.message}`);
     } finally {
       setIsGenerating(false);
     }
   };
+
+  /**
+   * Recompute one phase on demand, against whatever the market is doing now.
+   *
+   * The checkpoints exist to schedule the *automatic* re-cuts; they should not
+   * stop anyone re-running a phase to compare reads. A forced phase is written
+   * only into its own slot - the decision's own basis is left alone, so this
+   * cannot fight the automatic schedule or promote a provisional plan to final.
+   */
+  const runPhase = useCallback(
+    (basis: DecisionBasis, overrideSpot?: number) => {
+      if (!preMarketDecision || coverage === 0) {
+        addLog('❌ Generate a decision before recomputing a phase');
+        return;
+      }
+      // A supplied price wins outright. The pre-open auction print and the
+      // 09:15 open are the two numbers the feed is least likely to have, and
+      // they are exactly the ones these phases are named after.
+      const resolved =
+        typeof overrideSpot === 'number' && isFinite(overrideSpot) && overrideSpot > 0
+          ? { spot: overrideSpot, source: 'MANUAL' as const }
+          : resolveSpot(true);
+      if (!resolved) {
+        addLog('❌ No spot price available - type the price for this phase');
+        return;
+      }
+      try {
+        const built = buildDecision({
+          charts: analyzedCharts,
+          spot: resolved.spot,
+          spotSource: resolved.source,
+          historyLog,
+          stocks,
+          basis,
+          forced: true
+        });
+        const record = built.phases?.[basis];
+        if (!record) return;
+
+        const next: PreMarketDecision = {
+          ...preMarketDecision,
+          phases: { ...(preMarketDecision.phases || {}), [basis]: record }
+        };
+        setPreMarketDecision(next);
+        imageStorageService.saveState(DECISION_STATE_KEY, next).catch(() => {});
+        addLog(
+          `🧪 Recomputed "${BASIS_LABEL[basis]}" at ${Math.round(resolved.spot)} (${resolved.source.toLowerCase()}) — ` +
+            `${record.playbook.verdict} · ${record.expectedSupport}–${record.expectedResistance} (${record.expectedRange} pts)`
+        );
+      } catch (e: any) {
+        addLog(`❌ Recompute failed: ${e.message}`);
+      }
+    },
+    [preMarketDecision, coverage, resolveSpot, analyzedCharts, historyLog, stocks, addLog]
+  );
+
+  /**
+   * Re-cut the decision when better information arrives.
+   *
+   * Without this the verdict is frozen at whatever the previous evening's
+   * screenshots implied. That is how a day gets written off with "STAND ASIDE -
+   * no trade today" over a 50-point zone: the zone was measured against
+   * yesterday's close, and once price opens somewhere else the walls that
+   * matter are different ones entirely.
+   */
+  const revalidateRef = useRef<{ run: () => void }>({ run: () => {} });
+  revalidateRef.current.run = () => {
+    const decision = preMarketDecision;
+    if (!decision || isGenerating || coverage === 0) return;
+
+    const now = new Date();
+    const checkpoint = dueRevalidation(decision.basis, now);
+    const drifted = driftRevalidationDue(decision.spot, liveLtp, now);
+    if (!checkpoint && !drifted) return;
+
+    // A checkpoint re-cut needs the price that checkpoint is named after; a
+    // drift re-cut is by definition about the live price. Without a live print
+    // there is nothing new to learn, so stay provisional rather than burn the
+    // checkpoint on the same stale number.
+    const resolved = resolveSpot(true);
+    if (!resolved || resolved.source !== 'LIVE') return;
+
+    const nextBasis: DecisionBasis = checkpoint ?? basisFor(now);
+    try {
+      const next = buildDecision({
+        charts: analyzedCharts,
+        spot: resolved.spot,
+        spotSource: resolved.source,
+        historyLog,
+        stocks,
+        basis: nextBasis,
+        revalidations: decision.revalidations,
+        phases: decision.phases
+      });
+      setPreMarketDecision(next);
+      imageStorageService.saveState(DECISION_STATE_KEY, next).catch(() => {});
+
+      const changed = next.playbook.verdictHeadline !== decision.playbook.verdictHeadline;
+      addLog(
+        `🔁 Re-cut on ${BASIS_LABEL[nextBasis]} at ${Math.round(resolved.spot)} — ${
+          changed
+            ? `verdict changed: ${decision.playbook.verdict} → ${next.playbook.verdict}`
+            : `verdict unchanged (${next.playbook.verdict})`
+        }`
+      );
+    } catch (e: any) {
+      addLog(`❌ Re-cut failed: ${e.message}`);
+    }
+  };
+
+  useEffect(() => {
+    const id = window.setInterval(() => revalidateRef.current.run(), 15_000);
+    revalidateRef.current.run();
+    return () => window.clearInterval(id);
+  }, []);
 
   const clearAll = async () => {
     for (const slot of CHART_SLOTS) {
@@ -772,7 +1028,13 @@ export const PreMarketAnalyzer: React.FC<{
           {hasDecision && preMarketDecision ? (
             <>
               {preMarketDecision.playbook && (
-                <VerdictBoard playbook={preMarketDecision.playbook} onCopy={copyToClipboard} />
+                <VerdictBoard
+                  playbook={preMarketDecision.playbook}
+                  onCopy={copyToClipboard}
+                  basis={preMarketDecision.basis}
+                  provisional={preMarketDecision.provisional}
+                  revalidations={preMarketDecision.revalidations}
+                />
               )}
 
               {preMarketDecision.staleCharts.length > 0 && (
@@ -786,7 +1048,12 @@ export const PreMarketAnalyzer: React.FC<{
               )}
 
               <KeyNumbers decision={preMarketDecision} />
-              <ScenarioBoard playbook={preMarketDecision.playbook} />
+              <PhaseBoard decision={preMarketDecision} onRunPhase={runPhase} />
+              <ScenarioBoard
+                playbook={preMarketDecision.playbook}
+                basis={preMarketDecision.basis}
+                actualSpot={liveLtp || preMarketDecision.marketContext?.niftyLtp || undefined}
+              />
               <EvidenceGrid decision={preMarketDecision} visionLabel={visionLabel} />
               {workspace}
             </>

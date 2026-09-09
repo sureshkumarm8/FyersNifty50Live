@@ -237,3 +237,41 @@ export const Checklist: React.FC<{ items: { label: string; ok: boolean; detail?:
     ))}
   </ul>
 );
+
+/**
+ * A labelled switch for the AutoTrade automation settings.
+ *
+ * `danger` is for the toggles that spend real money — they are tinted rose when
+ * on so an armed live engine can never be mistaken for a paper one at a glance.
+ */
+export const Toggle: React.FC<{
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  danger?: boolean;
+}> = ({ label, hint, checked, onChange, danger }) => {
+  const on = danger ? 'bg-rose-500' : 'bg-emerald-500';
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-left transition hover:border-slate-700"
+    >
+      <span className="min-w-0">
+        <span className={`block text-xs font-semibold ${checked ? 'text-slate-100' : 'text-slate-400'}`}>{label}</span>
+        {hint && <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">{hint}</span>}
+      </span>
+      <span
+        className={`relative h-5 w-9 shrink-0 rounded-full transition ${checked ? on : 'bg-slate-700'}`}
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? 'left-4.5' : 'left-0.5'}`}
+          style={{ left: checked ? '1.125rem' : '0.125rem' }}
+        />
+      </span>
+    </button>
+  );
+};

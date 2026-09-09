@@ -13,7 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarCheck, Crosshair, Lock, Pause, Play, Timer } from 'lucide-react';
+import { Bot, CalendarCheck, Crosshair, Lock, Pause, Play, Timer } from 'lucide-react';
 import { FyersCredentials, MarketSnapshot, PivotPoints } from '../../types';
 import { OrderManager, Position } from '../../services/orderManager';
 import { EnhancedSignalGenerator } from '../../services/enhancedSignalGenerator';
@@ -25,11 +25,16 @@ import {
   HARD_STOP, MARKET_OPEN
 } from '../../services/sniperEngine';
 import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
-import { BlockList, Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, inr } from './shared';
+import { isMarketLive, readFlag, writeFlag } from '../../services/marketSession';
+import { estimateOptionPremium } from '../../services/optionPricing';
+import { BlockList, Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
 import { Handoff, HandoffBoard, RangeBoard, SetupBoard, fmt } from './SniperViews';
 
 const LOTS_KEY = 'sniper_lots';
 const DAY_KEY = 'sniper_day_state';
+const AUTOSTART_KEY = 'sniper_autostart';
+const AUTO_PAPER_KEY = 'sniper_auto_paper';
+const AUTO_LIVE_KEY = 'sniper_auto_live';
 const LOT_SIZE = 75;
 
 interface DayState {
@@ -85,6 +90,11 @@ export const SniperPanel: React.FC<Props> = ({
   credentials, niftyLtp, historyLog, pivots, tradingMode, onStatus
 }) => {
   const [armed, setArmed] = useState(false);
+  const [autoStart, setAutoStart] = useState(() => readFlag(AUTOSTART_KEY, true));
+  /** Auto-execute on paper. On by default — paper trades cost nothing but data. */
+  const [autoPaper, setAutoPaper] = useState(() => readFlag(AUTO_PAPER_KEY, true));
+  /** Auto-execute with real money. Off by default and never implied by autoPaper. */
+  const [autoLive, setAutoLive] = useState(() => readFlag(AUTO_LIVE_KEY, false));
   const [log, setLog] = useState<LogEntry[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [range, setRange] = useState<OpeningRange | null>(null);
@@ -99,6 +109,8 @@ export const SniperPanel: React.FC<Props> = ({
   const orderRef = useRef<OrderManager | null>(null);
   /** Guards the exit path: the monitor ticks every second and the close is async. */
   const exitingRef = useRef(false);
+  /** Guards the entry path against the auto-execute effect firing twice. */
+  const enteringRef = useRef(false);
   const latest = useRef({ niftyLtp, historyLog, pivots });
   latest.current = { niftyLtp, historyLog, pivots };
   const setupRef = useRef<SniperSetup | null>(null);
@@ -124,6 +136,10 @@ export const SniperPanel: React.FC<Props> = ({
     localStorage.setItem(LOTS_KEY, String(lots));
   }, [lots]);
 
+  useEffect(() => writeFlag(AUTOSTART_KEY, autoStart), [autoStart]);
+  useEffect(() => writeFlag(AUTO_PAPER_KEY, autoPaper), [autoPaper]);
+  useEffect(() => writeFlag(AUTO_LIVE_KEY, autoLive), [autoLive]);
+
   const persistDay = useCallback((next: DayState) => {
     setDayState(next);
     try {
@@ -138,6 +154,35 @@ export const SniperPanel: React.FC<Props> = ({
     const today = istDayKey(tick);
     if (dayState.day !== today) persistDay(freshDay(today));
   }, [tick, dayState.day, persistDay]);
+
+  /**
+   * Auto-arm at the opening bell.
+   *
+   * The day key is recorded the moment we arm so the engine claims each session
+   * exactly once. Without that latch this effect would fight the Pause button —
+   * it re-runs every second, so a manual pause would be undone on the next tick.
+   * Pressing Pause writes today's key here too, which is what makes the pause
+   * stick for the rest of the session.
+   */
+  const autoArmedDayRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!autoStart) return;
+    const now = new Date(tick);
+    const today = istDayKey(tick);
+    const live = isMarketLive(now);
+
+    if (live && !armed && autoArmedDayRef.current !== today) {
+      autoArmedDayRef.current = today;
+      setArmed(true);
+      addLog('🔔 Market open — sniper auto-armed for the Download.', 'good');
+      return;
+    }
+    // Stand the engine down once the bell rings so it cannot act on stale data.
+    if (!live && armed && autoArmedDayRef.current === today) {
+      setArmed(false);
+      addLog('🌙 Market closed — sniper stood down.', 'info');
+    }
+  }, [autoStart, armed, tick, addLog]);
 
   // --- pre-market handoff ---------------------------------------------------
   const loadPlaybook = useCallback(async () => {
@@ -328,10 +373,16 @@ export const SniperPanel: React.FC<Props> = ({
       addLog('🛑 Blocked — today\'s single trade is already spent.', 'bad');
       return;
     }
+    // `busy` is React state and lands a render later; the auto-execute effect
+    // re-runs every second, so only a ref can stop a second order going out
+    // before the first has been acknowledged.
+    if (enteringRef.current) return;
+    enteringRef.current = true;
     setBusy(true);
     try {
       const qty = lots * LOT_SIZE;
-      const res = await om.placeOrder(setup.symbol, 'BUY', qty, 'MARKET');
+      const fill = estimateOptionPremium(setup.entrySpot, setup.strike, setup.optionType);
+      const res = await om.placeOrder(setup.symbol, 'BUY', qty, 'MARKET', undefined, undefined, fill);
       if (res.success) {
         setActiveSetup(setup);
         setPositions(om.getPositions());
@@ -344,9 +395,32 @@ export const SniperPanel: React.FC<Props> = ({
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }
     } finally {
+      enteringRef.current = false;
       setBusy(false);
     }
   }, [evaluation, lots, addLog, persistDay]);
+
+  /**
+   * Hands-off entry. Every gate the manual button enforces is re-checked here —
+   * the engine must be armed, the protocol must say `canEnter`, the day's single
+   * trade must still be unspent and nothing may already be open.
+   *
+   * Real money needs its own opt-in: `autoPaper` never implies `autoLive`.
+   */
+  const autoExecuteOn = tradingMode === 'PAPER' ? autoPaper : autoLive;
+  useEffect(() => {
+    if (!armed || !autoExecuteOn || busy || enteringRef.current) return;
+    if (!evaluation?.canEnter || !evaluation.setup) return;
+    if (dayState.tradeTaken || positions.length > 0) return;
+    addLog(
+      `🤖 Auto-execute (${tradingMode}) — every protocol gate is green, taking the shot.`,
+      'warn'
+    );
+    execute();
+  }, [
+    armed, autoExecuteOn, busy, evaluation, dayState.tradeTaken, positions.length,
+    tradingMode, execute, addLog
+  ]);
 
   // --- derived view data ----------------------------------------------------
   const phase = evaluation?.phase ?? 'PRE_OPEN';
@@ -404,6 +478,9 @@ export const SniperPanel: React.FC<Props> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
+                // Claim today for the manual choice so the auto-arm effect,
+                // which re-runs every second, cannot immediately undo a pause.
+                autoArmedDayRef.current = istDayKey(Date.now());
                 setArmed(a => !a);
                 addLog(armed ? '⏸️ Sniper monitoring paused.' : '▶️ Sniper monitoring armed.', 'info');
               }}
@@ -461,6 +538,38 @@ export const SniperPanel: React.FC<Props> = ({
             );
           })}
         </div>
+      </Card>
+
+      {/* ---- automation ---- */}
+      <Card title="Automation" icon={<Bot className="h-4 w-4 text-emerald-400" />}>
+        <div className="space-y-2">
+          <Toggle
+            label="Auto-arm at market open"
+            hint="Arms the Download at 09:15 IST without anyone pressing Arm."
+            checked={autoStart}
+            onChange={setAutoStart}
+          />
+          <Toggle
+            label="Auto-execute on PAPER"
+            hint="Takes the shot by itself the moment every protocol gate turns green."
+            checked={autoPaper}
+            onChange={setAutoPaper}
+          />
+          <Toggle
+            label="Auto-execute on LIVE"
+            hint="Real money, placed with no confirmation. Off unless you say otherwise."
+            checked={autoLive}
+            onChange={setAutoLive}
+            danger
+          />
+        </div>
+        <p className="mt-3 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-400">
+          Currently in <span className="font-semibold text-slate-200">{tradingMode}</span> mode — auto-execute is{' '}
+          <span className={autoExecuteOn ? 'font-semibold text-emerald-300' : 'font-semibold text-slate-300'}>
+            {autoExecuteOn ? 'ON' : 'OFF'}
+          </span>
+          . The one-trade-a-day lock, the 09:25–09:45 window and the 10:15 hard stop still apply.
+        </p>
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">

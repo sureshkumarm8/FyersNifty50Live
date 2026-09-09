@@ -33,6 +33,32 @@ declare global {
   }
 }
 
+/**
+ * One snapshot per minute, newest first. Keyed by minute rather than by object
+ * identity so the same minute arriving from IndexedDB, Redis and the live poll
+ * collapses into a single entry instead of three.
+ */
+const minuteKey = (s: MarketSnapshot): string =>
+  Number.isFinite(s?.timestamp) && s.timestamp > 0
+    ? String(Math.floor(s.timestamp / 60000))
+    : String(s?.time || '').substring(0, 5);
+
+/** `preferred` wins any collision - it is the fresher/live-derived copy. */
+const mergeSnapshots = (preferred: MarketSnapshot[], incoming: MarketSnapshot[]): MarketSnapshot[] => {
+  const byMinute = new Map<string, MarketSnapshot>();
+  for (const s of [...incoming, ...preferred]) {
+    const k = s && minuteKey(s);
+    if (k) byMinute.set(k, s);
+  }
+  return Array.from(byMinute.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+};
+
+const isTodayIST = (timestamp: number): boolean => {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return false;
+  const opts = { timeZone: 'Asia/Kolkata' } as const;
+  return new Date(timestamp).toLocaleDateString('en-IN', opts) === new Date().toLocaleDateString('en-IN', opts);
+};
+
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     try {
@@ -345,8 +371,10 @@ const App: React.FC = () => {
                     redisSnapshots[i].ptsChg = redisSnapshots[i].niftyLtp - redisSnapshots[i-1].niftyLtp;
                   }
                   
-                  // Set Redis data as the source of truth (replace, don't merge)
-                  setHistoryLog(redisSnapshots);
+                  // Merge (never replace): a mid-session reload has already
+                  // restored today's snapshots from IndexedDB, and Redis lagging
+                  // a minute behind must not wipe them.
+                  setHistoryLog(prev => mergeSnapshots(prev, redisSnapshots));
                   
                   // Initialize session history and refs from the OLDEST snapshot (last in array since newest-first)
                   if (redisSnapshots.length > 0 && filteredData[filteredData.length - 1]?.stocks) {
@@ -620,6 +648,31 @@ const App: React.FC = () => {
      };
      initPivots();
   }, [credentials]);
+
+  // --- 1b. Restore today's snapshots from IndexedDB -------------------------
+  // Every snapshot is written to IndexedDB below, but nothing ever read it back,
+  // so a mid-session reload started from an empty history. The trading engines
+  // need 5 snapshots before they will emit a signal at all, which left them
+  // blind (and unable to place any trade) for five minutes after every refresh.
+  const historyRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!isDbLoaded || historyRestoredRef.current) return;
+    historyRestoredRef.current = true;
+    (async () => {
+      try {
+        const saved = await dbService.getSnapshots();
+        const today = (saved || []).filter(s => s && isTodayIST(s.timestamp));
+        if (today.length === 0) return;
+        setHistoryLog(prev => {
+          const merged = mergeSnapshots(prev, today);
+          return merged.length > prev.length ? merged : prev;
+        });
+        console.log(`💾 Restored ${today.length} snapshot(s) for today from IndexedDB`);
+      } catch (e) {
+        console.warn('[History] Local snapshot restore failed:', e);
+      }
+    })();
+  }, [isDbLoaded]);
 
   // --- 2. Database Persistence (Debounced) ---
   useEffect(() => {
@@ -909,10 +962,11 @@ const App: React.FC = () => {
         const timeVal = hour * 100 + min;
 
         const isWeekday = day >= 1 && day <= 5;
-        const isOpen = timeVal >= 900 && timeVal <= 1545;
+        // Pre-open data is useful from 09:00; the closing bell is 15:30 IST.
+        const isOpen = timeVal >= 900 && timeVal <= 1530;
 
         if (!isWeekday || !isOpen) {
-            setMarketStatusMsg("Market Closed (09:00 - 15:45 IST)");
+            setMarketStatusMsg("Market Closed (09:00 - 15:30 IST)");
             if (stocks.length > 0) {
                setIsLoading(false);
                return; 
@@ -1675,6 +1729,7 @@ const App: React.FC = () => {
                   marketStatus={marketStatusMsg}
                   sectors={sectors}
                   aiEnabled={credentials.aiEnabled}
+                  pivots={pivots}
                />
             </div>
         )}

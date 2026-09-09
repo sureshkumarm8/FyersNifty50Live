@@ -19,6 +19,7 @@ import {
   Trash2, Upload, X, Zap
 } from 'lucide-react';
 import { GapScenario, SNIPER, SniperPlaybook, ZonePlay, istMinutes, resolvePhase } from '../../services/sniperPlaybook';
+import { BASIS_LABEL, BASIS_NOTE, DecisionBasis } from '../../services/premarketSchedule';
 import { Card, Meter, Pill, Stat } from '../ui/panels';
 import {
   CHART_SLOTS, ChartEntry, ChartSlotId, PendingImage, PreMarketDecision, SLOT_ICONS,
@@ -439,49 +440,443 @@ const ScenarioCard: React.FC<{ scenario: GapScenario; closePrice: number; open: 
   );
 };
 
-export const ScenarioBoard: React.FC<{ playbook?: SniperPlaybook }> = ({ playbook }) => {
+/**
+ * Gap branches are a pre-open device. They exist to answer "what do I do if it
+ * opens somewhere I haven't seen yet" - so the moment the open is actually
+ * known they stop being forecasts and become settled history. Four of the five
+ * describe a market that never happened, and leaving them on screen next to
+ * real levels is an invitation to trade the wrong row.
+ */
+const OPEN_IS_KNOWN: DecisionBasis[] = ['LIVE_OPEN', 'INTRADAY'];
+
+export const ScenarioBoard: React.FC<{
+  playbook?: SniperPlaybook;
+  basis?: DecisionBasis;
+  /** The real open / live price, once there is one. */
+  actualSpot?: number;
+}> = ({ playbook, basis, actualSpot }) => {
   const scenarios = playbook?.scenarios ?? [];
+  const settled = !!basis && OPEN_IS_KNOWN.includes(basis) && !!actualSpot && actualSpot > 0;
+
   // The likeliest open is the one worth reading first, so it starts expanded.
   const [openId, setOpenId] = useState<string | null>(() => {
     if (scenarios.length === 0) return null;
     return scenarios.reduce((best, s) => (s.likelihood > best.likelihood ? s : best), scenarios[0]).id;
   });
+  const [showSettled, setShowSettled] = useState(false);
 
   if (scenarios.length === 0) return null;
   const close = playbook?.closePrice ?? 0;
 
+  // Which branch the market actually landed on - never exact, so the miss is
+  // reported rather than hidden behind a tidy match.
+  const landed = settled
+    ? scenarios.reduce((best, s) =>
+        Math.abs(s.openPrice - actualSpot!) < Math.abs(best.openPrice - actualSpot!) ? s : best,
+      scenarios[0])
+    : null;
+
   return (
     <Card
-      title="If Nifty opens…"
-      icon={<GitCompareArrows size={15} className="text-sky-400" />}
+      title={settled ? 'If Nifty opens… (settled)' : 'If Nifty opens…'}
+      icon={<GitCompareArrows size={15} className={settled ? 'text-slate-500' : 'text-sky-400'} />}
     >
-      <p className="mb-3 text-[11px] text-slate-500">
-        Measured from the <span className="font-mono font-semibold text-slate-300">{num(close)}</span> close on your
-        charts. Levels, position and clock are recalculated for each open.
-      </p>
-      <div className="space-y-2">
-        {scenarios.map(sc => (
-          <ScenarioCard
-            key={sc.id}
-            scenario={sc}
-            closePrice={close}
-            open={openId === sc.id}
-            onToggle={() => setOpenId(openId === sc.id ? null : sc.id)}
-          />
-        ))}
-      </div>
-      <p className="mt-3 text-[10px] leading-snug text-slate-600">
-        Percentages split the blended gap read across the five opens; they are a prior, not a forecast. Confirm the real
-        open at 09:15 and use only that row.
-      </p>
+      {settled ? (
+        <>
+          <div className="rounded-xl border border-slate-700/60 bg-slate-950/50 px-3.5 py-3">
+            <p className="text-xs leading-relaxed text-slate-300">
+              Nifty is at <span className="font-mono font-bold text-slate-100">{num(Math.round(actualSpot!))}</span> -
+              the open is no longer a guess, so these five branches are settled. Four of them describe a market that
+              never happened.
+            </p>
+            <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
+              Use the <span className="font-semibold text-slate-400">{BASIS_LABEL[basis!]}</span> tab above for the
+              levels that apply now - they are measured from the real price, not from a modelled offset.
+            </p>
+            {landed && (
+              <p className="mt-2 font-mono text-[10px] text-slate-600">
+                closest branch: {landed.label} @ {num(landed.openPrice)} (off by{' '}
+                {Math.abs(Math.round(actualSpot! - landed.openPrice))} pts)
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => setShowSettled(v => !v)}
+            className="mt-2.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 transition hover:text-slate-300"
+          >
+            <ChevronDown size={13} className={`transition ${showSettled ? 'rotate-180' : ''}`} />
+            {showSettled ? 'Hide' : 'Show'} the pre-open branches
+          </button>
+          {showSettled && (
+            <div className="mt-2 space-y-2 opacity-60">
+              {scenarios.map(sc => (
+                <div key={sc.id} className="relative">
+                  {landed?.id === sc.id && (
+                    <span className="absolute -top-1.5 left-3 z-10 rounded border border-sky-500/40 bg-slate-950 px-1.5 py-px text-[9px] font-bold tracking-wider text-sky-300">
+                      CLOSEST
+                    </span>
+                  )}
+                  <ScenarioCard
+                    scenario={sc}
+                    closePrice={close}
+                    open={openId === sc.id}
+                    onToggle={() => setOpenId(openId === sc.id ? null : sc.id)}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="mb-3 text-[11px] text-slate-500">
+            Measured from the <span className="font-mono font-semibold text-slate-300">{num(close)}</span> close on your
+            charts. Levels, position and clock are recalculated for each open.
+          </p>
+          <div className="space-y-2">
+            {scenarios.map(sc => (
+              <ScenarioCard
+                key={sc.id}
+                scenario={sc}
+                closePrice={close}
+                open={openId === sc.id}
+                onToggle={() => setOpenId(openId === sc.id ? null : sc.id)}
+              />
+            ))}
+          </div>
+          <p className="mt-3 text-[10px] leading-snug text-slate-600">
+            Percentages split the blended gap read across the five opens; they are a prior, not a forecast. Confirm the
+            real open at 09:15 and use only that row.
+          </p>
+        </>
+      )}
     </Card>
   );
 };
 
-export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: string) => void }> = ({
-  playbook,
-  onCopy
-}) => {
+/**
+ * What each checkpoint wants typed in before it runs.
+ *
+ * The pre-open auction print and the 09:15 open are the two prices a live feed
+ * most often misses or smooths over, and they are precisely the numbers those
+ * phases are supposed to be anchored to. Typing one in is the normal path, not
+ * an override.
+ */
+const PHASE_INPUT: Record<DecisionBasis, { label: string; placeholder: string; hint: string }> = {
+  CHARTS_ONLY: {
+    label: 'Previous close',
+    placeholder: 'e.g. 24,000',
+    hint: 'Blank uses the last price your charts reported.'
+  },
+  PREOPEN: {
+    label: 'Pre-open indicative price',
+    placeholder: 'from the 09:08 auction',
+    hint: 'The call-auction print at 09:08-09:14. Blank uses the live feed, which may not carry it.'
+  },
+  LIVE_OPEN: {
+    label: 'Opening price',
+    placeholder: 'the 09:15 open',
+    hint: 'The first traded price of the session. Blank uses the live feed.'
+  },
+  INTRADAY: {
+    label: 'Price to test',
+    placeholder: 'live price',
+    hint: 'Blank uses the live feed. Type a price to see the zones at a level price has not reached yet.'
+  }
+};
+
+/**
+ * Every checkpoint the decision was re-cut at, each as its own tab.
+ *
+ * The point is comparison: the same screenshots re-read against a different
+ * Nifty50 price produce different walls, and seeing 09:10 next to 09:15 is what
+ * makes an early "no trade today" verdict falsifiable rather than final.
+ */
+export const PhaseBoard: React.FC<{
+  decision: PreMarketDecision;
+  /** Recompute a phase now, ignoring its normal window. */
+  onRunPhase?: (basis: DecisionBasis, overrideSpot?: number) => void;
+}> = ({ decision, onRunPhase }) => {
+  const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+  const captured = ORDER.filter(b => decision.phases?.[b]);
+  const [active, setActive] = useState<DecisionBasis | null>(null);
+  const [spotInput, setSpotInput] = useState('');
+
+  // Follow the newest phase unless the user has deliberately selected one. Any
+  // tab can be opened, including one that has not been cut yet, so a phase can
+  // be inspected and run on demand rather than only when the clock allows.
+  const current: DecisionBasis = active ?? captured[captured.length - 1] ?? 'CHARTS_ONLY';
+  if (!captured.length && !onRunPhase) return null;
+
+  const phase = decision.phases?.[current];
+  const capturedBefore = captured.filter(b => ORDER.indexOf(b) < ORDER.indexOf(current));
+  const prevBasis = capturedBefore[capturedBefore.length - 1];
+  const prev = prevBasis ? decision.phases?.[prevBasis] : undefined;
+  const tone = VERDICT_TONE[phase?.playbook?.verdict as keyof typeof VERDICT_TONE] ?? VERDICT_TONE.CAUTION;
+
+  const zone = phase ? phase.expectedResistance - phase.expectedSupport : 0;
+  const prevZone = prev ? prev.expectedResistance - prev.expectedSupport : null;
+  const mc = phase?.marketContext;
+
+  const delta = (now: number, before: number | null | undefined) => {
+    if (before == null || !isFinite(before)) return null;
+    const d = Math.round(now - before);
+    if (d === 0) return <span className="text-slate-600">no change</span>;
+    return (
+      <span className={d > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+        {d > 0 ? '+' : ''}
+        {d}
+      </span>
+    );
+  };
+
+  return (
+    <Card title="Session phases" icon={<GitCompareArrows size={15} />}>
+      <p className="-mt-1 mb-3 text-[11px] text-slate-500">
+        The same charts, re-read at each checkpoint against the live market.
+      </p>
+      {/* ---- tabs ---- */}
+      <div className="mb-4 flex flex-wrap gap-1.5">
+        {ORDER.map(b => {
+          const has = !!decision.phases?.[b];
+          const isActive = b === current;
+          const p = decision.phases?.[b];
+          return (
+            <button
+              key={b}
+              onClick={() => {
+                // A price typed for the pre-open must never be carried into
+                // another phase by an accidental tab switch.
+                setActive(b);
+                setSpotInput('');
+              }}
+              title={BASIS_NOTE[b]}
+              className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition ${
+                isActive
+                  ? 'border-sky-500/60 bg-sky-500/15 text-sky-200'
+                  : has
+                    ? 'border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800'
+                    : 'border-slate-800 bg-slate-900/30 text-slate-600 hover:bg-slate-800/50'
+              }`}
+            >
+              <span className="block font-semibold">
+                {BASIS_LABEL[b]}
+                {p?.forced && <span className="ml-1 text-[9px] font-black text-violet-300">TEST</span>}
+              </span>
+              <span className="block font-mono text-[10px] opacity-70">
+                {p
+                  ? `${new Date(p.generatedAt).toLocaleTimeString('en-IN', {
+                      hour12: false,
+                      timeZone: 'Asia/Kolkata'
+                    }).slice(0, 5)} · ${num(p.spot)}`
+                  : 'not cut yet'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ---- run control ---- */}
+      {onRunPhase && (
+        <div className="mb-3 rounded-lg border border-violet-500/25 bg-violet-500/[0.06] px-3 py-2.5">
+          <p className="text-[11px] text-slate-400">
+            {phase
+              ? `Re-read the charts as "${BASIS_LABEL[current]}" against a price you supply.`
+              : 'This phase runs automatically in its window. Supply its price to run it now.'}
+          </p>
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <label className="min-w-[190px] flex-1">
+              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-violet-300/80">
+                {PHASE_INPUT[current].label}
+              </span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={spotInput}
+                onChange={e => setSpotInput(e.target.value)}
+                placeholder={PHASE_INPUT[current].placeholder}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none transition placeholder:font-sans placeholder:text-[11px] placeholder:text-slate-600 focus:border-violet-500/60"
+              />
+            </label>
+            <button
+              onClick={() => {
+                const typed = parseFloat(spotInput.replace(/[,\s]/g, ''));
+                onRunPhase(current, isFinite(typed) && typed > 0 ? typed : undefined);
+                setSpotInput('');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-violet-500/15 px-3 py-1.5 text-[11px] font-semibold text-violet-200 transition hover:bg-violet-500/25"
+            >
+              <RefreshCw size={12} />
+              {phase ? 'Recompute' : 'Run now'}
+            </button>
+          </div>
+          <p className="mt-1.5 text-[10px] leading-snug text-slate-500">{PHASE_INPUT[current].hint}</p>
+        </div>
+      )}
+
+      {!phase ? (
+        <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/40 px-4 py-6 text-center">
+          <p className="text-sm font-semibold text-slate-300">{BASIS_LABEL[current]} not cut yet</p>
+          <p className="mx-auto mt-1 max-w-md text-[11px] leading-snug text-slate-500">{BASIS_NOTE[current]}</p>
+        </div>
+      ) : (
+      <>
+      {/* ---- verdict for this phase ---- */}
+      <div className={`rounded-xl border p-3 ${tone.wrap}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <tone.Icon className={`h-4 w-4 ${tone.text}`} />
+            <span className={`text-sm font-black ${tone.text}`}>{phase.playbook?.verdictHeadline}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {phase.provisional && (
+              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-black tracking-wider text-amber-300">
+                PROVISIONAL
+              </span>
+            )}
+            <span className="font-mono text-[10px] text-slate-500">{phase.generatedAtStr}</span>
+          </div>
+        </div>
+        <p className="mt-1 text-[11px] text-slate-400">{phase.playbook?.verdictReason}</p>
+      </div>
+
+      {/* ---- Nifty50 at this checkpoint ---- */}
+      <div className="mt-4">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Nifty 50 at this checkpoint
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Stat label="Anchor" value={num(phase.spot)} sub={phase.spotSource.toLowerCase()} />
+          <Stat
+            label="Last snapshot"
+            value={mc?.niftyLtp != null ? num(mc.niftyLtp) : '—'}
+            sub={mc?.snapshotTime ? mc.snapshotTime.slice(0, 5) : 'no feed'}
+          />
+          <Stat
+            label="Pts change"
+            value={mc?.ptsChg != null ? (mc.ptsChg > 0 ? `+${mc.ptsChg}` : `${mc.ptsChg}`) : '—'}
+          />
+          <Stat label="PCR" value={mc?.pcr != null ? mc.pcr.toFixed(2) : '—'} />
+          <Stat
+            label="Adv / Dec"
+            value={mc?.adv != null && mc?.dec != null ? `${mc.adv} / ${mc.dec}` : '—'}
+          />
+          <Stat
+            label="Option flow"
+            value={mc?.optionsSent != null ? `${mc.optionsSent > 0 ? '+' : ''}${mc.optionsSent.toFixed(1)}%` : '—'}
+          />
+          <Stat
+            label="Stock flow"
+            value={mc?.stockSent != null ? `${mc.stockSent > 0 ? '+' : ''}${mc.stockSent.toFixed(1)}%` : '—'}
+          />
+          <Stat label="Snapshots" value={mc?.snapshots != null ? String(mc.snapshots) : '—'} />
+        </div>
+        {(!mc || mc.snapshots === 0) && (
+          <p className="mt-2 text-[10px] text-amber-400/80">
+            No live snapshots had arrived when this phase was cut — the read is chart-derived only.
+          </p>
+        )}
+      </div>
+
+      {/* ---- recalculated zones ---- */}
+      <div className="mt-4">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Support &amp; resistance, recalculated
+        </p>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-emerald-400/70">Support</p>
+              <p className="font-mono text-xl font-black text-emerald-300">{num(phase.expectedSupport)}</p>
+              {prev && <p className="text-[10px] text-slate-500">{delta(phase.expectedSupport, prev.expectedSupport)}</p>}
+            </div>
+            <div className="flex-1 text-center">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500">Room</p>
+              <p
+                className={`font-mono text-lg font-black ${
+                  zone >= SNIPER.minZoneWidth ? 'text-slate-200' : 'text-rose-300'
+                }`}
+              >
+                {zone} pts
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {zone >= SNIPER.minZoneWidth
+                  ? `${SNIPER.targetPoints}-pt target fits`
+                  : `below the ${SNIPER.minZoneWidth}-pt minimum`}
+                {prevZone != null && <> · {delta(zone, prevZone)}</>}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-wider text-rose-400/70">Resistance</p>
+              <p className="font-mono text-xl font-black text-rose-300">{num(phase.expectedResistance)}</p>
+              {prev && (
+                <p className="text-[10px] text-slate-500">{delta(phase.expectedResistance, prev.expectedResistance)}</p>
+              )}
+            </div>
+          </div>
+
+          {(phase.supports?.length > 0 || phase.resistances?.length > 0) && (
+            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-800 pt-2.5">
+              <div>
+                <p className="text-[10px] text-slate-500">All supports</p>
+                <p className="font-mono text-[11px] text-emerald-300/90">
+                  {phase.supports?.length ? phase.supports.map(n => num(n)).join(' · ') : '—'}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-slate-500">All resistances</p>
+                <p className="font-mono text-[11px] text-rose-300/90">
+                  {phase.resistances?.length ? phase.resistances.map(n => num(n)).join(' · ') : '—'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ---- what changed ---- */}
+      {prev && prevBasis && (
+        <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Versus {BASIS_LABEL[prevBasis]}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            Anchor {num(prev.spot)} → {num(phase.spot)} ({delta(phase.spot, prev.spot)} pts). Zone {prevZone} → {zone}{' '}
+            pts.{' '}
+            {prev.playbook?.verdict !== phase.playbook?.verdict ? (
+              <span className="font-semibold text-sky-300">
+                Verdict changed: {prev.playbook?.verdict?.replace('_', ' ')} →{' '}
+                {phase.playbook?.verdict?.replace('_', ' ')}.
+              </span>
+            ) : (
+              <span className="text-slate-500">Verdict unchanged ({phase.playbook?.verdict?.replace('_', ' ')}).</span>
+            )}
+          </p>
+        </div>
+      )}
+
+      <p className="mt-3 text-[10px] leading-snug text-slate-600">
+        {BASIS_NOTE[current]}
+        {phase.forced && (
+          <span className="text-violet-300/80">
+            {' '}
+            This phase was recomputed by hand, so its timestamp is when you ran it, not {BASIS_LABEL[current]}.
+          </span>
+        )}
+      </p>
+      </>
+      )}
+    </Card>
+  );
+};
+
+export const VerdictBoard: React.FC<{
+  playbook?: SniperPlaybook;
+  onCopy: (text: string) => void;
+  basis?: DecisionBasis;
+  provisional?: boolean;
+  revalidations?: PreMarketDecision['revalidations'];
+}> = ({ playbook, onCopy, basis, provisional, revalidations }) => {
   // The verdict is fixed at generation time, but the clock is not — the phase
   // line has to stay honest as 09:25 and 10:15 come and go.
   const [tick, setTick] = useState(() => Date.now());
@@ -525,8 +920,26 @@ export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: 
               </div>
               <h2 className={`mt-1.5 text-2xl font-black leading-tight sm:text-3xl ${tone.text}`}>
                 {playbook.verdictHeadline}
+                {provisional && (
+                  <span className="ml-2 align-middle rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-black tracking-wider text-amber-300">
+                    PROVISIONAL
+                  </span>
+                )}
               </h2>
               <p className="mt-1 max-w-2xl text-xs text-slate-400">{playbook.verdictReason}</p>
+              {basis && (
+                <p className="mt-1.5 max-w-2xl text-[11px] text-slate-500">
+                  <span className="text-slate-400">Basis: {BASIS_LABEL[basis]}.</span> {BASIS_NOTE[basis]}
+                </p>
+              )}
+              {revalidations && revalidations.length > 1 && (
+                <p className="mt-1 max-w-2xl text-[11px] text-slate-600">
+                  Re-cuts:{' '}
+                  {revalidations
+                    .map(r => `${r.atStr.slice(0, 5)} @${r.spot} → ${r.verdict.split('—')[0].trim()}`)
+                    .join('  ·  ')}
+                </p>
+              )}
             </div>
           </div>
 
