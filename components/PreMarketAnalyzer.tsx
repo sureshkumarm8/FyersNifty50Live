@@ -1,22 +1,24 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FyersCredentials, MarketSnapshot, EnrichedFyersQuote } from '../types';
 import { imageStorageService } from '../services/imageStorage';
-import { callAIVision, getVisionProviderLabel, isVisionConfigured, resolveVisionProvider } from '../services/aiProvider';
+import { callAI, callAIVision, getAIProviderLabel, getVisionProviderLabel, isAIConfigured, isVisionConfigured, resolveVisionProvider } from '../services/aiProvider';
 import { SNIPER, buildSniperPlaybook, resolvePhase, istMinutes, SniperPlaybook, ZonePlay } from '../services/sniperPlaybook';
 import {
-  BASIS_LABEL, BASIS_NOTE, DecisionBasis, OPEN_MINS, basisFor, driftRevalidationDue,
+  BASIS_LABEL, BASIS_NOTE, DecisionBasis, OPEN_MINS, basisFor, basisRank, driftRevalidationDue,
   dueRevalidation, isProvisional
 } from '../services/premarketSchedule';
+import { PhaseReview, ReviewInput, requestPhaseReview } from '../services/premarketReview';
 import { AlertCircle } from 'lucide-react';
 import {
-  ActivityLog, CaptureChecklist, ChartWorkspace, CommandBar, EvidenceGrid, KeyNumbers,
-  PhaseBoard, PreviewModal, ScenarioBoard, VerdictBoard
+  ActivityLog, CaptureChecklist, ChartWorkspace, CommandBar, EvidenceGrid, ForwardBoard, KeyNumbers,
+  PhaseBoard, PreviewModal, VerdictBoard
 } from './premarket/PreMarketViews';
+import { Drawer, NextMoves, StepRail, TheCall, ZoneStrip } from './premarket/DecisionDeck';
 
 // ---------------------------------------------------------------------------
 import {
   CHART_SLOTS, ChartContribution, ChartEntry, ChartSlotId, ChartVerdict, DECISION_SCHEMA,
-  DECISION_STATE_KEY, IMAGE_KEY, META_STATE_KEY, MarketContext, PendingImage, PhaseSnapshot,
+  DECISION_STATE_KEY, IMAGE_KEY, META_STATE_KEY, MarketContext, LevelSource, PendingImage, PhaseSnapshot,
   PreMarketDecision, SLOT_BY_ID, SLOT_ICONS, STALE_AFTER_MS, SlotConfig, biasClasses, isStale,
   isUnreadable
 } from './premarket/model';
@@ -155,6 +157,8 @@ export function buildDecision(params: {
   phases?: PreMarketDecision['phases'];
   /** Set when the operator recomputed this phase outside its window. */
   forced?: boolean;
+  /** An existing review, reused when this cut lands on the same price. */
+  carryReview?: PhaseReview;
 }): PreMarketDecision {
   const { charts, spot, spotSource } = params;
   const historyLog = params.historyLog || [];
@@ -228,6 +232,45 @@ export function buildDecision(params: {
   const resistances = collect(v => v.resistances)
     .filter(n => n >= spot)
     .sort((a, b) => a - b);
+
+  /**
+   * Which charts named each surviving level.
+   *
+   * The dedupe above collapses 24,700 and 24,705 into one wall, which is right,
+   * but it also throws away the single most useful fact about that wall: how
+   * many independent reads produced it. Two charts agreeing is the strongest
+   * evidence this system generates, and an OI wall carries different meaning
+   * from a swing high. Recovering the provenance costs one pass.
+   */
+  const LEVEL_TOLERANCE = 10;
+  const sourcesFor = (level: number, pick: (v: ChartVerdict) => number[]): LevelSource['sources'] =>
+    charts
+      .filter(c => pick(c.verdict!).some(n => Math.abs(n - level) <= LEVEL_TOLERANCE))
+      .sort((a, b) => SLOT_BY_ID[b.slot].weight - SLOT_BY_ID[a.slot].weight)
+      .map(c => SLOT_BY_ID[c.slot].short);
+
+  const describeLevel = (
+    level: number,
+    kind: LevelSource['kind'],
+    pick: (v: ChartVerdict) => number[]
+  ): LevelSource => {
+    const named = charts.filter(c => pick(c.verdict!).some(n => Math.abs(n - level) <= LEVEL_TOLERANCE));
+    return {
+      level: Math.round(level),
+      kind,
+      sources: sourcesFor(level, pick),
+      weight: Math.round(named.reduce((sum, c) => sum + SLOT_BY_ID[c.slot].weight, 0) * 100) / 100,
+      distance: Math.round(level - spot),
+      stale:
+        named.length > 0 &&
+        named.every(c => SLOT_BY_ID[c.slot].freshnessCritical && isStale(c.uploadedAt, now))
+    };
+  };
+
+  const levelSources: LevelSource[] = [
+    ...resistances.slice(0, 4).map(l => describeLevel(l, 'RESISTANCE', v => v.resistances)),
+    ...supports.slice(0, 4).map(l => describeLevel(l, 'SUPPORT', v => v.supports))
+  ];
 
   /**
    * The protocol needs a zone price can actually reach inside a 50-minute
@@ -410,7 +453,14 @@ export function buildDecision(params: {
     basis,
     provisional,
     forced: params.forced ?? false,
-    marketContext
+    marketContext,
+    levelSources,
+    // A review belongs to the price it was written against, so it is only
+    // carried forward when this cut is at the same price and checkpoint.
+    aiReview:
+      params.carryReview && params.carryReview.basis === basis && params.carryReview.spot === Math.round(spot)
+        ? params.carryReview
+        : undefined
   };
 
   return {
@@ -505,11 +555,24 @@ export const PreMarketAnalyzer: React.FC<{
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [manualSpot, setManualSpot] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
+  /**
+   * Which checkpoint the whole screen is reading.
+   *
+   * Null follows the newest cut, which is what you want all morning. Selecting
+   * a tab pins every board below - summary, ladder, playbook and all - to that
+   * checkpoint, because comparing 09:10 against 09:15 is worthless if only the
+   * tab strip changes and the analysis underneath stays on the latest read.
+   */
+  const [pinnedPhase, setPinnedPhase] = useState<DecisionBasis | null>(null);
+  const [reviewingPhase, setReviewingPhase] = useState<DecisionBasis | null>(null);
 
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString('en-IN', { hour12: false });
     setLogs(p => [`[${time}] ${msg}`, ...p.slice(0, 49)]);
   };
+
+  const aiLabel = getAIProviderLabel(credentials);
+  const reviewReady = isAIConfigured(credentials) && aiEnabled;
 
   const visionProvider = resolveVisionProvider(credentials);
   const visionLabel = getVisionProviderLabel(credentials);
@@ -840,9 +903,12 @@ export const PreMarketAnalyzer: React.FC<{
    * Recompute one phase on demand, against whatever the market is doing now.
    *
    * The checkpoints exist to schedule the *automatic* re-cuts; they should not
-   * stop anyone re-running a phase to compare reads. A forced phase is written
-   * only into its own slot - the decision's own basis is left alone, so this
-   * cannot fight the automatic schedule or promote a provisional plan to final.
+   * stop anyone re-running a phase to compare reads. A phase that is at least
+   * as current as the plan on screen becomes the plan - anything else would
+   * leave the headline frozen on a "STAND ASIDE" cut from last night's charts
+   * while a later, better-informed read sits one tab away. Re-running an
+   * *earlier* phase is a what-if by definition, so it is filed in its own slot
+   * and the headline is left alone.
    */
   const runPhase = useCallback(
     (basis: DecisionBasis, overrideSpot?: number) => {
@@ -869,26 +935,144 @@ export const PreMarketAnalyzer: React.FC<{
           historyLog,
           stocks,
           basis,
-          forced: true
+          forced: true,
+          // Earlier cuts stay on the record whichever way this goes.
+          phases: preMarketDecision.phases,
+          revalidations: preMarketDecision.revalidations
         });
         const record = built.phases?.[basis];
         if (!record) return;
 
-        const next: PreMarketDecision = {
-          ...preMarketDecision,
-          phases: { ...(preMarketDecision.phases || {}), [basis]: record }
-        };
+        const promote = basisRank(basis) >= basisRank(preMarketDecision.basis);
+        const next: PreMarketDecision = promote
+          ? built
+          : {
+              ...preMarketDecision,
+              phases: { ...(preMarketDecision.phases || {}), [basis]: record }
+            };
         setPreMarketDecision(next);
         imageStorageService.saveState(DECISION_STATE_KEY, next).catch(() => {});
         addLog(
           `🧪 Recomputed "${BASIS_LABEL[basis]}" at ${Math.round(resolved.spot)} (${resolved.source.toLowerCase()}) — ` +
             `${record.playbook.verdict} · ${record.expectedSupport}–${record.expectedResistance} (${record.expectedRange} pts)`
         );
+        addLog(
+          promote
+            ? `⬆️ Plan updated to "${BASIS_LABEL[basis]}" — ${record.playbook.verdictHeadline}${
+                record.provisional ? ' (still provisional)' : ''
+              }`
+            : `↩️ Kept as a what-if — the live plan is already on "${BASIS_LABEL[preMarketDecision.basis ?? 'CHARTS_ONLY']}".`
+        );
       } catch (e: any) {
         addLog(`❌ Recompute failed: ${e.message}`);
       }
     },
     [preMarketDecision, coverage, resolveSpot, analyzedCharts, historyLog, stocks, addLog]
+  );
+
+  /**
+   * The analyst pass for one checkpoint.
+   *
+   * The vision models read the charts once and that read is fixed. This is the
+   * second, cheaper pass that re-reasons over that fixed evidence against the
+   * price this checkpoint actually saw — which is the only thing that changed,
+   * and the only thing that matters. It is strictly additive: every board
+   * renders without it, and a failure is logged rather than thrown.
+   */
+  const decisionRef = useRef<PreMarketDecision | null>(null);
+  decisionRef.current = preMarketDecision;
+
+  const runReview = useCallback(
+    async (basis: DecisionBasis, opts: { silent?: boolean } = {}) => {
+      const decision = decisionRef.current;
+      const snapshot = decision?.phases?.[basis];
+      if (!decision || !snapshot) return;
+      if (!reviewReady) {
+        if (!opts.silent) addLog('❌ No text AI configured — add a key in Settings to run the analyst pass');
+        return;
+      }
+
+      setReviewingPhase(basis);
+      try {
+        // Phase 1 is cut against the previous close by definition, so it is the
+        // honest reference for "what is the gap" at every later checkpoint.
+        const chartsOnlySpot = decision.phases?.CHARTS_ONLY?.spot ?? null;
+        const previousClose =
+          basis === 'CHARTS_ONLY' || chartsOnlySpot === snapshot.spot ? null : chartsOnlySpot;
+
+        const input: ReviewInput = {
+          basis,
+          spot: snapshot.spot,
+          spotSource: snapshot.spotSource,
+          previousClose,
+          supports: snapshot.supports,
+          resistances: snapshot.resistances,
+          expectedSupport: snapshot.expectedSupport,
+          expectedResistance: snapshot.expectedResistance,
+          chartBias: snapshot.chartBias,
+          marketBias: snapshot.marketBias,
+          agreement: snapshot.agreement,
+          openSentiment: snapshot.openSentiment,
+          riskLevel: snapshot.riskLevel,
+          systemVerdict: snapshot.playbook.verdictHeadline,
+          systemReason: snapshot.playbook.verdictReason,
+          charts: analyzedCharts.map(c => ({
+            short: SLOT_BY_ID[c.slot].short,
+            weight: SLOT_BY_ID[c.slot].weight,
+            bias: c.verdict!.bias,
+            confidence: c.verdict!.confidence,
+            summary: c.verdict!.summary,
+            supports: c.verdict!.supports,
+            resistances: c.verdict!.resistances,
+            notes: c.verdict!.notes ?? [],
+            stale: SLOT_BY_ID[c.slot].freshnessCritical && isStale(c.uploadedAt, Date.now())
+          })),
+          missingCharts: CHART_SLOTS.filter(s => !analyzedCharts.some(c => c.slot === s.id)).map(s => s.short),
+          market: snapshot.marketContext ?? {
+            niftyLtp: null, ptsChg: null, pcr: null, optionsSent: null,
+            stockSent: null, adv: null, dec: null, snapshotTime: null, snapshots: 0
+          }
+        };
+
+        const review = await requestPhaseReview(credentials, input, aiLabel);
+        // The decision may have been re-cut while the model was thinking. Merge
+        // into whatever is current, and only where the price still matches -
+        // a review pinned to a price that no longer exists is worse than none.
+        const latest = decisionRef.current;
+        const target = latest?.phases?.[basis];
+        if (!latest || !target || target.spot !== review.spot) {
+          addLog(`⚠️ "${BASIS_LABEL[basis]}" moved while the analyst was writing — review discarded`);
+          return;
+        }
+
+        const next: PreMarketDecision = {
+          ...latest,
+          phases: { ...(latest.phases || {}), [basis]: { ...target, aiReview: review, aiReviewError: undefined } },
+          ...(latest.basis === basis ? { aiReview: review, aiReviewError: undefined } : {})
+        };
+        setPreMarketDecision(next);
+        imageStorageService.saveState(DECISION_STATE_KEY, next).catch(() => {});
+        addLog(
+          `🤖 Analyst pass on "${BASIS_LABEL[basis]}" — ${review.stance.replace('_', ' ')} at ${review.conviction}% · ${review.headline}`
+        );
+      } catch (e: any) {
+        const message = e?.message || 'unknown error';
+        const latest = decisionRef.current;
+        const target = latest?.phases?.[basis];
+        if (latest && target) {
+          const next: PreMarketDecision = {
+            ...latest,
+            phases: { ...(latest.phases || {}), [basis]: { ...target, aiReviewError: message } },
+            ...(latest.basis === basis ? { aiReviewError: message } : {})
+          };
+          setPreMarketDecision(next);
+        }
+        addLog(`❌ Analyst pass failed on "${BASIS_LABEL[basis]}": ${message}`);
+      } finally {
+        setReviewingPhase(null);
+      }
+    },
+    [reviewReady, credentials, aiLabel, analyzedCharts, addLog]
   );
 
   /**
@@ -901,6 +1085,7 @@ export const PreMarketAnalyzer: React.FC<{
    * matter are different ones entirely.
    */
   const revalidateRef = useRef<{ run: () => void }>({ run: () => {} });
+  const stalledBasisRef = useRef<DecisionBasis | null>(null);
   revalidateRef.current.run = () => {
     const decision = preMarketDecision;
     if (!decision || isGenerating || coverage === 0) return;
@@ -915,7 +1100,20 @@ export const PreMarketAnalyzer: React.FC<{
     // there is nothing new to learn, so stay provisional rather than burn the
     // checkpoint on the same stale number.
     const resolved = resolveSpot(true);
-    if (!resolved || resolved.source !== 'LIVE') return;
+    if (!resolved || resolved.source !== 'LIVE') {
+      // Say so once. Silently skipping is how a plan sits on "PROVISIONAL —
+      // charts only" all morning with no hint that it is waiting for a feed
+      // that never arrives.
+      if (checkpoint && stalledBasisRef.current !== checkpoint) {
+        stalledBasisRef.current = checkpoint;
+        addLog(
+          `⏳ "${BASIS_LABEL[checkpoint]}" is due but no live price has arrived — ` +
+            'type the price into Session phases and Recompute to move the plan on.'
+        );
+      }
+      return;
+    }
+    stalledBasisRef.current = null;
 
     const nextBasis: DecisionBasis = checkpoint ?? basisFor(now);
     try {
@@ -951,6 +1149,33 @@ export const PreMarketAnalyzer: React.FC<{
     return () => window.clearInterval(id);
   }, []);
 
+  /**
+   * Every checkpoint from the pre-open onwards earns its own analyst pass.
+   *
+   * Phase 1 is deliberately excluded from the automatic run: with nothing from
+   * today to reason about, the model can only restate the charts, and the gap
+   * branches already say it better. From the pre-open on there is a real price,
+   * so there is something genuinely new to think about at each cut - which is
+   * the whole reason the checkpoints exist.
+   */
+  const AUTO_REVIEW: DecisionBasis[] = ['PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+  const reviewedCutRef = useRef<string | null>(null);
+  useEffect(() => {
+    const decision = preMarketDecision;
+    if (!decision?.basis || !reviewReady) return;
+    if (!AUTO_REVIEW.includes(decision.basis)) return;
+
+    const snapshot = decision.phases?.[decision.basis];
+    if (!snapshot || snapshot.aiReview || snapshot.aiReviewError) return;
+
+    // One pass per distinct cut. Re-cutting at the same price is the same
+    // question, and paying a model to answer it twice teaches us nothing.
+    const key = `${decision.basis}:${snapshot.spot}`;
+    if (reviewedCutRef.current === key || reviewingPhase) return;
+    reviewedCutRef.current = key;
+    runReview(decision.basis, { silent: true });
+  }, [preMarketDecision, reviewReady, reviewingPhase, runReview]);
+
   const clearAll = async () => {
     for (const slot of CHART_SLOTS) {
       if (charts[slot.id]) await imageStorageService.deleteImage(IMAGE_KEY(slot.id)).catch(() => {});
@@ -958,6 +1183,8 @@ export const PreMarketAnalyzer: React.FC<{
     setCharts({});
     setPendingImages([]);
     setPreMarketDecision(null);
+    setPinnedPhase(null);
+    reviewedCutRef.current = null;
     imageStorageService.saveState(DECISION_STATE_KEY, null).catch(() => {});
     setLogs([]);
     addLog('🔄 Workspace cleared');
@@ -977,13 +1204,35 @@ export const PreMarketAnalyzer: React.FC<{
   // --- render --------------------------------------------------------------
 
   /**
-   * Decision-first. Once a plan exists it is the first thing on screen, with the
-   * evidence beneath it and the screenshots - which are inputs, not output -
-   * last. Before a plan exists that order inverts: the workspace comes first,
-   * because uploading is the only thing left to do.
+   * Phase-first. The checkpoint strip leads, because "which read am I looking
+   * at" governs the meaning of every number under it - and a board that
+   * silently shows the newest cut while the strip says otherwise is how the
+   * wrong zone gets traded. Everything below renders the *selected* phase.
    */
   const hasDecision = !!preMarketDecision;
   const hasUnanalyzed = CHART_SLOTS.some(s => charts[s.id] && !charts[s.id]?.verdict);
+
+  const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+  const newestPhase = useMemo(() => {
+    const cut = ORDER.filter(b => preMarketDecision?.phases?.[b]);
+    return cut[cut.length - 1] ?? preMarketDecision?.basis ?? 'CHARTS_ONLY';
+  }, [preMarketDecision]);
+  const activeBasis: DecisionBasis = pinnedPhase ?? newestPhase;
+  /**
+   * The snapshot every board reads.
+   *
+   * Null when the selected tab has not been cut yet - the tab strip lets you
+   * open a future checkpoint to run it early, and rendering the *head* plan
+   * under a "Live open" heading it was never cut against is exactly the
+   * mislabelling this board exists to prevent. A pre-phases plan restored from
+   * an older build still falls back to the head, because for it the head is
+   * the only read there is.
+   */
+  const view: PhaseSnapshot | null = !preMarketDecision
+    ? null
+    : preMarketDecision.phases?.[activeBasis] ??
+      (preMarketDecision.phases && Object.keys(preMarketDecision.phases).length ? null : preMarketDecision);
+  const viewingOlder = !!view && activeBasis !== newestPhase;
 
   const workspace = (
     <ChartWorkspace
@@ -1027,35 +1276,111 @@ export const PreMarketAnalyzer: React.FC<{
         <div className="space-y-4">
           {hasDecision && preMarketDecision ? (
             <>
-              {preMarketDecision.playbook && (
-                <VerdictBoard
-                  playbook={preMarketDecision.playbook}
-                  onCopy={copyToClipboard}
-                  basis={preMarketDecision.basis}
-                  provisional={preMarketDecision.provisional}
-                  revalidations={preMarketDecision.revalidations}
-                />
-              )}
+              <StepRail
+                decision={preMarketDecision}
+                active={activeBasis}
+                onSelect={b => setPinnedPhase(b === newestPhase ? null : b)}
+                onRunPhase={runPhase}
+                running={isGenerating}
+              />
 
-              {preMarketDecision.staleCharts.length > 0 && (
-                <p className="flex items-start gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2.5 text-[11px] text-rose-200">
+              {!view ? (
+                <p className="flex items-start gap-2 rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 text-[11px] text-slate-400">
                   <AlertCircle size={14} className="mt-px shrink-0" />
                   <span>
-                    <span className="font-bold">Stale input:</span> {preMarketDecision.staleCharts.join(', ')}. This plan
-                    is built on a previous session&apos;s screenshot - re-capture and regenerate before trading it.
+                    Step {activeBasis === 'PREOPEN' ? '2' : activeBasis === 'LIVE_OPEN' ? '3' : '4'} has not been run
+                    yet. Enter its price above and press Run, or{' '}
+                    <button onClick={() => setPinnedPhase(null)} className="font-bold underline hover:text-white">
+                      go back to {BASIS_LABEL[newestPhase]}
+                    </button>
+                    .
                   </span>
                 </p>
+              ) : (
+                <>
+                  {viewingOlder && (
+                    <p className="flex items-center gap-2 rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-[11px] text-violet-200">
+                      <AlertCircle size={14} className="shrink-0" />
+                      <span>
+                        You are reading the older <span className="font-bold">{BASIS_LABEL[activeBasis]}</span> call.{' '}
+                        <button onClick={() => setPinnedPhase(null)} className="font-bold underline hover:text-white">
+                          Jump to {BASIS_LABEL[newestPhase]}
+                        </button>
+                      </span>
+                    </p>
+                  )}
+
+                  {view.staleCharts.length > 0 && (
+                    <p className="flex items-start gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2.5 text-[11px] text-rose-200">
+                      <AlertCircle size={14} className="mt-px shrink-0" />
+                      <span>
+                        <span className="font-bold">Stale input:</span> {view.staleCharts.join(', ')}. Re-capture and
+                        re-run before trading this.
+                      </span>
+                    </p>
+                  )}
+
+                  <TheCall
+                    view={view}
+                    basis={activeBasis}
+                    liveSpot={activeBasis === 'CHARTS_ONLY' ? null : liveLtp}
+                    nowTick={nowTick}
+                    onCopy={() => copyToClipboard()}
+                  />
+
+                  <ZoneStrip view={view} liveSpot={activeBasis === 'CHARTS_ONLY' ? null : liveLtp} />
+
+                  <NextMoves
+                    view={view}
+                    basis={activeBasis}
+                    review={view.aiReview}
+                    reviewing={reviewingPhase === activeBasis}
+                    reviewError={view.aiReviewError}
+                    onRunReview={reviewReady ? () => { runReview(activeBasis); } : undefined}
+                    aiLabel={aiLabel}
+                  />
+
+                  {/* Evidence. Correct, occasionally decisive, and never the
+                      first thing you should read - so it opens on request. */}
+                  <Drawer
+                    title="Why — the full analysis"
+                    note={`${view.chartCoverage} charts · ${view.agreement}% agreement · ${view.riskLevel} risk`}
+                  >
+                    {view.playbook && (
+                      <VerdictBoard
+                        playbook={view.playbook}
+                        onCopy={copyToClipboard}
+                        basis={view.basis}
+                        provisional={view.provisional}
+                        revalidations={preMarketDecision.revalidations}
+                        review={view.aiReview}
+                      />
+                    )}
+                    <KeyNumbers decision={view} />
+                    <ForwardBoard
+                      decision={view}
+                      basis={activeBasis}
+                      liveSpot={liveLtp}
+                      previousClose={preMarketDecision.phases?.CHARTS_ONLY?.spot ?? null}
+                      reviewing={reviewingPhase === activeBasis}
+                    />
+                    <EvidenceGrid decision={view} visionLabel={visionLabel} aiLabel={aiLabel} />
+                    <PhaseBoard
+                      decision={preMarketDecision}
+                      active={activeBasis}
+                      onSelect={b => setPinnedPhase(b === newestPhase ? null : b)}
+                      onRunPhase={runPhase}
+                      onRunReview={reviewReady ? b => { runReview(b); } : undefined}
+                      reviewingPhase={reviewingPhase}
+                      aiLabel={aiLabel}
+                    />
+                  </Drawer>
+                </>
               )}
 
-              <KeyNumbers decision={preMarketDecision} />
-              <PhaseBoard decision={preMarketDecision} onRunPhase={runPhase} />
-              <ScenarioBoard
-                playbook={preMarketDecision.playbook}
-                basis={preMarketDecision.basis}
-                actualSpot={liveLtp || preMarketDecision.marketContext?.niftyLtp || undefined}
-              />
-              <EvidenceGrid decision={preMarketDecision} visionLabel={visionLabel} />
-              {workspace}
+              <Drawer title="Charts" note={`${coverage}% captured`}>
+                {workspace}
+              </Drawer>
             </>
           ) : (
             <>

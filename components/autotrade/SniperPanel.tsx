@@ -21,14 +21,18 @@ import { imageStorageService } from '../../services/imageStorage';
 import { SNIPER, SniperPlaybook } from '../../services/sniperPlaybook';
 import {
   OpeningRange, SniperEvaluation, SniperSetup, buildOpeningRange, checkExit,
-  evaluate, istDayKey, istMinutesOf, phaseLabelOf, ENTRY_OPEN, ENTRY_CLOSE,
+  evaluate, istDayKey, istMinutesOf, phaseAt, phaseLabelOf, ENTRY_OPEN, ENTRY_CLOSE,
   HARD_STOP, MARKET_OPEN
 } from '../../services/sniperEngine';
 import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
+import { LiveThesis, reconcile, sessionDrift } from '../../services/sniperReconcile';
+import { LiveVerdict, isLiveReviewConfigured, requestLiveVerdict } from '../../services/sniperReview';
+import { getAIProviderLabel } from '../../services/aiProvider';
 import { isMarketLive, readFlag, writeFlag } from '../../services/marketSession';
 import { estimateOptionPremium } from '../../services/optionPricing';
+import { PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
 import { BlockList, Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
-import { Handoff, HandoffBoard, RangeBoard, SetupBoard, fmt } from './SniperViews';
+import { RangeBoard, SetupBoard, ThesisBoard, fmt } from './SniperViews';
 
 const LOTS_KEY = 'sniper_lots';
 const DAY_KEY = 'sniper_day_state';
@@ -102,6 +106,10 @@ export const SniperPanel: React.FC<Props> = ({
   const [dayState, setDayState] = useState<DayState>(loadDayState);
   const [activeSetup, setActiveSetup] = useState<SniperSetup | null>(() => loadDayState().setup);
   const [playbook, setPlaybook] = useState<SniperPlaybook | null>(null);
+  /** True when the loaded plan never saw a real price from today. */
+  const [planProvisional, setPlanProvisional] = useState(false);
+  const [liveVerdict, setLiveVerdict] = useState<LiveVerdict | null>(null);
+  const [reviewing, setReviewing] = useState(false);
   const [lots, setLots] = useState(() => Number(localStorage.getItem(LOTS_KEY)) || 1);
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(() => Date.now());
@@ -174,7 +182,9 @@ export const SniperPanel: React.FC<Props> = ({
     if (live && !armed && autoArmedDayRef.current !== today) {
       autoArmedDayRef.current = today;
       setArmed(true);
-      addLog('🔔 Market open — sniper auto-armed for the Download.', 'good');
+      // Name the phase we are actually arming into. Hard-coding "the Download"
+      // is wrong for every start after 09:25, which is most of them.
+      addLog(`🔔 Market open — sniper auto-armed · ${phaseLabelOf(phaseAt(now))}`, 'good');
       return;
     }
     // Stand the engine down once the bell rings so it cannot act on stale data.
@@ -185,23 +195,56 @@ export const SniperPanel: React.FC<Props> = ({
   }, [autoStart, armed, tick, addLog]);
 
   // --- pre-market handoff ---------------------------------------------------
+  /**
+   * The plan the pre-market screen produced, kept in step with it.
+   *
+   * Two things go wrong if this is loaded once and left: a re-cut plan (09:10,
+   * 09:15, or a hand-run phase) never reaches the engine, so the sniper trades
+   * this morning off last night's charts; and every remount re-announces the
+   * same plan, which is why "Pre-market plan loaded" appeared twice. Keying on
+   * the plan's own timestamp fixes both - it reloads on a poll, but only
+   * adopts and announces a plan that has actually changed.
+   */
+  const loadedPlanRef = useRef<number | null>(null);
   const loadPlaybook = useCallback(async () => {
     try {
-      const saved = await imageStorageService.loadState<{ playbook?: SniperPlaybook; generatedAt?: number }>(
-        'preMarketDecision'
-      );
+      const saved = await imageStorageService.loadState<{
+        playbook?: SniperPlaybook;
+        generatedAt?: number;
+        provisional?: boolean;
+      }>('preMarketDecision');
       if (saved?.playbook && saved.generatedAt && istDayKey(saved.generatedAt) === istDayKey(Date.now())) {
+        if (loadedPlanRef.current === saved.generatedAt) return;
+        const isUpdate = loadedPlanRef.current !== null;
+        loadedPlanRef.current = saved.generatedAt;
         setPlaybook(saved.playbook);
-        addLog(`📋 Pre-market plan loaded — ${saved.playbook.verdictHeadline}`, 'info');
+        // A plan cut before any real price from today is a forecast, not a
+        // reading. Reconciliation is allowed to overrule a provisional
+        // "stand aside"; it is not allowed to overrule a considered one.
+        setPlanProvisional(saved.provisional === true);
+        addLog(
+          `📋 Pre-market plan ${isUpdate ? 're-cut' : 'loaded'} — ${saved.playbook.verdictHeadline}`,
+          'info'
+        );
+      } else if (loadedPlanRef.current !== null) {
+        loadedPlanRef.current = null;
+        setPlaybook(null);
+        setPlanProvisional(false);
+        addLog('📋 Pre-market plan cleared.', 'info');
       } else {
         setPlaybook(null);
+        setPlanProvisional(false);
       }
     } catch {
+      loadedPlanRef.current = null;
       setPlaybook(null);
+      setPlanProvisional(false);
     }
   }, [addLog]);
 
-  useEffect(() => {
+  /** The manual Reload button must re-announce even when nothing changed. */
+  const reloadPlaybook = useCallback(() => {
+    loadedPlanRef.current = null;
     loadPlaybook();
   }, [loadPlaybook]);
 
@@ -216,6 +259,18 @@ export const SniperPanel: React.FC<Props> = ({
    * often is pure waste. This coarse tick changes once every ten seconds.
    */
   const slowTick = Math.floor(tick / 10_000);
+
+  /**
+   * Pick up a re-cut plan without a page reload.
+   *
+   * The pre-market screen re-cuts its decision at 09:10, 09:15 and on drift,
+   * and writes it to the same key. Loading once at mount left the sniper
+   * holding whichever verdict existed when the tab was opened — typically the
+   * pre-open "STAND ASIDE" — while the screen next door had moved on.
+   */
+  useEffect(() => {
+    loadPlaybook();
+  }, [slowTick, loadPlaybook]);
 
   // --- the Download: lock the 09:15–09:25 range ------------------------------
   useEffect(() => {
@@ -269,10 +324,78 @@ export const SniperPanel: React.FC<Props> = ({
     return { direction: s.direction, confidence: s.confidence, reasons: s.reasons };
   }, [slowTick, niftyLtp, historyLog, range, pivots]);
 
+  /**
+   * How far the session has travelled since the bell, from this panel's own
+   * history. Used to ask whether the tape is going the way the morning said.
+   */
+  const drift = useMemo(() => {
+    void slowTick;
+    return sessionDrift(historyLog, MARKET_OPEN, new Date());
+  }, [historyLog, slowTick]);
+
+  const breadth = historyLog.length ? historyLog[0].overallSent : null;
+
+  /**
+   * THE TRADER'S LOOP.
+   *
+   * The morning's plan is a hypothesis. Every ten seconds it is re-checked
+   * against the tape, wall by wall, and the levels the engine trades are the
+   * output of that check rather than of either source alone. When the tape
+   * confirms the plan the planned levels are used, because they carry chart and
+   * OI evidence the mechanical range does not; when it contradicts them, the
+   * plan is dropped on the spot and the tape is traded instead.
+   */
+  const thesis = useMemo<LiveThesis>(() => {
+    void slowTick;
+    return reconcile({
+      playbook,
+      range,
+      drift,
+      breadth,
+      planIsProvisional: planProvisional
+    });
+  }, [playbook, range, drift, breadth, planProvisional, slowTick]);
+
+  /**
+   * Every adjustment is announced exactly once.
+   *
+   * Silent level substitution is the most dangerous thing this feature could
+   * do - the log is how you find out afterwards why the sniper armed 40 points
+   * from where the plan said it would.
+   */
+  const announcedRef = useRef<string>('');
+  useEffect(() => {
+    const key = `${thesis.state}|${thesis.support}|${thesis.resistance}|${thesis.adjustments.join('~')}`;
+    if (key === announcedRef.current) return;
+    if (thesis.state === 'NO_PLAN' || thesis.state === 'PENDING') {
+      announcedRef.current = key;
+      return;
+    }
+    announcedRef.current = key;
+
+    const tone = thesis.state === 'INVALIDATED' ? 'bad' : thesis.state === 'CONFIRMED' ? 'good' : 'warn';
+    addLog(
+      `🧭 Thesis ${thesis.state.toLowerCase()} — ${thesis.score}% of the morning's read held. Trading ${fmt(
+        thesis.support ?? 0
+      )} / ${fmt(thesis.resistance ?? 0)} (${thesis.levelSource.toLowerCase()}), confidence ${
+        thesis.confidenceDelta >= 0 ? '+' : ''
+      }${thesis.confidenceDelta}.`,
+      tone as LogEntry['level']
+    );
+    thesis.adjustments.forEach(a => addLog(`↻ ${a}`, 'warn'));
+    if (thesis.veto) addLog(`⛔ ${thesis.veto}`, 'bad');
+  }, [thesis, addLog]);
+
   useEffect(() => {
     const now = new Date(tick);
     const spot = niftyLtp;
     const { direction: signalDirection, confidence: signalConfidence, reasons: signalReasons } = liveSignal;
+
+    // The AI pass is veto-only, so it can only ever make the thesis stricter.
+    const aiPenalty =
+      liveVerdict && liveVerdict.call !== 'PROCEED' ? liveVerdict.confidencePenalty : 0;
+    const aiVeto =
+      liveVerdict?.call === 'BLOCK' ? `Risk officer stood the day down — ${liveVerdict.reason}` : null;
 
     setEvaluation(
       evaluate({
@@ -281,13 +404,190 @@ export const SniperPanel: React.FC<Props> = ({
         range,
         signalDirection,
         signalConfidence,
-        signalReasons,
+        signalReasons: [...signalReasons, ...thesis.adjustments],
         hasOpenPosition: positions.length > 0,
         dailyTradeDone: dayState.tradeTaken,
-        expiry
+        expiry,
+        thesis: {
+          support: thesis.support,
+          resistance: thesis.resistance,
+          confidenceDelta: thesis.confidenceDelta + (aiPenalty === -100 ? 0 : aiPenalty),
+          veto: thesis.veto ?? aiVeto,
+          state: thesis.state
+        }
       })
     );
-  }, [tick, niftyLtp, range, liveSignal, positions.length, dayState.tradeTaken, expiry]);
+  }, [tick, niftyLtp, range, liveSignal, positions.length, dayState.tradeTaken, expiry, thesis, liveVerdict]);
+
+  // --- the risk officer -----------------------------------------------------
+
+  const aiReady = useMemo(() => isLiveReviewConfigured(credentials), [credentials]);
+  const aiLabel = useMemo(() => getAIProviderLabel(credentials), [credentials]);
+
+  /**
+   * The live second opinion.
+   *
+   * Held deliberately outside the decision loop. The engine never waits on it:
+   * if it has not answered, or fails, the mechanical decision stands. All it
+   * can do is subtract - see services/sniperReview.ts for why that constraint
+   * is structural rather than a matter of prompting.
+   */
+  const evalRef = useRef<SniperEvaluation | null>(null);
+  evalRef.current = evaluation;
+  const thesisRef = useRef(thesis);
+  thesisRef.current = thesis;
+
+  const runLiveReview = useCallback(async () => {
+    if (!aiReady || reviewing) return;
+    const t = thesisRef.current;
+    const ev = evalRef.current;
+    const { niftyLtp: spot, historyLog: hist } = latest.current;
+    setReviewing(true);
+    try {
+      const verdict = await requestLiveVerdict(
+        credentials,
+        {
+          now: Date.now(),
+          spot,
+          phase: ev?.phase ?? phaseAt(new Date()),
+          thesis: t,
+          range: range
+            ? {
+                open: range.open,
+                high: range.high,
+                low: range.low,
+                support: range.support,
+                resistance: range.resistance,
+                samples: range.samples
+              }
+            : null,
+          planHeadline: playbook?.verdictHeadline ?? null,
+          planReason: playbook?.verdictReason ?? null,
+          signalDirection: liveSignal.direction,
+          signalConfidence: liveSignal.confidence,
+          signalReasons: liveSignal.reasons,
+          breadth: hist.length ? hist[0].overallSent : null,
+          pcr: hist.length ? hist[0].pcr : null,
+          optionsSent: hist.length ? hist[0].optionsSent : null,
+          drift: sessionDrift(hist, MARKET_OPEN, new Date()),
+          engineCanEnter: ev?.canEnter ?? false,
+          engineBlocks: (ev?.blocks ?? []).map(b => b.message),
+          engineSetup: ev?.setup ? `${ev.setup.optionType} ${ev.setup.strike} from ${ev.setup.entrySpot}` : null
+        },
+        aiLabel
+      );
+      setLiveVerdict(verdict);
+      addLog(
+        `🧠 Risk officer: ${verdict.call} — ${verdict.reason}`,
+        verdict.call === 'BLOCK' ? 'bad' : verdict.call === 'TRIM' ? 'warn' : 'good'
+      );
+    } catch (err: any) {
+      // A failed second opinion must never become a reason not to trade, nor a
+      // reason to trade. It simply leaves the mechanical decision untouched.
+      addLog(`🧠 Risk officer unavailable — ${err?.message ?? 'no answer'}. Mechanical read stands.`, 'warn');
+    } finally {
+      setReviewing(false);
+    }
+  }, [aiReady, aiLabel, credentials, reviewing, range, playbook, liveSignal, addLog]);
+
+  /**
+   * One automatic pass, fired when the range locks at 09:25.
+   *
+   * That is the moment the morning's thesis has been fully tested and the
+   * entry window opens - the only point where a second opinion can change
+   * anything and still leave time to act on it.
+   */
+  const autoReviewedRef = useRef(false);
+  useEffect(() => {
+    if (autoReviewedRef.current || !aiReady || !armed) return;
+    if (!range || thesis.state === 'PENDING' || thesis.state === 'NO_PLAN') return;
+    if (istMinutesOf(new Date(tick)) < ENTRY_OPEN) return;
+    if (istMinutesOf(new Date(tick)) >= ENTRY_CLOSE) return;
+    autoReviewedRef.current = true;
+    addLog(`🧠 Asking ${aiLabel} to sanity-check the reconciled thesis…`, 'info');
+    runLiveReview();
+  }, [tick, aiReady, armed, range, thesis.state, aiLabel, runLiveReview, addLog]);
+
+  // --- paper ledger mirror --------------------------------------------------
+
+  /**
+   * Every auto-trade is written into the Paper Trading book, tagged.
+   *
+   * The Sniper places its orders through its own OrderManager, so before this
+   * the trades the system took automatically were absent from the paper
+   * ledger - the equity curve, the win rate and the expectancy on that screen
+   * described only the trades taken by hand. A journal that omits the trades
+   * you did not personally click is worse than no journal.
+   *
+   * Only PAPER-mode fills are mirrored. The paper book runs on simulated
+   * capital; posting a real fill into it would draw down that simulated
+   * balance against money it never held and corrupt every statistic derived
+   * from it. Live fills stay in the broker's own book, and the log says so.
+   */
+  const tradingModeRef = useRef(tradingMode);
+  tradingModeRef.current = tradingMode;
+
+  const journalEntry = useCallback(
+    (setup: SniperSetup, premium: number) => {
+      if (tradingModeRef.current !== 'PAPER') {
+        addLog('📒 Live fill — not written to the paper ledger (it tracks simulated capital only).', 'info');
+        return;
+      }
+      const t = thesisRef.current;
+      const tags = [
+        'AUTOTRADE',
+        'SNIPER',
+        setup.zone === 'NEAR_SUPPORT' ? 'AT-SUPPORT' : 'AT-RESISTANCE',
+        `THESIS-${t.state}`,
+        `LEVELS-${t.levelSource}`
+      ];
+      paperTradingEngine
+        .openExternal({
+          symbol: setup.symbol,
+          displayName: `NIFTY ${setup.strike} ${setup.optionType}`,
+          strike: setup.strike,
+          optionType: setup.optionType,
+          expiry: setup.expiry,
+          lots,
+          entryPrice: premium,
+          spot: setup.entrySpot,
+          tags,
+          notes: `Sniper ${setup.optionType} at ${fmt(setup.entrySpot)} · target ${fmt(setup.targetSpot)} / stop ${fmt(
+            setup.stopSpot
+          )} · ${setup.reasoning[0] ?? ''}`
+        })
+        .then(r =>
+          addLog(
+            r.ok ? `📒 Logged to Paper Trading — tagged ${tags.join(', ')}` : `📒 Paper log skipped — ${r.message}`,
+            r.ok ? 'info' : 'warn'
+          )
+        )
+        .catch(() => addLog('📒 Could not write this trade to the paper ledger.', 'warn'));
+    },
+    [addLog, lots]
+  );
+
+  /** Map the protocol's exit labels onto the paper book's reasons. */
+  const journalExit = useCallback(
+    (symbol: string, premium: number, reason: string) => {
+      if (tradingModeRef.current !== 'PAPER') return;
+      const r = reason.toLowerCase();
+      const mapped: PaperExitReason = r.includes('target')
+        ? 'TARGET'
+        : r.includes('stop -') || r.includes('stoploss') || r.includes('stop loss')
+          ? 'STOPLOSS'
+          : r.includes('hard stop')
+            ? 'EOD'
+            : 'MANUAL';
+      paperTradingEngine
+        .closeExternal(symbol, premium, mapped, latest.current.niftyLtp)
+        .then(res => {
+          if (res.ok) addLog(`📒 Paper ledger updated — ${res.message}`, 'info');
+        })
+        .catch(() => addLog('📒 Could not close this trade in the paper ledger.', 'warn'));
+    },
+    [addLog]
+  );
 
   // --- position monitoring & the 10:15 hard stop ----------------------------
   const closeSymbol = useCallback(
@@ -302,6 +602,7 @@ export const SniperPanel: React.FC<Props> = ({
         const res = await om.placeOrder(symbol, pos.side === 'LONG' ? 'SELL' : 'BUY', Math.abs(pos.quantity), 'MARKET');
         if (res.success) {
           addLog(`🚪 Exit ${symbol} — ${reason} · P&L ${inr(pos.pnl)}`, pos.pnl >= 0 ? 'good' : 'bad');
+          journalExit(symbol, pos.ltp ?? pos.avgPrice, reason);
           persistDay({
             ...dayRef.current,
             pointsCaptured: setupRef.current
@@ -349,6 +650,9 @@ export const SniperPanel: React.FC<Props> = ({
         open[0].avgPrice + (niftyLtp - setup.entrySpot) * (setup.direction === 'LONG' ? 1 : -1) * SNIPER.itmDelta
       );
       open.forEach(p => om.updatePositionPnL(p.symbol, premium));
+      // Keep the paper ledger's unrealised P&L, high-water and low-water marks
+      // in step. It never exits on these - the protocol's spot rules do.
+      if (tradingModeRef.current === 'PAPER') paperTradingEngine.markExternal(open[0].symbol, premium);
       const verdict = checkExit({ setup, spot: niftyLtp, now: new Date(tick) });
       if (verdict.exit) {
         const label =
@@ -391,6 +695,7 @@ export const SniperPanel: React.FC<Props> = ({
           `🎯 ENTERED ${setup.symbol} · ${qty} qty · spot ${fmt(setup.entrySpot)} → target ${fmt(setup.targetSpot)} / stop ${fmt(setup.stopSpot)}`,
           'good'
         );
+        journalEntry(setup, fill);
       } else {
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }
@@ -453,15 +758,6 @@ export const SniperPanel: React.FC<Props> = ({
     { label: 'Entry', from: ENTRY_OPEN, to: ENTRY_CLOSE, note: 'the only window' },
     { label: 'Manage', from: ENTRY_CLOSE, to: HARD_STOP, note: 'no new trades' }
   ];
-
-  // Does the live opening range agree with the levels read off last night's charts?
-  const handoff = useMemo<Handoff | null>(() => {
-    if (!playbook || !range) return null;
-    const sDelta = Math.round(range.support - playbook.plannedSupport);
-    const rDelta = Math.round(range.resistance - playbook.plannedResistance);
-    const tight = Math.abs(sDelta) <= 40 && Math.abs(rDelta) <= 40;
-    return { sDelta, rDelta, tight };
-  }, [playbook, range]);
 
   return (
     <div className="space-y-4">
@@ -574,7 +870,16 @@ export const SniperPanel: React.FC<Props> = ({
 
       <div className="grid gap-4 lg:grid-cols-2">
         <RangeBoard range={range} spot={niftyLtp} evaluation={evaluation} />
-        <HandoffBoard playbook={playbook} handoff={handoff} onReload={loadPlaybook} />
+        <ThesisBoard
+          playbook={playbook}
+          thesis={thesis}
+          verdict={liveVerdict}
+          reviewing={reviewing}
+          aiReady={aiReady}
+          aiLabel={aiLabel}
+          onReload={reloadPlaybook}
+          onReview={() => { runLiveReview(); }}
+        />
       </div>
 
       <SetupBoard

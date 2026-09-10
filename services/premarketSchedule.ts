@@ -28,6 +28,12 @@ export const SPOT_DRIFT_TRIGGER = 40;
 const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
 const rank = (b: DecisionBasis): number => Math.max(0, ORDER.indexOf(b));
 
+/**
+ * How current a basis is. Checkpoints only ever move forward, so this is what
+ * decides whether a freshly cut phase is newer than the plan on screen.
+ */
+export const basisRank = (b: DecisionBasis | undefined): number => rank(b ?? 'CHARTS_ONLY');
+
 export const BASIS_LABEL: Record<DecisionBasis, string> = {
   CHARTS_ONLY: 'Charts only · pre-open',
   PREOPEN: 'Pre-open auction · 09:10',

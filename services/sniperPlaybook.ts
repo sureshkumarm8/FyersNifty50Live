@@ -162,13 +162,23 @@ export function resolvePhase(now: Date = new Date()): SniperPhase {
   return 'CLOSED';
 }
 
-const PHASE_LABELS: Record<SniperPhase, string> = {
+export const PHASE_LABELS: Record<SniperPhase, string> = {
   PRE_MARKET: 'Pre-market · plan now, do not trade',
   DOWNLOAD: 'Download 09:15-09:25 · watch only, mark the 5-min range',
   ENTRY_WINDOW: 'Entry window 09:25-09:45 · prime time for the setup',
   LATE_WINDOW: 'Late window 09:45-10:15 · only already-armed setups',
   CLOSED: 'Closed · 10:15 hard stop passed, day is over'
 };
+
+/**
+ * The phase label for a moment in time.
+ *
+ * A playbook carries the label it was built with, which goes stale the instant
+ * the clock moves on — a plan cut at 08:40 still claims "Pre-market" at 09:44.
+ * Anything displaying the phase must resolve it against now, not against the
+ * plan's birth time.
+ */
+export const phaseLabelOf = (now: Date = new Date()): string => PHASE_LABELS[resolvePhase(now)];
 
 /**
  * Groups levels reported by different charts that point at the same price.

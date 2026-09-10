@@ -776,6 +776,28 @@ export function isVisionConfigured(credentials: FyersCredentials): boolean {
 }
 
 /**
+ * Human readable label for the *text* engine, for UI badges.
+ *
+ * The vision label is not a substitute: a desk can read charts with Gemini and
+ * reason over the result with a local Llama, and a badge that claims otherwise
+ * misattributes the analysis.
+ */
+export function getAIProviderLabel(credentials: FyersCredentials): string {
+  switch (credentials.aiProvider || 'gemini') {
+    case 'ollama':
+      return `Local Llama · ${credentials.ollamaModel || DEFAULT_OLLAMA_MODEL}`;
+    case 'groq':
+      return `Groq · ${credentials.groqModel || 'mixtral-8x7b-32768'}`;
+    case 'claude':
+      return `Claude · ${credentials.claudeModel || 'claude-3-5-sonnet-20241022'}`;
+    case 'cerebras':
+      return `Cerebras · ${credentials.cerebrasModel || 'cerebras/llama-3.1-70b'}`;
+    default:
+      return `Gemini · ${credentials.geminiModel || 'gemini-2.0-flash'}`;
+  }
+}
+
+/**
  * Sends a prompt plus one or more images to the configured vision provider.
  * Images may be data URLs or bare base64.
  */
