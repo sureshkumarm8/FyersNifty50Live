@@ -22,6 +22,14 @@ export const SNIPER = {
   reviewBy: '09:45',
   /** Hard stop. No exceptions. */
   hardStop: '10:15',
+  /**
+   * When the engine switches itself off.
+   *
+   * Five minutes after the hard stop, so a 10:15 exit has time to fill and be
+   * logged. Past this the protocol has nothing left to do today — staying armed
+   * only burns CPU on a one-second loop and risks acting on a stale read.
+   */
+  standDown: '10:20',
   targetPoints: 30,
   stopPoints: 30,
   /** MySystemAutoTrade uses a fixed 250-point ITM strike. */

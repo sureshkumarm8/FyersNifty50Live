@@ -22,7 +22,7 @@ import { SNIPER, SniperPlaybook } from '../../services/sniperPlaybook';
 import {
   OpeningRange, SniperEvaluation, SniperSetup, buildOpeningRange, checkExit,
   evaluate, istDayKey, istMinutesOf, phaseAt, phaseLabelOf, ENTRY_OPEN, ENTRY_CLOSE,
-  HARD_STOP, MARKET_OPEN
+  HARD_STOP, MARKET_OPEN, STAND_DOWN
 } from '../../services/sniperEngine';
 import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
 import { LiveThesis, reconcile, sessionDrift } from '../../services/sniperReconcile';
@@ -39,7 +39,29 @@ const DAY_KEY = 'sniper_day_state';
 const AUTOSTART_KEY = 'sniper_autostart';
 const AUTO_PAPER_KEY = 'sniper_auto_paper';
 const AUTO_LIVE_KEY = 'sniper_auto_live';
+const ARMED_KEY = 'sniper_armed';
+const LOG_KEY = 'sniper_log';
+const OM_KEY = 'sniper_orderbook';
 const LOT_SIZE = 75;
+
+/**
+ * Today's log, read back on mount.
+ *
+ * The log is the only record of why the engine did what it did. Losing it on a
+ * browser refresh — the reflex fix for a stalled feed — left a running position
+ * with no explanation attached to it.
+ */
+function loadLog(): LogEntry[] {
+  try {
+    const raw = localStorage.getItem(LOG_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.day !== istDayKey(Date.now())) return [];
+    return (parsed.entries ?? []) as LogEntry[];
+  } catch {
+    return [];
+  }
+}
 
 interface DayState {
   day: string;
@@ -93,13 +115,13 @@ const mmss = (mins: number | null) => (mins == null ? '—' : `${mins}m`);
 export const SniperPanel: React.FC<Props> = ({
   credentials, niftyLtp, historyLog, pivots, tradingMode, onStatus
 }) => {
-  const [armed, setArmed] = useState(false);
+  const [armed, setArmed] = useState(() => readFlag(ARMED_KEY, false));
   const [autoStart, setAutoStart] = useState(() => readFlag(AUTOSTART_KEY, true));
   /** Auto-execute on paper. On by default — paper trades cost nothing but data. */
   const [autoPaper, setAutoPaper] = useState(() => readFlag(AUTO_PAPER_KEY, true));
   /** Auto-execute with real money. Off by default and never implied by autoPaper. */
   const [autoLive, setAutoLive] = useState(() => readFlag(AUTO_LIVE_KEY, false));
-  const [log, setLog] = useState<LogEntry[]>([]);
+  const [log, setLog] = useState<LogEntry[]>(loadLog);
   const [positions, setPositions] = useState<Position[]>([]);
   const [range, setRange] = useState<OpeningRange | null>(null);
   const [evaluation, setEvaluation] = useState<SniperEvaluation | null>(null);
@@ -131,10 +153,37 @@ export const SniperPanel: React.FC<Props> = ({
   }, []);
 
   // --- services -------------------------------------------------------------
+  /**
+   * One OrderManager per trading mode, restored from storage on mount.
+   *
+   * This used to be rebuilt — and `positions` cleared — whenever the
+   * `credentials` object changed identity, which happens on every token
+   * refresh, so a running position could vanish mid-session. PAPER and LIVE
+   * keep separate books; switching between them is a deliberate reset.
+   */
   useEffect(() => {
-    orderRef.current = new OrderManager(credentials, tradingMode === 'PAPER');
-    setPositions([]);
-  }, [credentials, tradingMode]);
+    const om = new OrderManager(credentials, tradingMode === 'PAPER', `${OM_KEY}_${tradingMode}`);
+    orderRef.current = om;
+    setPositions(om.getPositions());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradingMode]);
+
+  // Fresher tokens, same book.
+  useEffect(() => {
+    orderRef.current?.updateCredentials(credentials);
+  }, [credentials]);
+
+  useEffect(() => {
+    writeFlag(ARMED_KEY, armed);
+  }, [armed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOG_KEY, JSON.stringify({ day: istDayKey(Date.now()), entries: log }));
+    } catch {
+      /* storage disabled — the log still lives for this session */
+    }
+  }, [log]);
 
   useEffect(() => {
     onStatus?.({ active: armed, openPositions: positions.length });
@@ -172,12 +221,16 @@ export const SniperPanel: React.FC<Props> = ({
    * Pressing Pause writes today's key here too, which is what makes the pause
    * stick for the rest of the session.
    */
-  const autoArmedDayRef = useRef<string | null>(null);
+  const autoArmedDayRef = useRef<string | null>(armed ? istDayKey(Date.now()) : null);
   useEffect(() => {
     if (!autoStart) return;
     const now = new Date(tick);
     const today = istDayKey(tick);
     const live = isMarketLive(now);
+
+    // Never arm into a session the protocol has already finished. Opening the
+    // app at 11:00 must not start an engine whose window closed at 10:15.
+    if (istMinutesOf(now) >= STAND_DOWN) return;
 
     if (live && !armed && autoArmedDayRef.current !== today) {
       autoArmedDayRef.current = today;
@@ -193,6 +246,48 @@ export const SniperPanel: React.FC<Props> = ({
       addLog('🌙 Market closed — sniper stood down.', 'info');
     }
   }, [autoStart, armed, tick, addLog]);
+
+  /**
+   * THE 10:20 STAND-DOWN.
+   *
+   * The protocol is finished once the 10:15 hard stop has flattened the book;
+   * five minutes later the engine switches itself off. Staying armed for the
+   * rest of the session bought nothing — there is no second trade and no
+   * position left to manage — while a live engine and its one-second loop ran
+   * on for five more hours.
+   *
+   * This is deliberately independent of `autoStart`: a hand-armed sniper is
+   * still bound by the protocol's clock. It is also the one place `armed` is
+   * cleared without the market having closed.
+   */
+  const stoodDownRef = useRef(false);
+  useEffect(() => {
+    if (!armed) return;
+    if (istMinutesOf(new Date(tick)) < STAND_DOWN) return;
+
+    // An open position outranks the clock. The hard stop is already trying to
+    // close it every tick; abandoning it here would leave it unmanaged.
+    if (positions.length > 0) {
+      if (!stoodDownRef.current) {
+        stoodDownRef.current = true;
+        addLog(
+          `⏳ ${SNIPER.standDown} reached but a position is still open — staying armed until it is flat.`,
+          'warn'
+        );
+      }
+      return;
+    }
+
+    setArmed(false);
+    // Latch the day so the auto-arm effect cannot immediately re-arm.
+    autoArmedDayRef.current = istDayKey(tick);
+    addLog(
+      `🛑 ${SNIPER.standDown} — the protocol's day is over. Sniper stood down${
+        dayRef.current.tradeTaken ? ' after today\'s single trade.' : ' without a trade.'
+      }`,
+      'info'
+    );
+  }, [armed, tick, positions.length, addLog]);
 
   // --- pre-market handoff ---------------------------------------------------
   /**
@@ -249,9 +344,28 @@ export const SniperPanel: React.FC<Props> = ({
   }, [loadPlaybook]);
 
   // --- one-second clock so every countdown is honest ------------------------
+  /**
+   * The clock only needs to be honest to the second while the protocol is
+   * live. Past the 10:20 stand-down there is nothing left to count down to, so
+   * it drops to 30s — this panel stays mounted for the whole session, and a
+   * one-second re-render of both engines all afternoon is main-thread work
+   * spent on a day that is already finished.
+   */
+  const openPositionsRef = useRef(0);
+  openPositionsRef.current = positions.length;
+
   useEffect(() => {
-    const id = window.setInterval(() => setTick(Date.now()), 1000);
-    return () => window.clearInterval(id);
+    let timer = 0;
+    const schedule = () => {
+      const mins = istMinutesOf(new Date());
+      const protocolLive = mins < STAND_DOWN || openPositionsRef.current > 0;
+      timer = window.setTimeout(() => {
+        setTick(Date.now());
+        schedule();
+      }, protocolLive ? 1_000 : 30_000);
+    };
+    schedule();
+    return () => window.clearTimeout(timer);
   }, []);
 
   /**

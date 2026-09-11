@@ -146,6 +146,14 @@ const App: React.FC = () => {
   const prevNiftyLtpRef = useRef<number | null>(null);
   const didFetchPivots = useRef(false);
 
+  // --- Live-refresh watchdog bookkeeping ------------------------------------
+  // A single hung fetch used to wedge the loop for the rest of the session: the
+  // only cure was a browser reload, which threw away every AutoTrade position.
+  // These refs let a watchdog see a stalled cycle and restart it in place.
+  const refreshInFlightRef = useRef(false);
+  const refreshStartedAtRef = useRef(0);
+  const lastUpdatedRef = useRef(Date.now());
+
   // --- 1. Database Hydration & Config Loading (On Mount) ---
   useEffect(() => {
     const initData = async () => {
@@ -949,6 +957,21 @@ const App: React.FC = () => {
       
     if (!hasValidCredentials || !isDbLoaded) return;
 
+    // Re-entry guard. Without it a slow cycle stacks on the next tick and the
+    // two races each other; with a stale-lock release, a cycle that never
+    // settles can no longer own the lock forever.
+    const cycleInterval = credentials.refreshInterval || 60000;
+    if (refreshInFlightRef.current) {
+      const age = Date.now() - refreshStartedAtRef.current;
+      if (age < Math.max(cycleInterval * 2, 45000)) {
+        console.warn(`⏭️ [Refresh] Previous cycle still running (${Math.round(age / 1000)}s) — skipping this tick.`);
+        return;
+      }
+      console.warn(`🧹 [Refresh] Previous cycle wedged for ${Math.round(age / 1000)}s — forcing a new one.`);
+    }
+    refreshInFlightRef.current = true;
+    refreshStartedAtRef.current = Date.now();
+
     setIsLoading(true);
 
     if (!credentials.bypassMarketHours) {
@@ -969,6 +992,7 @@ const App: React.FC = () => {
             setMarketStatusMsg("Market Closed (09:00 - 15:30 IST)");
             if (stocks.length > 0) {
                setIsLoading(false);
+               refreshInFlightRef.current = false;
                return; 
             }
         }
@@ -1359,15 +1383,18 @@ const App: React.FC = () => {
       }
 
       setLastUpdated(Date.now());
+      lastUpdatedRef.current = Date.now();
       setError(null);
       setMarketStatusMsg(null);
     } catch (err: any) {
-      if (err.message.includes("Market Hours") || err.message.includes("Test Mode")) {
-          setMarketStatusMsg(err.message);
+      const message = err?.message ?? String(err);
+      if (message.includes("Market Hours") || message.includes("Test Mode")) {
+          setMarketStatusMsg(message);
       } else {
-          setError(err.message);
+          setError(message);
       }
     } finally {
+      refreshInFlightRef.current = false;
       setIsLoading(false);
     }
   }, [credentials, isDbLoaded, historyLog, sessionHistory, stocks.length, runFeedbackLoop]); // Added runFeedbackLoop
@@ -1440,6 +1467,74 @@ const App: React.FC = () => {
       }
     }
   }, [configLoaded, isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval, credentials.bypassMarketHours]);
+
+  /**
+   * LIVE-DATA WATCHDOG.
+   *
+   * The interval above lives inside an effect, so anything that tears that
+   * effect down — or a cycle that never settles, or a long task that starves
+   * the timer — silently ends the live feed for the rest of the session. The
+   * only cure was a browser reload, and a reload wiped every AutoTrade
+   * position, log line and statistic with it.
+   *
+   * This watchdog is mounted once, for the life of the page, with no
+   * dependencies: nothing in the render tree can unmount it. It does not fetch
+   * on a schedule of its own — it only notices that no successful refresh has
+   * landed for well over one interval and restarts the cycle in place.
+   */
+  const watchdogCfgRef = useRef({ enabled: false, intervalMs: 60000 });
+  watchdogCfgRef.current = {
+    enabled: Boolean(
+      configLoaded &&
+      isDbLoaded &&
+      !isPaused &&
+      (credentials.dataProvider === 'paytm'
+        ? credentials.paytmAccessToken
+        : credentials.appId && credentials.accessToken)
+    ),
+    intervalMs: credentials.refreshInterval || 60000
+  };
+
+  useEffect(() => {
+    const CHECK_MS = 10_000;
+    let lastKickAt = 0;
+
+    const kick = (why: string) => {
+      const { enabled, intervalMs } = watchdogCfgRef.current;
+      if (!enabled || refreshInFlightRef.current) return;
+
+      // `lastUpdatedRef` starts at mount time, so a cold start gets one full
+      // grace window before the watchdog steps in and we never double-fetch.
+      const since = Date.now() - lastUpdatedRef.current;
+      const grace = Math.max(intervalMs * 2, 45_000);
+      if (since < grace) return;
+      // Back off between rescues. A refresh that legitimately returns without
+      // new data (market closed) must not turn this into a 10-second poll.
+      if (Date.now() - lastKickAt < grace) return;
+      lastKickAt = Date.now();
+
+      console.warn(
+        `🐕 [Watchdog] No live data for ${Math.round(since / 1000)}s (${why}) — restarting the refresh cycle.`
+      );
+      refreshDataRef.current?.();
+    };
+
+    const id = window.setInterval(() => kick('periodic check'), CHECK_MS);
+
+    // A tab that was throttled or backgrounded comes back stale; catch it up the
+    // moment it is looked at rather than on the next interval boundary.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') kick('tab became visible');
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, []);
 
 
   const handleClearQuantHistory = () => {

@@ -24,6 +24,8 @@ import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr
 
 const LOT_SIZE = 75;
 const SETTINGS_KEY = 'momentum_settings';
+const SESSION_KEY = 'momentum_session';
+const OM_KEY = 'momentum_orderbook';
 /** EnhancedSignalGenerator returns NEUTRAL below this, so there is no point scanning. */
 const MIN_HISTORY = 5;
 const SCAN_MS = 30_000;
@@ -82,6 +84,48 @@ function loadSettings(): MomentumSettings {
   }
 }
 
+/**
+ * Everything the panel would otherwise lose on a browser refresh.
+ *
+ * Reloading the page is the reflex fix for a stalled feed; before this it also
+ * wiped the running flag, the log, the day's statistics and — worse — the entry
+ * metadata that drives every open position's target and stop.
+ */
+interface MomentumSession {
+  day: string;
+  running: boolean;
+  stats: { trades: number; wins: number; pnl: number };
+  log: LogEntry[];
+  entries: Record<string, { entry: number; direction: 'LONG' | 'SHORT' }>;
+}
+
+const EMPTY_SESSION: MomentumSession = {
+  day: istDayKey(Date.now()),
+  running: false,
+  stats: { trades: 0, wins: 0, pnl: 0 },
+  log: [],
+  entries: {}
+};
+
+function loadSession(): MomentumSession {
+  const today = istDayKey(Date.now());
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return { ...EMPTY_SESSION, day: today };
+    const parsed = JSON.parse(raw) as Partial<MomentumSession>;
+    if (!parsed || parsed.day !== today) return { ...EMPTY_SESSION, day: today };
+    return {
+      day: today,
+      running: parsed.running === true,
+      stats: parsed.stats ?? { trades: 0, wins: 0, pnl: 0 },
+      log: parsed.log ?? [],
+      entries: parsed.entries ?? {}
+    };
+  } catch {
+    return { ...EMPTY_SESSION, day: today };
+  }
+}
+
 interface Props {
   credentials: FyersCredentials;
   niftyLtp: number | null;
@@ -124,21 +168,22 @@ const FactorBar: React.FC<{ label: string; value: number; hint?: string }> = ({ 
 export const MomentumPanel: React.FC<Props> = ({
   credentials, niftyLtp, historyLog, pivots, tradingMode, onStatus
 }) => {
-  const [running, setRunning] = useState(false);
+  const [restored] = useState(loadSession);
+  const [running, setRunning] = useState(restored.running);
   const [settings, setSettings] = useState<MomentumSettings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
   const [signal, setSignal] = useState<EnhancedSignal | null>(null);
-  const [log, setLog] = useState<LogEntry[]>([]);
+  const [log, setLog] = useState<LogEntry[]>(restored.log);
   const [positions, setPositions] = useState<Position[]>([]);
   const [busy, setBusy] = useState(false);
-  const [stats, setStats] = useState({ trades: 0, wins: 0, pnl: 0 });
+  const [stats, setStats] = useState(restored.stats);
 
   const orderRef = useRef<OrderManager | null>(null);
   /** Symbols with an exit order already in flight - the monitor ticks every 3s. */
   const exitingRef = useRef<Set<string>>(new Set());
   /** Guards the entry path against the auto-execute effect firing twice. */
   const enteringRef = useRef(false);
-  const entryRef = useRef<Record<string, { entry: number; direction: 'LONG' | 'SHORT' }>>({});
+  const entryRef = useRef<Record<string, { entry: number; direction: 'LONG' | 'SHORT' }>>(restored.entries);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const signalRef = useRef(signal);
@@ -157,12 +202,44 @@ export const MomentumPanel: React.FC<Props> = ({
     setLog(prev => [{ ts: Date.now(), text, level }, ...prev].slice(0, 150));
   }, []);
 
+  /**
+   * One OrderManager per trading mode, restored from storage on mount.
+   *
+   * This used to be rebuilt — and `positions` cleared — whenever the
+   * `credentials` object changed identity, which happens on every token
+   * refresh, so a running position could vanish mid-session. PAPER and LIVE
+   * keep separate books; switching between them is a deliberate reset.
+   */
   useEffect(() => {
-    orderRef.current = new OrderManager(credentials, tradingMode === 'PAPER');
-    entryRef.current = {};
+    const om = new OrderManager(credentials, tradingMode === 'PAPER', `${OM_KEY}_${tradingMode}`);
+    orderRef.current = om;
     exitingRef.current = new Set();
-    setPositions([]);
-  }, [credentials, tradingMode]);
+    setPositions(om.getPositions());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradingMode]);
+
+  // Fresher tokens, same book.
+  useEffect(() => {
+    orderRef.current?.updateCredentials(credentials);
+  }, [credentials]);
+
+  // Mirror everything a reload would otherwise destroy.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        SESSION_KEY,
+        JSON.stringify({
+          day: istDayKey(Date.now()),
+          running,
+          stats,
+          log,
+          entries: entryRef.current
+        })
+      );
+    } catch {
+      /* storage disabled — this session still works, it just will not survive */
+    }
+  }, [running, stats, log, positions]);
 
   useEffect(() => {
     onStatus?.({ active: running, openPositions: positions.length });
@@ -181,7 +258,9 @@ export const MomentumPanel: React.FC<Props> = ({
     return () => window.clearInterval(id);
   }, []);
 
-  const autoStartedDayRef = useRef<string | null>(null);
+  // Restored as "already claimed today" when the engine was running before a
+  // reload, so the market-close stand-down still fires for this session.
+  const autoStartedDayRef = useRef<string | null>(restored.running ? istDayKey(Date.now()) : null);
   useEffect(() => {
     if (!settings.autoStart) return;
     const now = new Date(clock);

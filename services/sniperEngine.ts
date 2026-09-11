@@ -126,6 +126,8 @@ export const MARKET_OPEN = hhmmToMinutes(SNIPER.downloadStart); // 09:15
 export const ENTRY_OPEN = hhmmToMinutes(SNIPER.entryStart);     // 09:25
 export const ENTRY_CLOSE = hhmmToMinutes(SNIPER.reviewBy);      // 09:45
 export const HARD_STOP = hhmmToMinutes(SNIPER.hardStop);        // 10:15
+/** The engine disarms itself here — the protocol's day is over. */
+export const STAND_DOWN = hhmmToMinutes(SNIPER.standDown);      // 10:20
 
 const PHASE_LABEL: Record<SniperPhase, string> = {
   PRE_OPEN: 'Pre-open — the market has not started',
