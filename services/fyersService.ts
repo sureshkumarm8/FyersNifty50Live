@@ -5,6 +5,31 @@ import { FyersQuote, FyersCredentials, FyersHistoryResponse, FyersDepthResponse 
 const PROXY_QUOTES_URL = '/api/quotes'; 
 const PROXY_HISTORY_URL = '/api/history';
 
+/**
+ * `fetch` never times out on its own. A single request the proxy never answers
+ * used to hang the live-refresh cycle for the rest of the session.
+ */
+const DEFAULT_TIMEOUT_MS = 20_000;
+
+const fetchWithTimeout = async (
+  input: RequestInfo,
+  init: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 // Mappers to convert Depth API data to UI Quote format
 const processResponse = (data: FyersDepthResponse): FyersQuote[] => {
   if (!data) return [];
@@ -72,7 +97,7 @@ const fetchSymbolsInternal = async (
   const symbolsParam = encodeURIComponent(symbols.join(','));
   const targetUrl = `${PROXY_QUOTES_URL}?symbols=${symbolsParam}`;
 
-  const response = await fetch(targetUrl, {
+  const response = await fetchWithTimeout(targetUrl, {
     method: 'GET',
     headers: {
       'Authorization': `${appId}:${token}`,
@@ -176,7 +201,7 @@ export const fetchStockHistory = async (
    // Note: Using v2 API as v3 may return "invalid method" error
    const targetUrl = `${PROXY_HISTORY_URL}?symbol=${encodeURIComponent(symbol)}&range_from=${range_from}&range_to=${range_to}`;
    
-   const response = await fetch(targetUrl, {
+   const response = await fetchWithTimeout(targetUrl, {
       method: 'GET',
       headers: {
          'Authorization': `${credentials.appId.trim()}:${credentials.accessToken.trim()}`
@@ -230,7 +255,7 @@ export const fetchYesterdayOHLC = async (
   const targetUrl = `${PROXY_HISTORY_URL}?symbol=${encodeURIComponent(symbol)}&range_from=${range_from}&range_to=${range_to}&resolution=1D`;
   
   try {
-      const response = await fetch(targetUrl, {
+      const response = await fetchWithTimeout(targetUrl, {
           method: 'GET',
           headers: { 'Authorization': `${credentials.appId.trim()}:${credentials.accessToken.trim()}` }
       });

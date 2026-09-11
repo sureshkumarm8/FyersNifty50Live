@@ -15,14 +15,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity, AlertCircle, BarChart2, Brain, CheckCircle2, ClipboardCopy, Clock, Copy, Crosshair,
-  Download, GitCompareArrows, Image as ImageIcon, Loader2, RefreshCw, Shield, Sparkles, Target,
+  ChevronDown, Download, GitCompareArrows, Image as ImageIcon, Loader2, RefreshCw, Shield, Sparkles, Target,
   Trash2, Upload, X, Zap
 } from 'lucide-react';
-import { SNIPER, SniperPlaybook, ZonePlay, istMinutes, resolvePhase } from '../../services/sniperPlaybook';
+import { GapScenario, SNIPER, SniperPlaybook, ZonePlay, istMinutes, phaseLabelOf, resolvePhase } from '../../services/sniperPlaybook';
+import { BASIS_LABEL, BASIS_NOTE, DecisionBasis } from '../../services/premarketSchedule';
+import { PhaseReview, ReviewLevelNote } from '../../services/premarketReview';
 import { Card, Meter, Pill, Stat } from '../ui/panels';
 import {
-  CHART_SLOTS, ChartEntry, ChartSlotId, PendingImage, PreMarketDecision, SLOT_ICONS,
-  STALE_AFTER_MS, SlotConfig, biasClasses, isStale, isUnreadable
+  CHART_SLOTS, ChartEntry, ChartSlotId, LevelSource, PendingImage, PhaseSnapshot, PreMarketDecision,
+  SLOT_ICONS, STALE_AFTER_MS, SlotConfig, biasClasses, isStale, isUnreadable
 } from './model';
 
 const num = (n: number | null | undefined) =>
@@ -209,6 +211,28 @@ export const CommandBar: React.FC<{
 // The verdict — the only part of this screen that makes a decision.
 // ---------------------------------------------------------------------------
 
+/**
+ * The analyst's own call, kept visually distinct from the mechanical verdict.
+ *
+ * It is shown *beside* our verdict, never in place of it. When the two agree
+ * that is worth knowing; when they disagree that is worth knowing more.
+ */
+const STANCE_TONE: Record<'ACT' | 'WAIT' | 'STAND_ASIDE', string> = {
+  ACT: 'bg-emerald-500/20 text-emerald-300',
+  WAIT: 'bg-amber-500/20 text-amber-300',
+  STAND_ASIDE: 'bg-slate-600/30 text-slate-300'
+};
+
+/**
+ * Two different vocabularies for the same judgement. GO means "the setup is
+ * there", ACT means "take it" — close enough to call agreement. A CAUTION
+ * against an ACT is a real disagreement and must be surfaced, not smoothed.
+ */
+const agreesWithVerdict = (verdict: SniperPlaybook['verdict'], stance: PhaseReview['stance']): boolean =>
+  (verdict === 'GO' && stance === 'ACT') ||
+  (verdict === 'CAUTION' && stance === 'WAIT') ||
+  (verdict === 'STAND_ASIDE' && stance === 'STAND_ASIDE');
+
 const VERDICT_TONE = {
   GO: {
     wrap: 'border-emerald-500/40 bg-emerald-500/[0.07] shadow-[0_0_60px_-24px_rgba(16,185,129,0.9)]',
@@ -241,7 +265,7 @@ export const PlayCard: React.FC<{ play: ZonePlay }> = ({ play }) => {
       <div className="mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-wider ${accent}`}>
-            {isCe ? 'Bounce · buy call at support' : 'Fade · buy put at resistance'}
+            {isCe ? 'Buy CALL at support' : 'Buy PUT at resistance'}
           </p>
           <p className="mt-0.5 font-mono text-xl font-black text-slate-100">{play.optionLabel}</p>
           <p className="text-[10px] text-slate-500">
@@ -294,10 +318,1043 @@ export const PlayCard: React.FC<{ play: ZonePlay }> = ({ play }) => {
   );
 };
 
-export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: string) => void }> = ({
-  playbook,
-  onCopy
+// ---------------------------------------------------------------------------
+// Open scenarios — the heart of the plan.
+//
+// Nifty almost never opens on yesterday's close, and a 100-point gap can open
+// beyond a mapped level, which flips that level's role and invalidates a plan
+// written only for a flat open. So every open gets its own levels, its own
+// position and its own clock, decided before the bell.
+// ---------------------------------------------------------------------------
+
+const LOCATION_COPY: Record<GapScenario['location'], { label: string; tone: string }> = {
+  INSIDE_ZONE: { label: 'Mid-zone', tone: 'border-slate-700 bg-slate-800/40 text-slate-300' },
+  AT_SUPPORT: { label: 'On support', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' },
+  AT_RESISTANCE: { label: 'On resistance', tone: 'border-rose-500/40 bg-rose-500/10 text-rose-300' },
+  ABOVE_ALL_LEVELS: { label: 'Above all levels', tone: 'border-amber-500/40 bg-amber-500/10 text-amber-300' },
+  BELOW_ALL_LEVELS: { label: 'Below all levels', tone: 'border-amber-500/40 bg-amber-500/10 text-amber-300' }
+};
+
+const ScenarioClock: React.FC<{ steps: GapScenario['clock'] }> = ({ steps }) => (
+  <ol className="space-y-2">
+    {(steps ?? []).map(step => {
+      const active = step.state === 'ACTIVE';
+      return (
+        <li key={step.time} className="flex gap-2.5">
+          <span
+            className={`w-24 shrink-0 font-mono text-[10px] font-bold ${
+              active ? 'text-amber-300' : step.state === 'DONE' ? 'text-slate-700' : 'text-slate-500'
+            }`}
+          >
+            {step.time}
+          </span>
+          <div className="min-w-0">
+            <p className={`text-[11px] font-semibold ${active ? 'text-slate-100' : 'text-slate-400'}`}>{step.title}</p>
+            {(step.items ?? []).map((it, i) => (
+              <p key={i} className={`text-[11px] leading-snug ${active ? 'text-slate-300' : 'text-slate-600'}`}>
+                {it}
+              </p>
+            ))}
+          </div>
+        </li>
+      );
+    })}
+  </ol>
+);
+
+const ScenarioCard: React.FC<{ scenario: GapScenario; closePrice: number; open: boolean; onToggle: () => void }> = ({
+  scenario: sc,
+  closePrice,
+  open,
+  onToggle
 }) => {
+  const loc = LOCATION_COPY[sc.location] ?? LOCATION_COPY.INSIDE_ZONE;
+  const armed = (sc.plays ?? []).filter(p => p.status !== 'BLOCKED');
+
+  return (
+    <div
+      className={`overflow-hidden rounded-xl border transition ${
+        sc.tradable ? 'border-slate-800 bg-slate-950/60' : 'border-slate-800/60 bg-slate-950/30'
+      }`}
+    >
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-900/50"
+      >
+        <div className="w-32 shrink-0">
+          <p className="text-xs font-bold text-slate-100">{sc.label}</p>
+          <p className="font-mono text-[10px] text-slate-500">
+            opens ≈ {num(sc.openPrice)}
+            {sc.offset !== 0 && (
+              <span className={sc.offset > 0 ? 'ml-1 text-emerald-400' : 'ml-1 text-rose-400'}>
+                {sc.offset > 0 ? '+' : ''}
+                {sc.offset}
+              </span>
+            )}
+          </p>
+        </div>
+
+        {/* the numbers that actually change per scenario */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="font-mono text-[11px]">
+            <span className="text-slate-600">S </span>
+            <span className={sc.support !== null ? 'font-bold text-emerald-300' : 'text-slate-700'}>
+              {sc.support !== null ? num(sc.support) : 'none'}
+            </span>
+          </span>
+          <span className="font-mono text-[11px]">
+            <span className="text-slate-600">R </span>
+            <span className={sc.resistance !== null ? 'font-bold text-rose-300' : 'text-slate-700'}>
+              {sc.resistance !== null ? num(sc.resistance) : 'none'}
+            </span>
+          </span>
+          {sc.zoneWidth !== null && (
+            <span className="font-mono text-[10px] text-slate-500">{sc.zoneWidth} pts</span>
+          )}
+          <span className={`rounded border px-1.5 py-0.5 text-[9px] font-bold ${loc.tone}`}>{loc.label}</span>
+          {armed.length > 0 ? (
+            <span className="font-mono text-[10px] font-bold text-sky-300">
+              {armed.map(p => p.optionLabel).join(' / ')}
+            </span>
+          ) : (
+            <span className="text-[10px] font-bold text-slate-600">NO TRADE</span>
+          )}
+        </div>
+
+        <span className="shrink-0 font-mono text-[10px] text-slate-600">{sc.likelihood}%</span>
+        <ChevronDown size={14} className={`shrink-0 text-slate-600 transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="space-y-4 border-t border-slate-800 px-4 py-4">
+          <p className="text-xs leading-relaxed text-slate-300">{sc.headline}</p>
+
+          {(sc.plays?.length ?? 0) > 0 && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {sc.plays.map(p => (
+                <PlayCard key={p.side + p.zone} play={p} />
+              ))}
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3.5">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-rose-300">Tear the plan up if…</p>
+              <ul className="space-y-1.5">
+                {(sc.invalidations ?? []).map((line, i) => (
+                  <li key={i} className="flex gap-2 text-[11px] leading-snug text-slate-300">
+                    <span className="shrink-0 text-rose-400">✕</span>
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3.5">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Today's clock — if it opens {num(sc.openPrice)}
+              </p>
+              <ScenarioClock steps={sc.clock} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * The forward look, matched to what the checkpoint actually knows.
+ *
+ * One board, four different questions:
+ *
+ *   1. CHARTS_ONLY  "where might it open?"   — five hypothetical branches
+ *   2. PREOPEN      "the gap is X, so what?" — which walls the gap activates
+ *   3. LIVE_OPEN    "it opened here."        — the real zone, exactly measured
+ *   4. INTRADAY     "it has moved."          — the zone re-anchored, clock running
+ *
+ * Showing branch 1 at checkpoint 3 is the failure this replaces: five modelled
+ * opens sitting next to a real price, four of them describing a market that
+ * never happened, is an invitation to trade the wrong row.
+ */
+export const ForwardBoard: React.FC<{
+  decision: PhaseSnapshot;
+  basis: DecisionBasis;
+  liveSpot?: number | null;
+  previousClose?: number | null;
+  reviewing?: boolean;
+}> = ({ decision, basis, liveSpot, previousClose, reviewing }) => {
+  if (basis === 'CHARTS_ONLY') {
+    return <ScenarioBoard playbook={decision.playbook} basis={basis} />;
+  }
+  if (basis === 'PREOPEN') {
+    return <PreOpenBoard decision={decision} previousClose={previousClose} reviewing={reviewing} />;
+  }
+  return <LiveZoneBoard decision={decision} basis={basis} liveSpot={liveSpot} reviewing={reviewing} />;
+};
+
+/** How a gap of this size changes what the day can be. */
+const gapCharacter = (pts: number): { label: string; tone: string; meaning: string } => {
+  const a = Math.abs(pts);
+  if (a < 25)
+    return {
+      label: 'Flat open',
+      tone: 'text-slate-300',
+      meaning:
+        'The gap is noise. Yesterday\'s levels survive intact and the chart read carries over unchanged — this is the cleanest case for a zone trade.'
+    };
+  if (a < 75)
+    return {
+      label: pts > 0 ? 'Mild gap up' : 'Mild gap down',
+      tone: pts > 0 ? 'text-emerald-300' : 'text-rose-300',
+      meaning:
+        'A normal gap. The nearer wall on the gap side loses some meaning; the wall price is opening toward is the one to watch.'
+    };
+  if (a < 150)
+    return {
+      label: pts > 0 ? 'Gap up' : 'Gap down',
+      tone: pts > 0 ? 'text-emerald-300' : 'text-rose-300',
+      meaning:
+        'A real gap. Levels behind price are now scenery. Expect the first move to either fill part of the gap or run — neither is a zone trade until it settles.'
+    };
+  return {
+    label: pts > 0 ? 'Strong gap up' : 'Strong gap down',
+    tone: pts > 0 ? 'text-emerald-200' : 'text-rose-200',
+    meaning:
+      'A gap this size rewrites the chart. Most of the levels the screenshots produced are now behind price and irrelevant. Treat the read as unproven until the first 10 minutes print.'
+  };
+};
+
+/** Within this distance a level is reachable inside the 50-minute window. */
+const IN_PLAY_PTS = 150;
+
+const PreOpenBoard: React.FC<{
+  decision: PhaseSnapshot;
+  previousClose?: number | null;
+  reviewing?: boolean;
+}> = ({ decision, previousClose, reviewing }) => {
+  const spot = decision.spot;
+  const gap = previousClose && isFinite(previousClose) ? Math.round(spot - previousClose) : null;
+  const character = gap === null ? null : gapCharacter(gap);
+  const review = decision.aiReview;
+
+  const levels = decision.levelSources ?? [];
+  const inPlay = levels.filter(l => Math.abs(l.distance) <= IN_PLAY_PTS);
+  const scenery = levels.filter(l => Math.abs(l.distance) > IN_PLAY_PTS);
+
+  const zone = decision.expectedResistance - decision.expectedSupport;
+  const toSupport = spot - decision.expectedSupport;
+  const toResistance = decision.expectedResistance - spot;
+  // Whichever wall the auction has parked price nearest is the side that can
+  // actually arm inside the window; the far one is a spectator.
+  const liveSide = toSupport <= toResistance ? 'SUPPORT' : 'RESISTANCE';
+
+  return (
+    <Card title="Pre-open read · what the gap changes" icon={<Crosshair size={15} className="text-amber-400" />}>
+      <p className="-mt-1 mb-3 text-[11px] text-slate-500">
+        The auction has indicated the open, so the guessing is over — but the range is not set. These are the levels
+        that gap actually puts in play.
+      </p>
+
+      {/* ---- the gap ---- */}
+      <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3.5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-slate-500">Indicative open</p>
+            <p className="font-mono text-2xl font-black text-slate-100">{num(spot)}</p>
+          </div>
+          {gap !== null && character ? (
+            <>
+              <div className="text-center">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">Gap</p>
+                <p className={`font-mono text-2xl font-black ${character.tone}`}>
+                  {gap > 0 ? '+' : ''}
+                  {gap}
+                </p>
+                <p className="text-[10px] text-slate-500">vs {num(previousClose!)} close</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">Character</p>
+                <p className={`text-sm font-black ${character.tone}`}>{character.label}</p>
+              </div>
+            </>
+          ) : (
+            <p className="text-[11px] text-slate-500">
+              No previous close on record — cut the <span className="font-semibold text-slate-400">Charts only</span>{' '}
+              phase first and the gap will be measured here.
+            </p>
+          )}
+        </div>
+        {character && <p className="mt-2.5 text-[11px] leading-relaxed text-slate-400">{character.meaning}</p>}
+      </div>
+
+      {/* ---- which levels the gap activated ---- */}
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-sky-500/25 bg-sky-500/[0.05] p-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-sky-300">
+            In play · within {IN_PLAY_PTS} pts
+          </p>
+          {inPlay.length ? (
+            <div className="space-y-1.5">
+              {inPlay.map(l => (
+                <LevelRow key={`${l.kind}-${l.level}`} level={l} note={noteFor(review, l.level)} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-500">
+              Nothing within reach of the indicative open. A 50-minute window cannot travel to any wall the charts
+              named — that is a stand-aside, not a setup.
+            </p>
+          )}
+        </div>
+        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Now scenery · the gap moved past these
+          </p>
+          {scenery.length ? (
+            <div className="space-y-1.5 opacity-60">
+              {scenery.map(l => (
+                <LevelRow key={`${l.kind}-${l.level}`} level={l} note={noteFor(review, l.level)} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-600">Every level the charts named is still within reach.</p>
+          )}
+        </div>
+      </div>
+
+      {/* ---- the two actions ---- */}
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <ActionCard
+          kind="SUPPORT"
+          live={liveSide === 'SUPPORT'}
+          level={decision.expectedSupport}
+          distance={toSupport}
+          play={decision.playbook?.plays?.find(p => p.side === 'CE')}
+        />
+        <ActionCard
+          kind="RESISTANCE"
+          live={liveSide === 'RESISTANCE'}
+          level={decision.expectedResistance}
+          distance={toResistance}
+          play={decision.playbook?.plays?.find(p => p.side === 'PE')}
+        />
+      </div>
+
+      <p className="mt-3 rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
+        <span className="font-semibold text-slate-300">Room {zone} pts.</span>{' '}
+        {zone >= SNIPER.minZoneWidth
+          ? `Wide enough for the ${SNIPER.targetPoints}-point target with the ${SNIPER.stopPoints}-point stop. Wait for the 09:15 print before committing — the auction indicates the open, it does not set the range.`
+          : `Below the ${SNIPER.minZoneWidth}-point minimum, so neither side can pay for the trade as things stand. Re-cut at 09:15; the real open often opens the zone up.`}
+      </p>
+
+      <AnalystNotes review={review} reviewing={reviewing} />
+    </Card>
+  );
+};
+
+const LiveZoneBoard: React.FC<{
+  decision: PhaseSnapshot;
+  basis: DecisionBasis;
+  liveSpot?: number | null;
+  reviewing?: boolean;
+}> = ({ decision, basis, liveSpot, reviewing }) => {
+  const anchor = decision.spot;
+  const review = decision.aiReview;
+  const support = decision.expectedSupport;
+  const resistance = decision.expectedResistance;
+  const zone = resistance - support;
+
+  // Where price sits between the walls, as a percentage. This is the single
+  // most decision-relevant number after the open: at 8% you are at support
+  // with the whole zone in front of you; at 50% there is no trade.
+  const position = zone > 0 ? Math.min(100, Math.max(0, ((anchor - support) / zone) * 100)) : 50;
+  const toSupport = Math.round(anchor - support);
+  const toResistance = Math.round(resistance - anchor);
+  const nearer = toSupport <= toResistance ? 'SUPPORT' : 'RESISTANCE';
+  const drift = liveSpot && isFinite(liveSpot) ? Math.round(liveSpot - anchor) : null;
+
+  const levels = decision.levelSources ?? [];
+  const inPlay = levels.filter(l => Math.abs(l.distance) <= IN_PLAY_PTS);
+
+  return (
+    <Card
+      title={basis === 'LIVE_OPEN' ? 'The open · real levels, measured' : 'Live zone · re-anchored'}
+      icon={<Crosshair size={15} className="text-emerald-400" />}
+      right={
+        drift !== null && Math.abs(drift) >= 5 ? (
+          <Pill tone={Math.abs(drift) >= SPOT_DRIFT_HINT ? 'warn' : 'muted'}>
+            live {num(liveSpot!)} · {drift > 0 ? '+' : ''}
+            {drift} from this cut
+          </Pill>
+        ) : undefined
+      }
+    >
+      <p className="-mt-1 mb-3 text-[11px] text-slate-500">
+        {basis === 'LIVE_OPEN'
+          ? 'The market is open. Every level below is measured against a price that actually traded — no modelled offsets, no branches.'
+          : 'Price has moved since the open, so the walls are re-measured from where it is now.'}
+      </p>
+
+      {/* ---- position in the zone ---- */}
+      <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3.5">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-emerald-400/70">Support</p>
+            <p className="font-mono text-xl font-black text-emerald-300">{num(support)}</p>
+            <p className="text-[10px] text-slate-500">{toSupport} pts below</p>
+          </div>
+          <div className="text-center">
+            <p className="text-[10px] uppercase tracking-wider text-slate-500">Price</p>
+            <p className="font-mono text-2xl font-black text-slate-100">{num(anchor)}</p>
+            <p className="text-[10px] text-slate-500">{Math.round(position)}% up the zone</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] uppercase tracking-wider text-rose-400/70">Resistance</p>
+            <p className="font-mono text-xl font-black text-rose-300">{num(resistance)}</p>
+            <p className="text-[10px] text-slate-500">{toResistance} pts above</p>
+          </div>
+        </div>
+
+        {/* the ladder as a bar - the whole read in one glance */}
+        <div className="relative mt-3 h-2.5 w-full rounded-full bg-gradient-to-r from-emerald-500/30 via-slate-700 to-rose-500/30">
+          <div
+            className="absolute top-1/2 h-4 w-1 -translate-y-1/2 rounded-full bg-slate-100 shadow"
+            style={{ left: `calc(${position}% - 2px)` }}
+          />
+          {/* the bands where a trade actually arms */}
+          <div
+            className="absolute inset-y-0 left-0 rounded-l-full bg-emerald-500/40"
+            style={{ width: `${zone > 0 ? Math.min(100, (SNIPER.zoneBuffer / zone) * 100) : 0}%` }}
+          />
+          <div
+            className="absolute inset-y-0 right-0 rounded-r-full bg-rose-500/40"
+            style={{ width: `${zone > 0 ? Math.min(100, (SNIPER.zoneBuffer / zone) * 100) : 0}%` }}
+          />
+        </div>
+        <div className="mt-1.5 flex justify-between text-[10px] text-slate-600">
+          <span>buy zone · within {SNIPER.zoneBuffer} pts</span>
+          <span className={zone >= SNIPER.minZoneWidth ? 'text-slate-400' : 'text-rose-400'}>
+            {zone} pts of room
+            {zone < SNIPER.minZoneWidth && ` · under the ${SNIPER.minZoneWidth}-pt minimum`}
+          </span>
+          <span>fade zone · within {SNIPER.zoneBuffer} pts</span>
+        </div>
+
+        <p className="mt-2.5 text-[11px] leading-relaxed text-slate-400">
+          {position <= 20
+            ? `Price is sitting on support with ${toResistance} points of room above. This is the buy-the-zone case the system exists for.`
+            : position >= 80
+              ? `Price is pressed against resistance with ${toSupport} points of room below. This is the fade case.`
+              : `Price is mid-zone — ${toSupport} pts from support, ${toResistance} pts from resistance. There is no trade from here; the system waits for a wall, it does not trade the middle.`}{' '}
+          {nearer === 'SUPPORT'
+            ? `Support is the nearer wall, so that is the level to watch first.`
+            : `Resistance is the nearer wall, so that is the level to watch first.`}
+        </p>
+      </div>
+
+      {/* ---- the two actions, now with real distances ---- */}
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <ActionCard
+          kind="SUPPORT"
+          live={position <= 50}
+          level={support}
+          distance={toSupport}
+          play={decision.playbook?.plays?.find(p => p.side === 'CE')}
+        />
+        <ActionCard
+          kind="RESISTANCE"
+          live={position > 50}
+          level={resistance}
+          distance={toResistance}
+          play={decision.playbook?.plays?.find(p => p.side === 'PE')}
+        />
+      </div>
+
+      {/* ---- every level still within reach ---- */}
+      {inPlay.length > 0 && (
+        <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Everything within reach of {num(anchor)}
+          </p>
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {inPlay.map(l => (
+              <LevelRow key={`${l.kind}-${l.level}`} level={l} note={noteFor(review, l.level)} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <AnalystNotes review={review} reviewing={reviewing} />
+    </Card>
+  );
+};
+
+/** Beyond this the cut is far enough from live that it should be re-run. */
+const SPOT_DRIFT_HINT = 40;
+
+const noteFor = (review: PhaseReview | undefined, level: number): ReviewLevelNote | undefined =>
+  review?.levelNotes.find(n => Math.abs(n.level - level) <= 15);
+
+/** One level, with the evidence behind it. */
+const LevelRow: React.FC<{ level: LevelSource; note?: ReviewLevelNote }> = ({ level, note }) => {
+  const isSupport = level.kind === 'SUPPORT';
+  return (
+    <div
+      className={`rounded-lg border px-2.5 py-1.5 ${
+        isSupport ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-rose-500/20 bg-rose-500/5'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className={`font-mono text-sm font-bold ${isSupport ? 'text-emerald-300' : 'text-rose-300'}`}>
+          {num(level.level)}
+        </span>
+        <span className="shrink-0 font-mono text-[10px] text-slate-500">
+          {level.distance > 0 ? '+' : ''}
+          {level.distance} pts
+        </span>
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center gap-1">
+        {level.sources.map(s => (
+          <span key={s} className="rounded bg-slate-800/80 px-1 py-px text-[9px] text-slate-400">
+            {s}
+          </span>
+        ))}
+        {level.sources.length > 1 && (
+          <span className="rounded bg-sky-500/20 px-1 py-px text-[9px] font-bold text-sky-300">
+            {level.sources.length}× confluence
+          </span>
+        )}
+        {note?.strength === 'MAJOR' && (
+          <span className="rounded bg-indigo-500/20 px-1 py-px text-[9px] font-bold text-indigo-300">MAJOR</span>
+        )}
+        {level.stale && (
+          <span className="rounded bg-amber-500/15 px-1 py-px text-[9px] font-bold text-amber-400">STALE</span>
+        )}
+      </div>
+      {note && <p className="mt-1 text-[10px] leading-snug text-slate-500">{note.note}</p>}
+    </div>
+  );
+};
+
+/** One side of the book: what arms here, and whether it can arm at all. */
+const ActionCard: React.FC<{
+  kind: 'SUPPORT' | 'RESISTANCE';
+  live: boolean;
+  level: number;
+  distance: number;
+  play?: ZonePlay;
+}> = ({ kind, live, level, distance, play }) => {
+  const isSupport = kind === 'SUPPORT';
+  const blocked = play?.status === 'BLOCKED';
+  return (
+    <div
+      className={`rounded-xl border p-3 ${
+        blocked
+          ? 'border-slate-800 bg-slate-950/40 opacity-60'
+          : live
+            ? isSupport
+              ? 'border-emerald-500/40 bg-emerald-500/[0.07]'
+              : 'border-rose-500/40 bg-rose-500/[0.07]'
+            : 'border-slate-800 bg-slate-950/40 opacity-70'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className={`text-[11px] font-bold ${isSupport ? 'text-emerald-300' : 'text-rose-300'}`}>
+          {isSupport ? 'Bounce · buy CE at support' : 'Fade · buy PE at resistance'}
+        </span>
+        <span
+          className={`rounded px-1.5 py-0.5 text-[9px] font-black tracking-wider ${
+            blocked ? 'bg-slate-700/50 text-slate-400' : live ? 'bg-sky-500/20 text-sky-300' : 'bg-slate-800 text-slate-500'
+          }`}
+        >
+          {blocked ? 'BLOCKED' : live ? 'WATCH' : 'FAR SIDE'}
+        </span>
+      </div>
+      <p className="mt-1.5 font-mono text-lg font-black text-slate-100">{num(level)}</p>
+      <p className="text-[10px] text-slate-500">
+        {Math.abs(Math.round(distance))} pts away
+        {play && ` · arms ${num(play.triggerFrom)}–${num(play.triggerTo)}`}
+      </p>
+      {play && (
+        <p className="mt-1.5 text-[11px] leading-snug text-slate-400">
+          {play.optionLabel} → target {num(play.targetSpot)}, stop {num(play.stopSpot)}.
+        </p>
+      )}
+      {play?.notes?.[0] && <p className="mt-1 text-[10px] leading-snug text-slate-600">{play.notes[0]}</p>}
+    </div>
+  );
+};
+
+/** The analyst's steps and kill-switches, when a pass has been run. */
+const AnalystNotes: React.FC<{ review?: PhaseReview; reviewing?: boolean }> = ({ review, reviewing }) => {
+  if (reviewing && !review) {
+    return (
+      <p className="mt-3 flex items-center gap-2 rounded-lg border border-indigo-500/25 bg-indigo-500/[0.06] px-3 py-2 text-[11px] text-indigo-200">
+        <Loader2 size={12} className="animate-spin" /> The analyst is re-reading the four charts against this price…
+      </p>
+    );
+  }
+  if (!review || (!review.playbook.length && !review.invalidators.length)) return null;
+
+  return (
+    <div className="mt-3 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.05] p-3">
+      <div className="flex items-center gap-2">
+        <Brain size={13} className="text-indigo-300" />
+        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+          Analyst steps for this checkpoint
+        </span>
+      </div>
+      {review.playbook.length > 0 && (
+        <ol className="mt-2 space-y-1.5">
+          {review.playbook.map((step, i) => (
+            <li key={i} className="flex gap-2 text-[11px] leading-relaxed text-slate-300">
+              <span className="font-bold text-indigo-400">{i + 1}.</span>
+              <span className="flex-1">{step}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {review.invalidators.length > 0 && (
+        <div className="mt-2.5 border-t border-slate-800 pt-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-amber-400/80">Kills the plan</p>
+          <ul className="mt-1 space-y-1">
+            {review.invalidators.map((inv, i) => (
+              <li key={i} className="flex gap-2 text-[11px] leading-snug text-slate-400">
+                <span className="text-amber-500">·</span>
+                <span className="flex-1">{inv}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * The five hypothetical opens. Checkpoint 1 only.
+ *
+ * These exist to answer "what do I do if it opens somewhere I have not seen
+ * yet", which is a real question at 08:45 and a meaningless one at 09:16. Once
+ * any price from today exists, ForwardBoard swaps this out: five modelled opens
+ * sitting next to a real price, four of them describing a market that never
+ * happened, is an invitation to trade the wrong row.
+ */
+export const ScenarioBoard: React.FC<{
+  playbook?: SniperPlaybook;
+  basis?: DecisionBasis;
+}> = ({ playbook }) => {
+  const scenarios = playbook?.scenarios ?? [];
+
+  // The likeliest open is the one worth reading first, so it starts expanded.
+  const [openId, setOpenId] = useState<string | null>(() => {
+    if (scenarios.length === 0) return null;
+    return scenarios.reduce((best, s) => (s.likelihood > best.likelihood ? s : best), scenarios[0]).id;
+  });
+
+  if (scenarios.length === 0) return null;
+  const close = playbook?.closePrice ?? 0;
+
+  return (
+    <Card title="If Nifty opens…" icon={<GitCompareArrows size={15} className="text-sky-400" />}>
+      <p className="mb-3 text-[11px] text-slate-500">
+        Measured from the <span className="font-mono font-semibold text-slate-300">{num(close)}</span> close on your
+        charts. Levels, position and clock are recalculated for each open. This board is replaced by a real read the
+        moment the pre-open auction gives us a price from today.
+      </p>
+      <div className="space-y-2">
+        {scenarios.map(sc => (
+          <ScenarioCard
+            key={sc.id}
+            scenario={sc}
+            closePrice={close}
+            open={openId === sc.id}
+            onToggle={() => setOpenId(openId === sc.id ? null : sc.id)}
+          />
+        ))}
+      </div>
+      <p className="mt-3 text-[10px] leading-snug text-slate-600">
+        Percentages split the blended gap read across the five opens; they are a prior, not a forecast. Confirm the
+        real open at 09:15 and use only that row.
+      </p>
+    </Card>
+  );
+};
+
+/**
+ * What each checkpoint wants typed in before it runs.
+ *
+ * The pre-open auction print and the 09:15 open are the two prices a live feed
+ * most often misses or smooths over, and they are precisely the numbers those
+ * phases are supposed to be anchored to. Typing one in is the normal path, not
+ * an override.
+ */
+const PHASE_INPUT: Record<DecisionBasis, { label: string; placeholder: string; hint: string }> = {
+  CHARTS_ONLY: {
+    label: 'Previous close',
+    placeholder: 'e.g. 24,000',
+    hint: 'Blank uses the last price your charts reported.'
+  },
+  PREOPEN: {
+    label: 'Pre-open indicative price',
+    placeholder: 'from the 09:08 auction',
+    hint: 'The call-auction print at 09:08-09:14. Blank uses the live feed, which may not carry it.'
+  },
+  LIVE_OPEN: {
+    label: 'Opening price',
+    placeholder: 'the 09:15 open',
+    hint: 'The first traded price of the session. Blank uses the live feed.'
+  },
+  INTRADAY: {
+    label: 'Price to test',
+    placeholder: 'live price',
+    hint: 'Blank uses the live feed. Type a price to see the zones at a level price has not reached yet.'
+  }
+};
+
+/**
+ * Every checkpoint the decision was re-cut at, each as its own tab.
+ *
+ * The point is comparison: the same screenshots re-read against a different
+ * Nifty50 price produce different walls, and seeing 09:10 next to 09:15 is what
+ * makes an early "no trade today" verdict falsifiable rather than final.
+ */
+export const PhaseBoard: React.FC<{
+  decision: PreMarketDecision;
+  /** The checkpoint the whole screen is reading. */
+  active: DecisionBasis;
+  onSelect: (basis: DecisionBasis) => void;
+  /** Recompute a phase now, ignoring its normal window. */
+  onRunPhase?: (basis: DecisionBasis, overrideSpot?: number) => void;
+  /** Re-run the analyst pass for a phase. Absent when no text AI is configured. */
+  onRunReview?: (basis: DecisionBasis) => void;
+  reviewingPhase?: DecisionBasis | null;
+  aiLabel?: string;
+}> = ({ decision, active, onSelect, onRunPhase, onRunReview, reviewingPhase, aiLabel }) => {
+  const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+  const captured = ORDER.filter(b => decision.phases?.[b]);
+  const [spotInput, setSpotInput] = useState('');
+
+  const current = active;
+  if (!captured.length && !onRunPhase) return null;
+
+  const phase = decision.phases?.[current];
+  const capturedBefore = captured.filter(b => ORDER.indexOf(b) < ORDER.indexOf(current));
+  const prevBasis = capturedBefore[capturedBefore.length - 1];
+  const prev = prevBasis ? decision.phases?.[prevBasis] : undefined;
+  const tone = VERDICT_TONE[phase?.playbook?.verdict as keyof typeof VERDICT_TONE] ?? VERDICT_TONE.CAUTION;
+
+  const zone = phase ? phase.expectedResistance - phase.expectedSupport : 0;
+  const prevZone = prev ? prev.expectedResistance - prev.expectedSupport : null;
+  const mc = phase?.marketContext;
+  const busy = reviewingPhase === current;
+
+  const delta = (now: number, before: number | null | undefined) => {
+    if (before == null || !isFinite(before)) return null;
+    const d = Math.round(now - before);
+    if (d === 0) return <span className="text-slate-600">no change</span>;
+    return (
+      <span className={d > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+        {d > 0 ? '+' : ''}
+        {d}
+      </span>
+    );
+  };
+
+  return (
+    <Card title="Session phases" icon={<GitCompareArrows size={15} />}>
+      <p className="-mt-1 mb-3 text-[11px] text-slate-500">
+        The same charts, re-read at each checkpoint against the live market. The tab you pick drives every board on
+        this screen.
+      </p>
+      {/* ---- tabs ---- */}
+      <div className="mb-4 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+        {ORDER.map((b, i) => {
+          const has = !!decision.phases?.[b];
+          const isActive = b === current;
+          const p = decision.phases?.[b];
+          return (
+            <button
+              key={b}
+              onClick={() => {
+                // A price typed for the pre-open must never be carried into
+                // another phase by an accidental tab switch.
+                onSelect(b);
+                setSpotInput('');
+              }}
+              title={BASIS_NOTE[b]}
+              className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition ${
+                isActive
+                  ? 'border-sky-500/60 bg-sky-500/15 text-sky-200'
+                  : has
+                    ? 'border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800'
+                    : 'border-slate-800 bg-slate-900/30 text-slate-600 hover:bg-slate-800/50'
+              }`}
+            >
+              <span className="block font-semibold">
+                <span className="mr-1 opacity-50">{i + 1}.</span>
+                {BASIS_LABEL[b]}
+                {p?.forced && <span className="ml-1 text-[9px] font-black text-violet-300">TEST</span>}
+              </span>
+              <span className="block font-mono text-[10px] opacity-70">
+                {p
+                  ? `${new Date(p.generatedAt).toLocaleTimeString('en-IN', {
+                      hour12: false,
+                      timeZone: 'Asia/Kolkata'
+                    }).slice(0, 5)} · ${num(p.spot)}`
+                  : 'not cut yet'}
+                {p?.aiReview && <span className="ml-1 text-[9px] text-indigo-300">🤖</span>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ---- run control ---- */}
+      {onRunPhase && (
+        <div className="mb-3 rounded-lg border border-violet-500/25 bg-violet-500/[0.06] px-3 py-2.5">
+          <p className="text-[11px] text-slate-400">
+            {phase
+              ? `Re-read the charts as "${BASIS_LABEL[current]}" against a price you supply.`
+              : 'This phase runs automatically in its window. Supply its price to run it now.'}
+          </p>
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <label className="min-w-[190px] flex-1">
+              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-violet-300/80">
+                {PHASE_INPUT[current].label}
+              </span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={spotInput}
+                onChange={e => setSpotInput(e.target.value)}
+                placeholder={PHASE_INPUT[current].placeholder}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none transition placeholder:font-sans placeholder:text-[11px] placeholder:text-slate-600 focus:border-violet-500/60"
+              />
+            </label>
+            <button
+              onClick={() => {
+                const typed = parseFloat(spotInput.replace(/[,\s]/g, ''));
+                onRunPhase(current, isFinite(typed) && typed > 0 ? typed : undefined);
+                setSpotInput('');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-violet-500/15 px-3 py-1.5 text-[11px] font-semibold text-violet-200 transition hover:bg-violet-500/25"
+            >
+              <RefreshCw size={12} />
+              {phase ? 'Recompute' : 'Run now'}
+            </button>
+            {onRunReview && phase && (
+              <button
+                onClick={() => onRunReview(current)}
+                disabled={busy}
+                title={aiLabel ? `Re-read the four charts with ${aiLabel} against this phase's price` : undefined}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-3 py-1.5 text-[11px] font-semibold text-indigo-200 transition hover:bg-indigo-500/25 disabled:opacity-50"
+              >
+                {busy ? <Loader2 size={12} className="animate-spin" /> : <Brain size={12} />}
+                {busy ? 'Analysing…' : phase.aiReview ? 'Re-run AI analysis' : 'Run AI analysis'}
+              </button>
+            )}
+          </div>
+          <p className="mt-1.5 text-[10px] leading-snug text-slate-500">{PHASE_INPUT[current].hint}</p>
+        </div>
+      )}
+
+      {!phase ? (
+        <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/40 px-4 py-6 text-center">
+          <p className="text-sm font-semibold text-slate-300">{BASIS_LABEL[current]} not cut yet</p>
+          <p className="mx-auto mt-1 max-w-md text-[11px] leading-snug text-slate-500">{BASIS_NOTE[current]}</p>
+        </div>
+      ) : (
+      <>
+      {/* ---- verdict for this phase ---- */}
+      <div className={`rounded-xl border p-3 ${tone.wrap}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <tone.Icon className={`h-4 w-4 ${tone.text}`} />
+            <span className={`text-sm font-black ${tone.text}`}>{phase.playbook?.verdictHeadline}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {phase.provisional && (
+              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-black tracking-wider text-amber-300">
+                PROVISIONAL
+              </span>
+            )}
+            <span className="font-mono text-[10px] text-slate-500">{phase.generatedAtStr}</span>
+          </div>
+        </div>
+        <p className="mt-1 text-[11px] text-slate-400">{phase.playbook?.verdictReason}</p>
+      </div>
+
+      {/* ---- the analyst's read of this checkpoint ---- */}
+      {phase.aiReview ? (
+        <div className="mt-3 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.07] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Brain size={14} className="text-indigo-300" />
+              <span className="text-[11px] font-bold text-indigo-200">Analyst pass</span>
+              <span className={`rounded px-1.5 py-0.5 text-[9px] font-black tracking-wider ${STANCE_TONE[phase.aiReview.stance]}`}>
+                {phase.aiReview.stance.replace('_', ' ')}
+              </span>
+            </div>
+            <span className="font-mono text-[10px] text-slate-500">
+              {phase.aiReview.conviction}% conviction · {phase.aiReview.atStr.slice(0, 5)} · @{num(phase.aiReview.spot)}
+            </span>
+          </div>
+          <p className="mt-1.5 text-xs font-semibold text-slate-200">{phase.aiReview.headline}</p>
+          {phase.aiReview.expectation && (
+            <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{phase.aiReview.expectation}</p>
+          )}
+        </div>
+      ) : phase.aiReviewError ? (
+        <p className="mt-3 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-[11px] text-amber-400/80">
+          Analyst pass unavailable — {phase.aiReviewError}. The mechanical read above stands on its own.
+        </p>
+      ) : busy ? (
+        <p className="mt-3 flex items-center gap-2 rounded-lg border border-indigo-500/25 bg-indigo-500/[0.06] px-3 py-2 text-[11px] text-indigo-200">
+          <Loader2 size={12} className="animate-spin" /> Re-reading the four charts against {num(phase.spot)}…
+        </p>
+      ) : null}
+
+      {/* ---- Nifty50 at this checkpoint ---- */}
+      <div className="mt-4">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Nifty 50 at this checkpoint
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Stat label="Anchor" value={num(phase.spot)} sub={phase.spotSource.toLowerCase()} />
+          <Stat
+            label="Last snapshot"
+            value={mc?.niftyLtp != null ? num(mc.niftyLtp) : '—'}
+            sub={mc?.snapshotTime ? mc.snapshotTime.slice(0, 5) : 'no feed'}
+          />
+          <Stat
+            label="Pts change"
+            value={mc?.ptsChg != null ? (mc.ptsChg > 0 ? `+${mc.ptsChg}` : `${mc.ptsChg}`) : '—'}
+          />
+          <Stat label="PCR" value={mc?.pcr != null ? mc.pcr.toFixed(2) : '—'} />
+          <Stat
+            label="Adv / Dec"
+            value={mc?.adv != null && mc?.dec != null ? `${mc.adv} / ${mc.dec}` : '—'}
+          />
+          <Stat
+            label="Option flow"
+            value={mc?.optionsSent != null ? `${mc.optionsSent > 0 ? '+' : ''}${mc.optionsSent.toFixed(1)}%` : '—'}
+          />
+          <Stat
+            label="Stock flow"
+            value={mc?.stockSent != null ? `${mc.stockSent > 0 ? '+' : ''}${mc.stockSent.toFixed(1)}%` : '—'}
+          />
+          <Stat label="Snapshots" value={mc?.snapshots != null ? String(mc.snapshots) : '—'} />
+        </div>
+        {(!mc || mc.snapshots === 0) && (
+          <p className="mt-2 text-[10px] text-amber-400/80">
+            No live snapshots had arrived when this phase was cut — the read is chart-derived only.
+          </p>
+        )}
+      </div>
+
+      {/* ---- recalculated zones ---- */}
+      <div className="mt-4">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Support &amp; resistance, recalculated
+        </p>
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-emerald-400/70">Support</p>
+              <p className="font-mono text-xl font-black text-emerald-300">{num(phase.expectedSupport)}</p>
+              {prev && <p className="text-[10px] text-slate-500">{delta(phase.expectedSupport, prev.expectedSupport)}</p>}
+            </div>
+            <div className="flex-1 text-center">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500">Room</p>
+              <p
+                className={`font-mono text-lg font-black ${
+                  zone >= SNIPER.minZoneWidth ? 'text-slate-200' : 'text-rose-300'
+                }`}
+              >
+                {zone} pts
+              </p>
+              <p className="text-[10px] text-slate-500">
+                {zone >= SNIPER.minZoneWidth
+                  ? `${SNIPER.targetPoints}-pt target fits`
+                  : `below the ${SNIPER.minZoneWidth}-pt minimum`}
+                {prevZone != null && <> · {delta(zone, prevZone)}</>}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-wider text-rose-400/70">Resistance</p>
+              <p className="font-mono text-xl font-black text-rose-300">{num(phase.expectedResistance)}</p>
+              {prev && (
+                <p className="text-[10px] text-slate-500">{delta(phase.expectedResistance, prev.expectedResistance)}</p>
+              )}
+            </div>
+          </div>
+
+          {(phase.supports?.length > 0 || phase.resistances?.length > 0) && (
+            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-800 pt-2.5">
+              <div>
+                <p className="text-[10px] text-slate-500">All supports</p>
+                <p className="font-mono text-[11px] text-emerald-300/90">
+                  {phase.supports?.length ? phase.supports.map(n => num(n)).join(' · ') : '—'}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-slate-500">All resistances</p>
+                <p className="font-mono text-[11px] text-rose-300/90">
+                  {phase.resistances?.length ? phase.resistances.map(n => num(n)).join(' · ') : '—'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ---- what changed ---- */}
+      {prev && prevBasis && (
+        <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            Versus {BASIS_LABEL[prevBasis]}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            Anchor {num(prev.spot)} → {num(phase.spot)} ({delta(phase.spot, prev.spot)} pts). Zone {prevZone} → {zone}{' '}
+            pts.{' '}
+            {prev.playbook?.verdict !== phase.playbook?.verdict ? (
+              <span className="font-semibold text-sky-300">
+                Verdict changed: {prev.playbook?.verdict?.replace('_', ' ')} →{' '}
+                {phase.playbook?.verdict?.replace('_', ' ')}.
+              </span>
+            ) : (
+              <span className="text-slate-500">Verdict unchanged ({phase.playbook?.verdict?.replace('_', ' ')}).</span>
+            )}
+          </p>
+        </div>
+      )}
+
+      <p className="mt-3 text-[10px] leading-snug text-slate-600">
+        {BASIS_NOTE[current]}
+        {phase.forced && (
+          <span className="text-violet-300/80">
+            {' '}
+            This phase was recomputed by hand, so its timestamp is when you ran it, not {BASIS_LABEL[current]}.
+          </span>
+        )}
+      </p>
+      </>
+      )}
+    </Card>
+  );
+};
+
+export const VerdictBoard: React.FC<{
+  playbook?: SniperPlaybook;
+  onCopy: (text: string) => void;
+  basis?: DecisionBasis;
+  provisional?: boolean;
+  revalidations?: PreMarketDecision['revalidations'];
+  /** The analyst's independent call, shown beside ours - never instead of it. */
+  review?: PhaseReview;
+}> = ({ playbook, onCopy, basis, provisional, revalidations, review }) => {
   // The verdict is fixed at generation time, but the clock is not — the phase
   // line has to stay honest as 09:25 and 10:15 come and go.
   const [tick, setTick] = useState(() => Date.now());
@@ -310,7 +1367,15 @@ export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: 
     const now = new Date(tick);
     const mins = istMinutes(now);
     const toMin = (t: string) => Number(t.split(':')[0]) * 60 + Number(t.split(':')[1]);
-    return { phase: resolvePhase(now), toEntry: toMin(SNIPER.entryStart) - mins, toStop: toMin(SNIPER.hardStop) - mins };
+    return {
+      phase: resolvePhase(now),
+      // The plan's own phaseLabel is frozen at generation time, so a plan cut
+      // before the bell keeps claiming "Pre-market · plan now, do not trade"
+      // long after the entry window has opened. Resolve it against now.
+      phaseLabel: phaseLabelOf(now),
+      toEntry: toMin(SNIPER.entryStart) - mins,
+      toStop: toMin(SNIPER.hardStop) - mins
+    };
   }, [tick]);
 
   // Defence in depth. A plan restored from IndexedDB may predate the current
@@ -337,12 +1402,51 @@ export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: 
                 <span className={`rounded px-2 py-0.5 text-[10px] font-black tracking-wider ${tone.chip}`}>
                   {playbook.verdict.replace('_', ' ')}
                 </span>
-                <span className="text-[11px] text-slate-500">{playbook.phaseLabel}</span>
+                <span className="text-[11px] text-slate-500">{live.phaseLabel}</span>
               </div>
               <h2 className={`mt-1.5 text-2xl font-black leading-tight sm:text-3xl ${tone.text}`}>
                 {playbook.verdictHeadline}
+                {provisional && (
+                  <span className="ml-2 align-middle rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-black tracking-wider text-amber-300">
+                    PROVISIONAL
+                  </span>
+                )}
               </h2>
               <p className="mt-1 max-w-2xl text-xs text-slate-400">{playbook.verdictReason}</p>
+              {basis && (
+                <p className="mt-1.5 max-w-2xl text-[11px] text-slate-500">
+                  <span className="text-slate-400">Basis: {BASIS_LABEL[basis]}.</span> {BASIS_NOTE[basis]}
+                </p>
+              )}
+              {revalidations && revalidations.length > 1 && (
+                <p className="mt-1 max-w-2xl text-[11px] text-slate-600">
+                  Re-cuts:{' '}
+                  {revalidations
+                    .map(r => `${r.atStr.slice(0, 5)} @${r.spot} → ${r.verdict.split('—')[0].trim()}`)
+                    .join('  ·  ')}
+                </p>
+              )}
+              {review && (
+                <div className="mt-2.5 max-w-2xl rounded-lg border border-indigo-500/25 bg-indigo-500/[0.07] px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Brain size={12} className="text-indigo-300" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+                      Analyst
+                    </span>
+                    <span className={`rounded px-1.5 py-0.5 text-[9px] font-black tracking-wider ${STANCE_TONE[review.stance]}`}>
+                      {review.stance.replace('_', ' ')}
+                    </span>
+                    <span className="text-[10px] text-slate-500">{review.conviction}% conviction</span>
+                    {/* Agreement is cheap to compute and expensive to miss. */}
+                    {agreesWithVerdict(playbook.verdict, review.stance) ? (
+                      <span className="text-[10px] text-slate-600">· agrees with the mechanical read</span>
+                    ) : (
+                      <span className="text-[10px] font-semibold text-amber-400">· dissents from the mechanical read</span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-300">{review.headline}</p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -375,13 +1479,6 @@ export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: 
           <span className="ml-auto inline-flex items-center gap-1.5 text-slate-400">
             <Clock size={12} /> {countdown}
           </span>
-        </div>
-
-        {/* the two plays */}
-        <div className="grid gap-3 md:grid-cols-2">
-          {(playbook.plays ?? []).map(play => (
-            <PlayCard key={play.side} play={play} />
-          ))}
         </div>
 
         {/* open plan */}
@@ -454,54 +1551,6 @@ export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: 
           </div>
         )}
 
-        {/* invalidations + timeline */}
-        <div className="grid gap-4 md:grid-cols-2">
-          {(playbook.invalidations ?? []).length > 0 && (
-            <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-rose-300">Tear the plan up if…</p>
-              <ul className="space-y-1.5">
-                {(playbook.invalidations ?? []).map((line, i) => (
-                  <li key={i} className="flex gap-2 text-[11px] leading-snug text-slate-300">
-                    <span className="shrink-0 text-rose-400">✕</span>
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {(playbook.timeline ?? []).length > 0 && (
-            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">Today's clock</p>
-              <ol className="space-y-2">
-                {(playbook.timeline ?? []).map(step => {
-                  const active = step.state === 'ACTIVE';
-                  return (
-                    <li key={step.time} className="flex gap-3">
-                      <span
-                        className={`shrink-0 font-mono text-[11px] font-bold ${
-                          active ? 'text-amber-300' : step.state === 'DONE' ? 'text-slate-700' : 'text-slate-600'
-                        }`}
-                      >
-                        {step.time}
-                      </span>
-                      <div className="min-w-0">
-                        <p className={`text-[11px] font-semibold ${active ? 'text-slate-100' : 'text-slate-400'}`}>
-                          {step.title}
-                        </p>
-                        {(step.items ?? []).map((it, i) => (
-                          <p key={i} className={`text-[11px] leading-snug ${active ? 'text-slate-300' : 'text-slate-600'}`}>
-                            {it}
-                          </p>
-                        ))}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            </div>
-          )}
-        </div>
 
         {/* reality check */}
         <p className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-2.5 text-[11px] leading-relaxed text-amber-200/90">
@@ -516,7 +1565,7 @@ export const VerdictBoard: React.FC<{ playbook?: SniperPlaybook; onCopy: (text: 
 // Key numbers — replaces the old sidebar, which used to sit beside an empty box.
 // ---------------------------------------------------------------------------
 
-export const KeyNumbers: React.FC<{ decision: PreMarketDecision }> = ({ decision }) => (
+export const KeyNumbers: React.FC<{ decision: PhaseSnapshot }> = ({ decision }) => (
   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
     <Stat
       label="Reference spot"
@@ -545,9 +1594,10 @@ export const KeyNumbers: React.FC<{ decision: PreMarketDecision }> = ({ decision
 // Evidence — why the verdict says what it says.
 // ---------------------------------------------------------------------------
 
-export const EvidenceGrid: React.FC<{ decision: PreMarketDecision; visionLabel: string }> = ({
+export const EvidenceGrid: React.FC<{ decision: PhaseSnapshot; visionLabel: string; aiLabel?: string }> = ({
   decision,
-  visionLabel
+  visionLabel,
+  aiLabel
 }) => {
   const scenarios = [
     { key: 'flat' as const, label: 'Flat open', emoji: '➡️' },
@@ -559,6 +1609,17 @@ export const EvidenceGrid: React.FC<{ decision: PreMarketDecision; visionLabel: 
     decision.scenarios.gapUp.probability,
     decision.scenarios.gapDown.probability
   );
+  const review = decision.aiReview;
+  const [showRaw, setShowRaw] = useState(false);
+  const bySide = (kind: LevelSource['kind']) => (decision.levelSources ?? []).filter(l => l.kind === kind);
+
+  // Before the bell the open is a distribution; after it, it is a fact.
+  const openUnknown = !decision.basis || decision.basis === 'CHARTS_ONLY' || decision.basis === 'PREOPEN';
+  const zoneWidth = Math.max(0, Math.round(decision.expectedResistance - decision.expectedSupport));
+  const wallDistances = [decision.expectedSupport, decision.expectedResistance]
+    .filter(l => l > 0)
+    .map(l => Math.abs(Math.round(decision.spot - l)));
+  const nearestWall = wallDistances.length ? Math.min(...wallDistances) : null;
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -629,8 +1690,48 @@ export const EvidenceGrid: React.FC<{ decision: PreMarketDecision; visionLabel: 
 
       <div className="space-y-4">
         {/* summary */}
-        <Card title="Market summary" icon={<Brain className="h-4 w-4 text-indigo-400" />} right={<Pill>{visionLabel}</Pill>}>
-          <p className="whitespace-pre-line text-sm leading-relaxed text-slate-300">{decision.aiSummary}</p>
+        <Card
+          title="Market summary"
+          icon={<Brain className="h-4 w-4 text-indigo-400" />}
+          right={<Pill tone={review ? 'info' : 'muted'}>{review ? aiLabel ?? review.model : visionLabel}</Pill>}
+        >
+          {review ? (
+            <>
+              {/* The analyst's read leads: it is the only text on this screen
+                  written against this checkpoint's price rather than assembled
+                  from the chart verdicts. */}
+              <p className="text-sm leading-relaxed text-slate-200">{review.summary}</p>
+              {review.expectation && (
+                <div className="mt-3 rounded-lg border border-indigo-500/25 bg-indigo-500/[0.06] px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+                    What to expect · {BASIS_LABEL[review.basis]}
+                  </p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-slate-300">{review.expectation}</p>
+                </div>
+              )}
+              <button
+                onClick={() => setShowRaw(v => !v)}
+                className="mt-2.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 transition hover:text-slate-300"
+              >
+                <ChevronDown size={13} className={`transition ${showRaw ? 'rotate-180' : ''}`} />
+                {showRaw ? 'Hide' : 'Show'} the raw chart read
+              </button>
+              {showRaw && (
+                <p className="mt-2 whitespace-pre-line border-l-2 border-slate-800 pl-3 text-[12px] leading-relaxed text-slate-400">
+                  {decision.aiSummary}
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="whitespace-pre-line text-sm leading-relaxed text-slate-300">{decision.aiSummary}</p>
+              {decision.aiReviewError && (
+                <p className="mt-2 text-[11px] text-amber-400/80">
+                  The analyst pass could not run ({decision.aiReviewError}), so this is the mechanical read only.
+                </p>
+              )}
+            </>
+          )}
           <div className="mt-4 space-y-2">
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-500">Combined sentiment</span>
@@ -657,52 +1758,104 @@ export const EvidenceGrid: React.FC<{ decision: PreMarketDecision; visionLabel: 
           </div>
         </Card>
 
-        {/* scenarios */}
-        <Card title="Open scenarios" icon={<Activity className="h-4 w-4 text-indigo-400" />}>
-          <div className="grid grid-cols-3 gap-2">
-            {scenarios.map(s => {
-              const data = decision.scenarios[s.key];
-              const top = data.probability === best;
-              return (
-                <div
-                  key={s.key}
-                  className={`rounded-xl border p-3 ${
-                    top ? 'border-sky-500/40 bg-sky-500/10' : 'border-slate-800 bg-slate-950/50'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span>{s.emoji}</span>
-                    <span className="text-[11px] font-semibold text-slate-300">{s.label}</span>
+        {/* Before the bell, how the day opens is the open question. After it,
+            the answer is on the screen and these probabilities are history -
+            so the slot is given to the gates that decide whether to trade. */}
+        {openUnknown ? (
+          <Card title="Open scenarios" icon={<Activity className="h-4 w-4 text-indigo-400" />}>
+            <div className="grid grid-cols-3 gap-2">
+              {scenarios.map(s => {
+                const data = decision.scenarios[s.key];
+                const top = data.probability === best;
+                return (
+                  <div
+                    key={s.key}
+                    className={`rounded-xl border p-3 ${
+                      top ? 'border-sky-500/40 bg-sky-500/10' : 'border-slate-800 bg-slate-950/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>{s.emoji}</span>
+                      <span className="text-[11px] font-semibold text-slate-300">{s.label}</span>
+                    </div>
+                    <p className={`mt-1 text-2xl font-black ${top ? 'text-sky-300' : 'text-slate-400'}`}>
+                      {data.probability}%
+                    </p>
+                    <p className="mt-1 text-[10px] leading-tight text-slate-500">{data.description}</p>
                   </div>
-                  <p className={`mt-1 text-2xl font-black ${top ? 'text-sky-300' : 'text-slate-400'}`}>
-                    {data.probability}%
-                  </p>
-                  <p className="mt-1 text-[10px] leading-tight text-slate-500">{data.description}</p>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
+                );
+              })}
+            </div>
+          </Card>
+        ) : (
+          <Card title="Go / no-go gates" icon={<Activity className="h-4 w-4 text-indigo-400" />}>
+            <p className="-mt-1 mb-3 text-[11px] text-slate-500">
+              Every one of these has to be true before size goes on. One red gate is a stand-aside, however good the
+              story sounds.
+            </p>
+            <div className="space-y-1.5">
+              <GateRow
+                label="Zone is wide enough to trade"
+                detail={`${zoneWidth} pts between ${num(decision.expectedSupport)} and ${num(decision.expectedResistance)} · need ${SNIPER.minZoneWidth}`}
+                ok={zoneWidth >= SNIPER.minZoneWidth}
+              />
+              <GateRow
+                label="Price is at a wall, not mid-zone"
+                detail={
+                  nearestWall === null
+                    ? 'No level within reach'
+                    : `${nearestWall} pts from the nearest working level · arm inside ${SNIPER.zoneBuffer}`
+                }
+                ok={nearestWall !== null && nearestWall <= SNIPER.zoneBuffer}
+              />
+              <GateRow
+                label="Charts agree with each other"
+                detail={`${decision.agreement}% confluence across ${decision.chartCoverage} charts · need 60%`}
+                ok={decision.agreement >= 60}
+              />
+              <GateRow
+                label="Analyst pass is not standing aside"
+                detail={
+                  review
+                    ? `${review.stance.replace('_', ' ')} at ${review.conviction}% conviction`
+                    : 'Analyst pass has not run for this cut'
+                }
+                ok={!!review && review.stance !== 'STAND_ASIDE'}
+              />
+            </div>
+          </Card>
+        )}
       </div>
 
       {/* level ladder */}
       {(decision.supports.length > 0 || decision.resistances.length > 0) && (
-        <Card title="Level ladder" icon={<BarChart2 className="h-4 w-4 text-indigo-400" />}>
-          <div className="grid grid-cols-2 gap-4">
+        <Card
+          title="Level ladder"
+          icon={<BarChart2 className="h-4 w-4 text-indigo-400" />}
+          right={<Pill tone="muted">measured from {num(decision.spot)}</Pill>}
+        >
+          <p className="-mt-1 mb-3 text-[11px] text-slate-500">
+            Every level with the chart that named it. Two independent charts on the same number is the strongest
+            evidence this system produces — an OI wall is defended intraday by the writers who put it there.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-rose-300">Resistances above</p>
               <div className="space-y-1.5">
-                {decision.resistances.length ? (
+                {bySide('RESISTANCE').length ? (
+                  bySide('RESISTANCE').map((l, i) => (
+                    <LadderRow
+                      key={l.level}
+                      rank={`R${i + 1}`}
+                      level={l}
+                      note={noteFor(review, l.level)}
+                      working={l.level === decision.expectedResistance}
+                    />
+                  ))
+                ) : decision.resistances.length ? (
+                  // A plan restored from a build before provenance existed.
                   decision.resistances.map((level, i) => (
-                    <div
-                      key={level}
-                      className="flex items-center justify-between rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-1.5"
-                    >
-                      <span className="font-mono text-sm font-bold text-rose-300">{num(level)}</span>
-                      <span className="text-[10px] text-slate-500">
-                        R{i + 1} · +{level - decision.spot}
-                      </span>
-                    </div>
+                    <PlainLevelRow key={level} rank={`R${i + 1}`} level={level} spot={decision.spot} kind="RESISTANCE" />
                   ))
                 ) : (
                   <p className="text-xs text-slate-600">None detected</p>
@@ -712,17 +1865,19 @@ export const EvidenceGrid: React.FC<{ decision: PreMarketDecision; visionLabel: 
             <div>
               <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-emerald-300">Supports below</p>
               <div className="space-y-1.5">
-                {decision.supports.length ? (
+                {bySide('SUPPORT').length ? (
+                  bySide('SUPPORT').map((l, i) => (
+                    <LadderRow
+                      key={l.level}
+                      rank={`S${i + 1}`}
+                      level={l}
+                      note={noteFor(review, l.level)}
+                      working={l.level === decision.expectedSupport}
+                    />
+                  ))
+                ) : decision.supports.length ? (
                   decision.supports.map((level, i) => (
-                    <div
-                      key={level}
-                      className="flex items-center justify-between rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5"
-                    >
-                      <span className="font-mono text-sm font-bold text-emerald-300">{num(level)}</span>
-                      <span className="text-[10px] text-slate-500">
-                        S{i + 1} · −{decision.spot - level}
-                      </span>
-                    </div>
+                    <PlainLevelRow key={level} rank={`S${i + 1}`} level={level} spot={decision.spot} kind="SUPPORT" />
                   ))
                 ) : (
                   <p className="text-xs text-slate-600">None detected</p>
@@ -730,6 +1885,11 @@ export const EvidenceGrid: React.FC<{ decision: PreMarketDecision; visionLabel: 
               </div>
             </div>
           </div>
+          {!review && (
+            <p className="mt-3 text-[10px] text-slate-600">
+              Run the analyst pass from Session phases to annotate each level with what happens at it.
+            </p>
+          )}
         </Card>
       )}
 
@@ -738,29 +1898,179 @@ export const EvidenceGrid: React.FC<{ decision: PreMarketDecision; visionLabel: 
         title="Opening playbook"
         icon={<Target className="h-4 w-4 text-indigo-400" />}
         right={
-          <button
-            onClick={() => window.print()}
-            title="Export as a printable report"
-            className="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:bg-slate-800"
-          >
-            <Download size={13} />
-          </button>
+          <div className="flex items-center gap-2">
+            {decision.basis && <Pill tone="muted">{BASIS_LABEL[decision.basis]}</Pill>}
+            <button
+              onClick={() => window.print()}
+              title="Export as a printable report"
+              className="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:bg-slate-800"
+            >
+              <Download size={13} />
+            </button>
+          </div>
         }
       >
-        <ol className="space-y-2">
-          {decision.tradePlan.map((line, i) => (
-            <li key={i} className="flex gap-3 text-sm text-slate-300">
-              <span className="font-bold text-emerald-400">{i + 1}.</span>
-              <span className="flex-1 leading-relaxed">{line}</span>
-            </li>
-          ))}
-        </ol>
+        {review?.playbook.length ? (
+          <>
+            {/* The analyst's steps are written for this checkpoint's price, so
+                they lead. The mechanical plan is kept underneath because it is
+                the one the execution engine will actually follow. */}
+            <div className="mb-1.5 flex items-center gap-2">
+              <Brain size={13} className="text-indigo-300" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+                Analyst plan · {BASIS_LABEL[review.basis]} @ {num(review.spot)}
+              </span>
+            </div>
+            <ol className="space-y-2">
+              {review.playbook.map((line, i) => (
+                <li key={i} className="flex gap-3 text-sm text-slate-200">
+                  <span className="font-bold text-indigo-400">{i + 1}.</span>
+                  <span className="flex-1 leading-relaxed">{line}</span>
+                </li>
+              ))}
+            </ol>
+            {review.invalidators.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.05] px-3 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-amber-400/90">Abandon the plan if</p>
+                <ul className="mt-1 space-y-0.5">
+                  {review.invalidators.map((inv, i) => (
+                    <li key={i} className="text-[11px] leading-snug text-slate-400">
+                      · {inv}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <details className="group mt-3">
+              <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-500 transition hover:text-slate-300">
+                <ChevronDown size={13} className="inline transition group-open:rotate-180" /> The mechanical plan the
+                engine executes
+              </summary>
+              <ol className="mt-2 space-y-1.5 border-l-2 border-slate-800 pl-3">
+                {decision.tradePlan.map((line, i) => (
+                  <li key={i} className="flex gap-2 text-[12px] text-slate-400">
+                    <span className="font-bold text-emerald-500/70">{i + 1}.</span>
+                    <span className="flex-1 leading-relaxed">{line}</span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          </>
+        ) : (
+          <ol className="space-y-2">
+            {decision.tradePlan.map((line, i) => (
+              <li key={i} className="flex gap-3 text-sm text-slate-300">
+                <span className="font-bold text-emerald-400">{i + 1}.</span>
+                <span className="flex-1 leading-relaxed">{line}</span>
+              </li>
+            ))}
+          </ol>
+        )}
         {decision.riskReason && (
           <p className="mt-4 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
             <span className="font-semibold text-slate-300">Risk — {decision.riskLevel}.</span> {decision.riskReason}
           </p>
         )}
       </Card>
+    </div>
+  );
+};
+
+/** One pass/fail condition from the go/no-go checklist. */
+const GateRow: React.FC<{ label: string; detail: string; ok: boolean }> = ({ label, detail, ok }) => (
+  <div
+    className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 ${
+      ok ? 'border-emerald-500/25 bg-emerald-500/[0.05]' : 'border-rose-500/25 bg-rose-500/[0.05]'
+    }`}
+  >
+    <span className={`mt-px text-[13px] font-black ${ok ? 'text-emerald-400' : 'text-rose-400'}`}>{ok ? '✓' : '✗'}</span>
+    <div className="min-w-0 flex-1">
+      <p className={`text-[12px] font-semibold ${ok ? 'text-slate-200' : 'text-slate-300'}`}>{label}</p>
+      <p className="mt-0.5 font-mono text-[10px] leading-snug text-slate-500">{detail}</p>
+    </div>
+  </div>
+);
+
+/** A ladder row that can show where the number came from. */
+const LadderRow: React.FC<{
+  rank: string;
+  level: LevelSource;
+  note?: ReviewLevelNote;
+  working: boolean;
+}> = ({ rank, level, note, working }) => {
+  const isSupport = level.kind === 'SUPPORT';
+  return (
+    <div
+      className={`rounded-lg border px-3 py-2 ${
+        isSupport
+          ? working
+            ? 'border-emerald-500/50 bg-emerald-500/10'
+            : 'border-emerald-500/20 bg-emerald-500/5'
+          : working
+            ? 'border-rose-500/50 bg-rose-500/10'
+            : 'border-rose-500/20 bg-rose-500/5'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className={`font-mono text-sm font-bold ${isSupport ? 'text-emerald-300' : 'text-rose-300'}`}>
+            {num(level.level)}
+          </span>
+          {working && (
+            <span className="rounded bg-sky-500/20 px-1.5 py-px text-[9px] font-black tracking-wider text-sky-300">
+              WORKING
+            </span>
+          )}
+        </div>
+        <span className="font-mono text-[10px] text-slate-500">
+          {rank} · {level.distance > 0 ? '+' : ''}
+          {level.distance}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        {level.sources.map(s => (
+          <span key={s} className="rounded bg-slate-800/80 px-1 py-px text-[9px] text-slate-400">
+            {s}
+          </span>
+        ))}
+        {level.sources.length > 1 && (
+          <span className="rounded bg-sky-500/20 px-1 py-px text-[9px] font-bold text-sky-300">
+            {level.sources.length}× confluence
+          </span>
+        )}
+        {note?.strength === 'MAJOR' && (
+          <span className="rounded bg-indigo-500/20 px-1 py-px text-[9px] font-bold text-indigo-300">MAJOR</span>
+        )}
+        {level.stale && (
+          <span className="rounded bg-amber-500/15 px-1 py-px text-[9px] font-bold text-amber-400">STALE</span>
+        )}
+      </div>
+      {note && <p className="mt-1 text-[10px] leading-snug text-slate-500">{note.note}</p>}
+    </div>
+  );
+};
+
+/** Fallback for plans cut before level provenance was recorded. */
+const PlainLevelRow: React.FC<{ rank: string; level: number; spot: number; kind: LevelSource['kind'] }> = ({
+  rank,
+  level,
+  spot,
+  kind
+}) => {
+  const isSupport = kind === 'SUPPORT';
+  return (
+    <div
+      className={`flex items-center justify-between rounded-lg border px-3 py-1.5 ${
+        isSupport ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-rose-500/20 bg-rose-500/5'
+      }`}
+    >
+      <span className={`font-mono text-sm font-bold ${isSupport ? 'text-emerald-300' : 'text-rose-300'}`}>
+        {num(level)}
+      </span>
+      <span className="text-[10px] text-slate-500">
+        {rank} · {level > spot ? '+' : '−'}
+        {Math.abs(level - spot)}
+      </span>
     </div>
   );
 };

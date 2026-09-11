@@ -1,8 +1,10 @@
 
 
 import React, { useMemo, useState } from 'react';
-import { EnrichedFyersQuote, MarketSnapshot, ViewMode, SectorMetric } from '../types';
+import { EnrichedFyersQuote, MarketSnapshot, ViewMode, SectorMetric, PivotPoints } from '../types';
 import { TrendingUp, TrendingDown, Activity, Zap, Target, BrainCircuit, Loader2, Scale, Clock, Moon, AlertTriangle, Timer, Bot, ArrowUp, ArrowDown, Minus, BarChart3, ListFilter } from 'lucide-react';
+import QuantInsightPanel from './QuantInsightPanel';
+import { CollapseToggle, useCollapsed } from './ui/collapse';
 
 interface CumulativeViewProps {
   data: EnrichedFyersQuote[];
@@ -14,6 +16,8 @@ interface CumulativeViewProps {
   // New AI Props
   sectors?: SectorMetric[];
   aiEnabled?: boolean;
+  /** Pivot levels, used as the fallback S/R when the AI Quant panel scores the market. */
+  pivots?: PivotPoints | null;
 }
 
 const formatValue = (val: number) => {
@@ -222,9 +226,11 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
     onSelectStock, 
     marketStatus,
     sectors = [],
-    aiEnabled
+    aiEnabled,
+    pivots
 }) => {
   const [decisionWindow, setDecisionWindow] = useState<number>(5); // Default 5 mins
+  const [engineCollapsed, toggleEngine] = useCollapsed('cockpit_engine_collapsed');
 
   // --- Session Stats Calculation ---
   const stats = useMemo(() => {
@@ -422,100 +428,103 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
            </div>
        )}
        
-       {/* Top Dashboard Row: Decision Engine + AI Insight */}
-       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-           
-           {/* ALGORITHMIC DECISION ENGINE */}
-           <div className={`lg:col-span-2 glass-panel p-4 sm:p-6 rounded-2xl relative overflow-visible transition-all duration-500 border-2 ${windowAnalysis?.signalClass || 'border-slate-800'}`}>
-               <div className="flex flex-col md:flex-row gap-6">
-                   <div className="flex-1 z-10">
-                       <div className="flex items-center justify-between mb-2">
-                           <div className="flex items-center gap-2">
-                               <Activity size={18} className="text-blue-300" />
-                               <h2 className="text-xs font-bold text-blue-200 uppercase tracking-widest">
-                                 Algorithm Engine ({windowAnalysis && windowAnalysis.isFallback ? `${windowAnalysis.effectiveDurationMins.toFixed(1)}m` : `${decisionWindow}m`})
-                               </h2>
-                           </div>
-                           
-                           <div className="flex gap-2">
-                                {windowAnalysis?.divergence && (
-                                    <div className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded text-[10px] font-bold border border-yellow-400/30 animate-pulse mr-24 sm:mr-0">
-                                        <AlertTriangle size={12} /> DIV
-                                    </div>
-                                )}
-                           </div>
-                       </div>
-                       
-                       <h1 className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${windowAnalysis?.color || 'text-slate-500'}`}>
+       {/* ALGORITHMIC DECISION ENGINE — compact and collapsible. */}
+       <div className={`glass-panel px-4 py-3 rounded-xl relative overflow-visible transition-all duration-500 border ${windowAnalysis?.signalClass || 'border-slate-800'}`}>
+           {/* Header: title, window selector, live summary when collapsed */}
+           <div className="flex items-center gap-3">
+               <Activity size={14} className="text-blue-300 shrink-0" />
+               <h2 className="text-[10px] font-bold text-blue-200 uppercase tracking-widest whitespace-nowrap">
+                 Algorithm Engine
+               </h2>
+
+               {windowAnalysis?.divergence && (
+                   <span className="flex items-center gap-1 text-yellow-400 bg-yellow-400/10 px-1.5 py-0.5 rounded text-[9px] font-bold border border-yellow-400/30 animate-pulse">
+                       <AlertTriangle size={10} /> DIV
+                   </span>
+               )}
+
+               {/* Collapsed summary — the verdict stays readable without expanding. */}
+               {engineCollapsed && (
+                   <div className="flex items-center gap-2 min-w-0 flex-1">
+                       <span className={`font-mono text-sm font-black tracking-tight truncate ${windowAnalysis?.color || 'text-slate-500'}`}>
+                           {windowAnalysis?.prediction || 'INITIALIZING...'}
+                       </span>
+                       <span className="hidden sm:flex items-center gap-2 text-[10px] font-mono ml-auto">
+                           <span className={windowAnalysis && windowAnalysis.priceDelta >= 0 ? 'text-bull' : 'text-bear'}>
+                               {windowAnalysis ? `${windowAnalysis.priceDelta > 0 ? '+' : ''}${windowAnalysis.priceDelta.toFixed(1)}` : '--'} pts
+                           </span>
+                           <span className={windowAnalysis && windowAnalysis.flowDelta >= 0 ? 'text-bull' : 'text-bear'}>
+                               {windowAnalysis ? formatMillions(windowAnalysis.flowDelta) : '--'}
+                           </span>
+                       </span>
+                   </div>
+               )}
+
+               <div className={`flex items-center gap-2 ${engineCollapsed ? '' : 'ml-auto'}`}>
+                   <select
+                       value={decisionWindow}
+                       onChange={(e) => setDecisionWindow(Number(e.target.value))}
+                       className="bg-slate-900/90 text-slate-300 text-[10px] font-bold border border-white/10 rounded-lg px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                   >
+                       {[1, 3, 5, 10, 15, 30].map(m => (
+                           <option key={m} value={m}>{m}m</option>
+                       ))}
+                   </select>
+                   <CollapseToggle collapsed={engineCollapsed} onToggle={toggleEngine} label="Algorithm Engine" />
+               </div>
+           </div>
+
+           {!engineCollapsed && (
+               <div className="mt-3 flex flex-col sm:flex-row sm:items-end gap-3">
+                   <div className="flex-1 min-w-0 z-10">
+                       <h1 className={`text-2xl sm:text-3xl font-black font-mono tracking-tight ${windowAnalysis?.color || 'text-slate-500'}`}>
                            {windowAnalysis?.prediction || 'INITIALIZING...'}
                        </h1>
-                       <p className="text-slate-300 mt-2 text-xs sm:text-sm font-medium">
+                       <p className="text-slate-400 mt-0.5 text-[11px] font-medium">
                            {windowAnalysis?.desc || 'Gathering sufficient market data...'}
+                           <span className="text-slate-600">
+                               {' '}· {windowAnalysis && windowAnalysis.isFallback ? `${windowAnalysis.effectiveDurationMins.toFixed(1)}m` : `${decisionWindow}m`} window
+                           </span>
                        </p>
-                       
-                       <div className="mt-4">
-                           <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden relative">
-                               <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-white/20 z-10"></div>
-                               <div 
-                                    className={`h-full transition-all duration-1000 ease-out ${windowAnalysis && windowAnalysis.totalScore > 0 ? 'bg-gradient-to-r from-green-500 to-emerald-300' : 'bg-gradient-to-r from-rose-500 to-red-600'}`} 
-                                    style={{ 
-                                        width: windowAnalysis ? `${Math.min(Math.abs(windowAnalysis.totalScore), 50)}%` : '0%',
-                                        left: windowAnalysis && windowAnalysis.totalScore > 0 ? '50%' : `calc(50% - ${Math.min(Math.abs(windowAnalysis?.totalScore || 0), 50)}%)`
-                                    }}
-                               ></div>
-                           </div>
+
+                       <div className="mt-2.5 h-1.5 w-full bg-slate-800 rounded-full overflow-hidden relative">
+                           <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-white/20 z-10"></div>
+                           <div
+                                className={`h-full transition-all duration-1000 ease-out ${windowAnalysis && windowAnalysis.totalScore > 0 ? 'bg-gradient-to-r from-green-500 to-emerald-300' : 'bg-gradient-to-r from-rose-500 to-red-600'}`}
+                                style={{
+                                    width: windowAnalysis ? `${Math.min(Math.abs(windowAnalysis.totalScore), 50)}%` : '0%',
+                                    left: windowAnalysis && windowAnalysis.totalScore > 0 ? '50%' : `calc(50% - ${Math.min(Math.abs(windowAnalysis?.totalScore || 0), 50)}%)`
+                                }}
+                           ></div>
                        </div>
                    </div>
 
-                   {/* Window Stats */}
-                   <div className="w-full md:w-48 flex flex-col gap-2 justify-center z-10 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6 bg-slate-900/20 md:bg-transparent rounded-lg p-3 md:p-0 relative">
-                       <div className="flex justify-end mb-2">
-                           <select 
-                               value={decisionWindow} 
-                               onChange={(e) => setDecisionWindow(Number(e.target.value))}
-                               className="bg-slate-900/90 text-slate-300 text-[10px] font-bold border border-white/10 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-                           >
-                               {[1, 3, 5, 10, 15, 30].map(m => (
-                                   <option key={m} value={m}>{m}m Window</option>
-                               ))}
-                           </select>
-                       </div>
-
-                       <div className="flex justify-between items-center text-xs">
-                           <span className="text-slate-400 flex items-center gap-1"><Timer size={10}/> Pts Chg</span>
-                           <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.priceDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
+                   {/* Window stats — inline chips rather than a tall sidebar column. */}
+                   <div className="flex sm:flex-col gap-2 shrink-0">
+                       <div className="flex items-center gap-1.5 rounded-lg bg-slate-900/40 px-2 py-1">
+                           <Timer size={10} className="text-slate-500" />
+                           <span className="text-[9px] text-slate-500 uppercase font-bold">Pts</span>
+                           <span className={`font-mono text-xs font-bold ${windowAnalysis && windowAnalysis.priceDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
                                {windowAnalysis ? `${windowAnalysis.priceDelta > 0 ? '+' : ''}${windowAnalysis.priceDelta.toFixed(1)}` : '--'}
                            </span>
                        </div>
-                       
-                       <div className="flex justify-between items-center text-xs">
-                           <span className="text-slate-400 flex items-center gap-1"><Target size={10}/> Flow</span>
-                           <span className={`font-mono font-bold ${windowAnalysis && windowAnalysis.flowDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
+                       <div className="flex items-center gap-1.5 rounded-lg bg-slate-900/40 px-2 py-1">
+                           <Target size={10} className="text-slate-500" />
+                           <span className="text-[9px] text-slate-500 uppercase font-bold">Flow</span>
+                           <span className={`font-mono text-xs font-bold ${windowAnalysis && windowAnalysis.flowDelta >= 0 ? 'text-bull' : 'text-bear'}`}>
                                 {windowAnalysis ? formatMillions(windowAnalysis.flowDelta) : '--'}
                            </span>
                        </div>
                    </div>
                </div>
-           </div>
-
-           {/* AI QUANT INSIGHT CARD */}
-           <div className="glass-panel p-4 sm:p-5 rounded-2xl flex flex-col justify-between relative overflow-hidden group border border-indigo-500/20 bg-indigo-900/5">
-                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                    <BrainCircuit size={80} />
-                </div>
-                
-                <div>
-                    <div className="flex justify-between items-center mb-4">
-                        <div className="flex items-center gap-2">
-                             <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-300">
-                                 <Bot size={16} />
-                             </div>
-                             <h2 className="text-xs font-bold text-indigo-200 uppercase tracking-widest">AI Quant Insight</h2>
-                        </div>
-                    </div>
-                </div>
-           </div>
+           )}
        </div>
+
+       <QuantInsightPanel
+           historyLog={historyLog}
+           niftyLtp={latestSnapshot?.niftyLtp ?? null}
+           pivots={pivots}
+       />
 
        {/* SECTOR HEATMAP BAR */}
        {sectors.length > 0 && (

@@ -10,6 +10,8 @@
 import React from 'react';
 import { Activity, CalendarDays, Layers, Timer } from 'lucide-react';
 import { SniperPlaybook } from '../../services/sniperPlaybook';
+import { DecisionBasis } from '../../services/premarketSchedule';
+import { PhaseReview } from '../../services/premarketReview';
 
 // The pre-market workflow is built around four specific screenshots. Each one
 // answers a different question, so each gets its own slot, prompt and weight
@@ -195,6 +197,27 @@ export interface ChartContribution {
   summary: string;
 }
 
+/**
+ * Where a level came from.
+ *
+ * A number on its own is unfalsifiable. "24,700, named by the OI walls and the
+ * Daily" is a level you can reason about: two independent reads agreeing is the
+ * strongest evidence this system has, and an OI wall is defended intraday by
+ * the writers who put it there, which a swing high is not.
+ */
+export interface LevelSource {
+  level: number;
+  kind: 'SUPPORT' | 'RESISTANCE';
+  /** Chart short-names that reported this level, strongest weight first. */
+  sources: string[];
+  /** Sum of the reporting charts' weights - the level's evidential mass. */
+  weight: number;
+  /** Signed distance from the spot this phase was cut against. */
+  distance: number;
+  /** True when every chart that named it is a freshness-critical stale capture. */
+  stale: boolean;
+}
+
 export interface PreMarketDecision {
   /** Shape version - see DECISION_SCHEMA. */
   schema: number;
@@ -229,7 +252,67 @@ export interface PreMarketDecision {
   /** The Office Protocol translation of everything above. */
   playbook: SniperPlaybook;
   staleCharts: string[];
+  /** Quality of the information this verdict was cut from. */
+  basis?: DecisionBasis;
+  /**
+   * True when this phase was recomputed by hand outside its normal window, so
+   * its label describes the checkpoint's *method*, not the time of day.
+   */
+  forced?: boolean;
+  /**
+   * True while the verdict has not yet seen a real price from today, so it must
+   * not be presented as the day's final answer.
+   */
+  provisional?: boolean;
+  /** Audit trail of every re-cut, oldest first. */
+  revalidations?: {
+    basis: DecisionBasis;
+    at: number;
+    atStr: string;
+    spot: number;
+    verdict: string;
+    zoneWidth: number;
+  }[];
+  /** The live market as it stood when this cut was taken. */
+  marketContext?: MarketContext;
+  /** Provenance for every level in `supports` / `resistances`. */
+  levelSources?: LevelSource[];
+  /**
+   * The analyst pass for this checkpoint. Absent until it has been run - the
+   * screen must render fully without it, because the AI is an enhancement to
+   * the mechanical read, never a dependency of it.
+   */
+  aiReview?: PhaseReview;
+  /** Set while the review for this phase is in flight or has failed. */
+  aiReviewError?: string;
+  /**
+   * The full recalculated analysis kept per checkpoint, so each phase can be
+   * inspected side by side instead of only the latest one surviving.
+   */
+  phases?: Partial<Record<DecisionBasis, PhaseSnapshot>>;
 }
+
+/** Nifty50 state at the moment a phase was cut. Null when the feed was silent. */
+export interface MarketContext {
+  niftyLtp: number | null;
+  /** Points moved on the last snapshot. */
+  ptsChg: number | null;
+  pcr: number | null;
+  optionsSent: number | null;
+  stockSent: number | null;
+  adv: number | null;
+  dec: number | null;
+  /** Clock of the snapshot these numbers came from. */
+  snapshotTime: string | null;
+  /** How many snapshots the read is backed by. */
+  snapshots: number;
+}
+
+/**
+ * A phase record is a whole decision minus the recursive bookkeeping - storing
+ * `phases` inside `phases` would nest without bound.
+ */
+export type PhaseSnapshot = Omit<PreMarketDecision, 'phases' | 'revalidations'>;
 
 /**
  * A session-sensitive screenshot goes stale quickly. Capturing the OI chart
@@ -246,7 +329,7 @@ export const DECISION_STATE_KEY = 'preMarketDecision';
  * Bumped whenever PreMarketDecision changes shape, so a plan saved by an older
  * build is discarded instead of being rendered against the current UI.
  */
-export const DECISION_SCHEMA = 3;
+export const DECISION_SCHEMA = 5;
 
 /**
  * Vision models sometimes answer "I cannot read this chart" in a perfectly

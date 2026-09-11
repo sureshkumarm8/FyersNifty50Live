@@ -447,20 +447,36 @@ export function normalizeOllamaBaseUrl(baseUrl?: string): string {
   return withScheme.replace(/\/+$/, '').replace(/\/(api|v1)$/i, '');
 }
 
+/** True when the page is served over HTTPS but Ollama is a plain-http local address. */
+export function isBlockedLocalOllama(baseUrl: string): boolean {
+  if (typeof window === 'undefined') return false;
+  if (window.location.protocol !== 'https:') return false;
+  if (!/^http:\/\//i.test(baseUrl)) return false;
+  return /^http:\/\/(localhost|127\.0\.0\.1|\[?::1\]?|0\.0\.0\.0|[^/]*\.local)(:\d+)?/i.test(baseUrl);
+}
+
 /**
  * Builds an actionable message for the exact reason the local server is unreachable.
  */
 function buildOllamaUnreachableError(baseUrl: string, directError: any): Error {
   const pageOrigin = typeof window !== 'undefined' ? window.location.origin : 'this app';
-  const isSecurePage = typeof window !== 'undefined' && window.location.protocol === 'https:';
-  const isPlainTarget = baseUrl.startsWith('http://');
 
-  if (isSecurePage && isPlainTarget) {
+  // Browsers refuse to let an HTTPS page open a connection to a plain http://
+  // loopback address. This is enforced regardless of CORS, so OLLAMA_ORIGINS
+  // cannot fix it - verified in Chrome against a correctly whitelisted server.
+  if (isBlockedLocalOllama(baseUrl)) {
     return new Error(
-      `Could not reach ${baseUrl} from ${pageOrigin}. Two things to check: (1) allow this origin - restart ` +
-      `Ollama with OLLAMA_ORIGINS="${pageOrigin}"; (2) Safari and some browsers block an HTTPS page from ` +
-      `calling a plain http:// address, so if it still fails run the dashboard locally ` +
-      `("npm run dev" -> http://localhost:5173).`
+      `${pageOrigin} is served over HTTPS, and browsers block an HTTPS page from connecting to ` +
+      `${baseUrl}. This is a browser security rule, not an Ollama setting - OLLAMA_ORIGINS cannot ` +
+      `change it. Either run the dashboard locally ("npm run dev" then open http://localhost:5173), ` +
+      `or expose Ollama over HTTPS with a tunnel and put that https:// address in the Server URL field.`
+    );
+  }
+
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && /^http:\/\//i.test(baseUrl)) {
+    return new Error(
+      `${pageOrigin} is served over HTTPS and cannot load the insecure address ${baseUrl}. ` +
+      `Use an https:// URL for Ollama, or run the dashboard locally ("npm run dev").`
     );
   }
 
@@ -525,10 +541,32 @@ export async function listOllamaModels(baseUrl?: string): Promise<string[]> {
 /** Name patterns of well-known multimodal models, used to complement reported capabilities. */
 const VISION_MODEL_NAME_PATTERN = /vision|llava|-vl|vl:|minicpm-v|moondream|bakllava|pixtral|gemma3|gemma4/i;
 
+/** Asks Ollama for one model's true capability list. Null when it cannot be determined. */
+async function fetchOllamaCapabilities(url: string, model: string): Promise<string[] | null> {
+  try {
+    const { response } = await ollamaFetch(url, '/api/show', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model })
+    });
+    if (!response.ok) return null;
+    const detail = await parseOllamaJson(response, url);
+    return Array.isArray(detail?.capabilities) ? detail.capabilities : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Lists only the multimodal models installed locally.
- * Newer Ollama builds report a `vision` capability per model, but the list is not
- * always complete, so well-known multimodal model names are accepted too.
+ *
+ * `/api/tags` does report a per-model capability list, but it is abridged: a
+ * gemma4 that answers `/api/show` with ["completion","vision","audio",...]
+ * appears in `/api/tags` as ["completion","tools","thinking"], with no mention
+ * of vision. Trusting `/api/tags` alone therefore hides working vision models,
+ * and trusting the name pattern alone only works for models we thought to
+ * hardcode. So anything not already established as multimodal is confirmed
+ * against `/api/show`, which is authoritative.
  */
 export async function listOllamaVisionModels(baseUrl?: string): Promise<string[]> {
   const url = normalizeOllamaBaseUrl(baseUrl);
@@ -539,13 +577,28 @@ export async function listOllamaVisionModels(baseUrl?: string): Promise<string[]
   }
 
   const data = await parseOllamaJson(response, url);
-  return (data?.models || [])
-    .filter((m: any) => {
-      const capabilities = Array.isArray(m?.capabilities) ? m.capabilities : [];
-      return capabilities.includes('vision') || VISION_MODEL_NAME_PATTERN.test(m?.name || '');
-    })
+  const models: { name: string; vision: boolean; unknown: boolean }[] = (data?.models || [])
     .map((m: any) => m?.name)
     .filter((name: any): name is string => typeof name === 'string' && name.length > 0)
+    .map((name: string) => {
+      const entry = (data.models as any[]).find(m => m?.name === name);
+      const capabilities = Array.isArray(entry?.capabilities) ? entry.capabilities : [];
+      const known = capabilities.includes('vision') || VISION_MODEL_NAME_PATTERN.test(name);
+      return { name, vision: known, unknown: !known };
+    });
+
+  // Only the leftovers cost an extra round trip, and they run in parallel.
+  const probes = await Promise.all(
+    models.filter(m => m.unknown).map(async m => ({
+      name: m.name,
+      vision: (await fetchOllamaCapabilities(url, m.name))?.includes('vision') ?? false
+    }))
+  );
+  const probed = new Map(probes.map(p => [p.name, p.vision]));
+
+  return models
+    .filter(m => (m.unknown ? probed.get(m.name) : m.vision))
+    .map(m => m.name)
     .sort();
 }
 
@@ -720,6 +773,28 @@ export function getVisionProviderLabel(credentials: FyersCredentials): string {
 export function isVisionConfigured(credentials: FyersCredentials): boolean {
   // Ollama needs no key - it is local - so vision is always attemptable there.
   return resolveVisionProvider(credentials) === 'ollama' || !!credentials.googleApiKey;
+}
+
+/**
+ * Human readable label for the *text* engine, for UI badges.
+ *
+ * The vision label is not a substitute: a desk can read charts with Gemini and
+ * reason over the result with a local Llama, and a badge that claims otherwise
+ * misattributes the analysis.
+ */
+export function getAIProviderLabel(credentials: FyersCredentials): string {
+  switch (credentials.aiProvider || 'gemini') {
+    case 'ollama':
+      return `Local Llama · ${credentials.ollamaModel || DEFAULT_OLLAMA_MODEL}`;
+    case 'groq':
+      return `Groq · ${credentials.groqModel || 'mixtral-8x7b-32768'}`;
+    case 'claude':
+      return `Claude · ${credentials.claudeModel || 'claude-3-5-sonnet-20241022'}`;
+    case 'cerebras':
+      return `Cerebras · ${credentials.cerebrasModel || 'cerebras/llama-3.1-70b'}`;
+    default:
+      return `Gemini · ${credentials.geminiModel || 'gemini-2.0-flash'}`;
+  }
 }
 
 /**

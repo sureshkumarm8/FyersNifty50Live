@@ -13,6 +13,32 @@ import {
 
 const PROXY_PAYTM_QUOTES_URL = '/api/paytm/quotes';
 
+/**
+ * `fetch` has no default timeout, so a connection the proxy never answers hangs
+ * forever. One such request used to wedge the whole live-refresh cycle for the
+ * rest of the session — the only way out was a browser reload.
+ */
+const DEFAULT_TIMEOUT_MS = 20_000;
+
+const fetchWithTimeout = async (
+  input: RequestInfo,
+  init: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s: ${typeof input === 'string' ? input : 'request'}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 interface PayTMQuoteResponse {
   security_id: number;
   mode: string;
@@ -68,7 +94,7 @@ export const getNiftyOptionSecurityIds = async (niftyLtp: number): Promise<strin
   let filteredOptions: NiftyOption[] = [];
   
   try {
-    const response = await fetch('/api/discover-options');
+    const response = await fetchWithTimeout('/api/discover-options');
     if (response.ok) {
       const data = await response.json();
       if (data.success && data.options) {
@@ -186,7 +212,7 @@ export const fetchPayTMQuotes = async (
   }
   
   // PayTM supports batch requests - send all IDs at once
-  const response = await fetch(PROXY_PAYTM_QUOTES_URL, {
+  const response = await fetchWithTimeout(PROXY_PAYTM_QUOTES_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -300,7 +326,7 @@ export const fetchNiftyIndexLTP = async (credentials: FyersCredentials): Promise
 export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], options: FyersQuote[], niftyLTP: number } | null> => {
   try {
     console.log('[PayTM Redis] Fetching data from /api/get-redis-data...');
-    const response = await fetch('/api/get-redis-data');
+    const response = await fetchWithTimeout('/api/get-redis-data');
     
     if (!response.ok) {
       const errorText = await response.text();

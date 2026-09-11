@@ -59,6 +59,23 @@ const MetricCard: React.FC<{
   );
 };
 
+/**
+ * Marks a row the system took on its own, so the log distinguishes the trades
+ * the Sniper placed from the ones placed by hand. Hover shows the thesis tags
+ * the trade was taken under.
+ */
+const AutoTag: React.FC<{ source?: string; tags?: string[] }> = ({ source, tags }) => {
+  if (source !== 'AUTOTRADE') return null;
+  return (
+    <span
+      title={tags?.length ? tags.join(' \u00b7 ') : 'Placed automatically by the Sniper'}
+      className="text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30"
+    >
+      AUTO
+    </span>
+  );
+};
+
 export const PaperTrading: React.FC<PaperTradingProps> = ({ optionQuotes, niftyLtp, lastUpdated }) => {
   const [book, setBook] = useState<PaperBook>(paperTradingEngine.getBook());
   const [ready, setReady] = useState(false);
@@ -559,6 +576,7 @@ export const PaperTrading: React.FC<PaperTradingProps> = ({ optionQuotes, niftyL
                               <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${p.optionType === 'CE' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
                                 {p.optionType}
                               </span>
+                              <AutoTag source={p.source} tags={p.tags} />
                               <div>
                                 <div className="font-bold text-white font-mono">{p.strike}</div>
                                 <div className="text-[9px] text-slate-500">{clockTime(p.entryTime)}{p.expiry ? ` · ${p.expiry}` : ''}</div>
@@ -629,6 +647,7 @@ export const PaperTrading: React.FC<PaperTradingProps> = ({ optionQuotes, niftyL
                             <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${t.optionType === 'CE' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
                               {t.optionType}
                             </span>
+                            <AutoTag source={t.source} tags={t.tags} />
                             <div>
                               <div className="font-bold text-white font-mono">{t.strike}</div>
                               <div className="text-[9px] text-slate-500">{clockTime(t.entryTime)} → {clockTime(t.exitTime)}</div>

@@ -74,6 +74,7 @@ export interface SniperBlock {
     | 'CONFIDENCE'
     | 'DIRECTION_CONFLICT'
     | 'NO_ROOM'
+    | 'THESIS'
     | 'NO_DATA';
   message: string;
 }
@@ -93,6 +94,11 @@ export interface SniperEvaluation {
   canEnter: boolean;
   /** True when the protocol demands any open position be closed. */
   mustExit: boolean;
+  /** The walls this evaluation actually used, after reconciliation. */
+  tradedSupport: number | null;
+  tradedResistance: number | null;
+  /** Confidence after the thesis adjustment, so the UI can show the real bar. */
+  effectiveConfidence: number;
 }
 
 // --- time -------------------------------------------------------------------
@@ -120,6 +126,8 @@ export const MARKET_OPEN = hhmmToMinutes(SNIPER.downloadStart); // 09:15
 export const ENTRY_OPEN = hhmmToMinutes(SNIPER.entryStart);     // 09:25
 export const ENTRY_CLOSE = hhmmToMinutes(SNIPER.reviewBy);      // 09:45
 export const HARD_STOP = hhmmToMinutes(SNIPER.hardStop);        // 10:15
+/** The engine disarms itself here — the protocol's day is over. */
+export const STAND_DOWN = hhmmToMinutes(SNIPER.standDown);      // 10:20
 
 const PHASE_LABEL: Record<SniperPhase, string> = {
   PRE_OPEN: 'Pre-open — the market has not started',
@@ -284,12 +292,57 @@ export interface SniperContext {
   hasOpenPosition: boolean;
   dailyTradeDone: boolean;
   expiry: string;
+  /**
+   * The morning's thesis after it has been checked against the tape.
+   *
+   * Optional so the engine keeps working with no pre-market plan at all - it
+   * then trades the raw opening range exactly as it always did. When present it
+   * does three things: replaces the range's walls with the reconciled ones,
+   * moves the confidence bar by the weight of the day's evidence, and can veto
+   * the day outright.
+   */
+  thesis?: {
+    support: number | null;
+    resistance: number | null;
+    confidenceDelta: number;
+    veto: string | null;
+    state: string;
+  } | null;
 }
 
 export function evaluate(ctx: SniperContext): SniperEvaluation {
   const phase = phaseAt(ctx.now);
   const mins = istMinutesOf(ctx.now);
   const blocks: SniperBlock[] = [];
+
+  /**
+   * The walls actually traded.
+   *
+   * Reconciliation may replace either wall with the pre-market level when the
+   * tape confirmed it - a level three charts and an OI wall agree on is worth
+   * more than one derived mechanically from ten minutes of ticks. Only finite
+   * positive numbers in the right order are accepted; anything else falls back
+   * to the raw range, because a malformed thesis must never widen a zone into
+   * a trade that the range itself would have refused.
+   */
+  const t = ctx.thesis;
+  const usable =
+    !!ctx.range &&
+    !!t &&
+    t.support != null &&
+    t.resistance != null &&
+    isFinite(t.support) &&
+    isFinite(t.resistance) &&
+    t.resistance > t.support;
+
+  const range: OpeningRange | null = !ctx.range
+    ? null
+    : usable
+      ? { ...ctx.range, support: t!.support as number, resistance: t!.resistance as number }
+      : ctx.range;
+
+  const confidenceDelta = t && isFinite(t.confidenceDelta) ? t.confidenceDelta : 0;
+  const effectiveConfidence = Math.max(0, Math.min(100, ctx.signalConfidence + confidenceDelta));
 
   const base: SniperEvaluation = {
     phase,
@@ -303,7 +356,10 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
     setup: null,
     blocks,
     canEnter: false,
-    mustExit: mins >= HARD_STOP && ctx.hasOpenPosition
+    mustExit: mins >= HARD_STOP && ctx.hasOpenPosition,
+    tradedSupport: range?.support ?? null,
+    tradedResistance: range?.resistance ?? null,
+    effectiveConfidence
   };
 
   if (base.mustExit) {
@@ -316,10 +372,16 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
     return base;
   }
 
-  if (ctx.range) {
-    base.zone = classifyZone(ctx.spot, ctx.range);
-    base.distanceToSupport = Math.round(ctx.spot - ctx.range.support);
-    base.distanceToResistance = Math.round(ctx.range.resistance - ctx.spot);
+  if (range) {
+    base.zone = classifyZone(ctx.spot, range);
+    base.distanceToSupport = Math.round(ctx.spot - range.support);
+    base.distanceToResistance = Math.round(range.resistance - ctx.spot);
+  }
+
+  // The thesis veto is checked first and stated plainly. It is the answer to
+  // "the morning's read was wrong, now what" - and the answer is: not today.
+  if (t?.veto) {
+    blocks.push({ code: 'THESIS', message: t.veto });
   }
 
   if (phase !== 'ENTRY_WINDOW') {
@@ -342,15 +404,15 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
   if (ctx.hasOpenPosition) {
     blocks.push({ code: 'IN_TRADE', message: 'A position is open. Manage it; do not stack another.' });
   }
-  if (!ctx.range) {
+  if (!range) {
     blocks.push({
       code: 'NO_RANGE',
       message: `The 09:15-${SNIPER.entryStart} range is not marked yet — there is nothing to trade against.`
     });
   }
 
-  if (ctx.range) {
-    const width = ctx.range.resistance - ctx.range.support;
+  if (range) {
+    const width = range.resistance - range.support;
     if (width < SNIPER.minZoneWidth) {
       blocks.push({
         code: 'NO_ROOM',
@@ -380,10 +442,13 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
     }
   }
 
-  if (ctx.signalConfidence < SNIPER.minEngineConfidence) {
+  if (effectiveConfidence < SNIPER.minEngineConfidence) {
     blocks.push({
       code: 'CONFIDENCE',
-      message: `Signal confidence ${Math.round(ctx.signalConfidence)}% is below the ${SNIPER.minEngineConfidence}% the protocol demands.`
+      message:
+        confidenceDelta === 0
+          ? `Signal confidence ${Math.round(ctx.signalConfidence)}% is below the ${SNIPER.minEngineConfidence}% the protocol demands.`
+          : `Signal confidence ${Math.round(ctx.signalConfidence)}% ${confidenceDelta > 0 ? '+' : ''}${Math.round(confidenceDelta)} from the morning's thesis = ${Math.round(effectiveConfidence)}%, below the ${SNIPER.minEngineConfidence}% the protocol demands.`
     });
   }
 
@@ -398,12 +463,12 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
 
   base.canEnter = blocks.length === 0 && (wantsLong || wantsShort);
 
-  if (base.canEnter && ctx.range) {
+  if (base.canEnter && range) {
     base.setup = buildSetup({
       zone: wantsLong ? 'NEAR_SUPPORT' : 'NEAR_RESISTANCE',
       spot: ctx.spot,
-      range: ctx.range,
-      confidence: ctx.signalConfidence,
+      range,
+      confidence: effectiveConfidence,
       reasons: ctx.signalReasons.slice(0, 3),
       expiry: ctx.expiry,
       now: ctx.now

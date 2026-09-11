@@ -5,6 +5,10 @@
 
 import { FyersCredentials } from '../types';
 
+/** IST calendar day, used to expire an intraday book overnight. */
+const istDayKey = (ts: number = Date.now()): string =>
+  new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
 export type OrderSide = 'BUY' | 'SELL';
 export type OrderType = 'MARKET' | 'LIMIT' | 'SL' | 'SL-M' | 'SL-L';
 export type OrderStatus = 'PENDING' | 'PLACED' | 'FILLED' | 'PARTIAL' | 'REJECTED' | 'CANCELLED';
@@ -18,6 +22,14 @@ export interface Order {
   quantity: number;
   price?: number;
   triggerPrice?: number;
+  /**
+   * Simulated fill price, used only by paper trading and never sent to a broker.
+   *
+   * A MARKET order carries no `price` — brokers require it to be 0 — so without
+   * this the paper fill landed at avgPrice 0, which made every P&L percentage
+   * infinite and caused simulated positions to close instantly at "target".
+   */
+  paperFillPrice?: number;
   productType: ProductType;
   status: OrderStatus;
   filledQty: number;
@@ -55,10 +67,81 @@ export class OrderManager {
   private orders: Map<string, Order> = new Map();
   private positions: Map<string, Position> = new Map();
   private paperTrading: boolean;
+  /**
+   * Where this book is mirrored so it survives a page reload.
+   *
+   * Everything here used to live only in memory, so refreshing the browser —
+   * the very thing a user does when the live feed looks stuck — silently
+   * discarded open positions and the whole order history. The engine then
+   * believed it was flat while a real position was still open at the broker.
+   */
+  private storageKey: string | null = null;
+  private lastPersistAt = 0;
 
-  constructor(credentials: FyersCredentials, paperTrading: boolean = true) {
+  constructor(credentials: FyersCredentials, paperTrading: boolean = true, storageKey?: string) {
     this.credentials = credentials;
     this.paperTrading = paperTrading;
+    if (storageKey) {
+      this.storageKey = storageKey;
+      this.restore();
+    }
+  }
+
+  /**
+   * Swap in fresher credentials without discarding the book.
+   *
+   * Rebuilding the manager whenever the credentials object changed identity —
+   * which it does on a token refresh — threw away open positions mid-session.
+   */
+  public updateCredentials(credentials: FyersCredentials) {
+    this.credentials = credentials;
+  }
+
+  /** Snapshot of the book, safe to JSON-serialise. Credentials are never included. */  public snapshot(): { orders: Order[]; positions: Position[] } {
+    return { orders: this.getOrders(), positions: this.getPositions() };
+  }
+
+  /** Replace the book wholesale, e.g. from a snapshot taken before a reload. */
+  public hydrate(state: { orders?: Order[]; positions?: Position[] } | null | undefined) {
+    if (!state) return;
+    this.orders = new Map((state.orders ?? []).map(o => [o.id, o]));
+    this.positions = new Map((state.positions ?? []).map(p => [p.symbol, p]));
+  }
+
+  private restore() {
+    if (!this.storageKey || typeof localStorage === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(this.storageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      // The book is intraday only. Yesterday's positions must never come back
+      // to life and be managed against today's prices.
+      if (!parsed || parsed.day !== istDayKey()) {
+        localStorage.removeItem(this.storageKey);
+        return;
+      }
+      this.hydrate(parsed);
+    } catch {
+      /* corrupt payload — start flat rather than crash the engine */
+    }
+  }
+
+  /** Mirror the book to storage. Called after every change that can alter it. */
+  public persist(force: boolean = true) {
+    if (!this.storageKey || typeof localStorage === 'undefined') return;
+    // P&L marks arrive every second; writing localStorage that often is pure
+    // waste, so only forced writes (orders, fills, exits) bypass the throttle.
+    const now = Date.now();
+    if (!force && now - this.lastPersistAt < 5000) return;
+    this.lastPersistAt = now;
+    try {
+      localStorage.setItem(
+        this.storageKey,
+        JSON.stringify({ day: istDayKey(), ...this.snapshot() })
+      );
+    } catch {
+      /* storage full or disabled — the in-memory book still works this session */
+    }
   }
 
   /**
@@ -70,7 +153,9 @@ export class OrderManager {
     quantity: number,
     type: OrderType = 'MARKET',
     price?: number,
-    triggerPrice?: number
+    triggerPrice?: number,
+    /** Paper-only fill reference. Ignored entirely when trading live. */
+    paperFillPrice?: number
   ): Promise<BrokerResponse> {
     const orderId = this.generateOrderId();
 
@@ -82,6 +167,7 @@ export class OrderManager {
       quantity,
       price,
       triggerPrice,
+      paperFillPrice,
       productType: 'INTRADAY',
       status: 'PENDING',
       filledQty: 0,
@@ -91,10 +177,12 @@ export class OrderManager {
 
     this.orders.set(orderId, order);
 
-    if (this.paperTrading) {
-      return this.simulateOrder(order);
-    } else {
-      return this.executeRealOrder(order);
+    try {
+      return this.paperTrading ? await this.simulateOrder(order) : await this.executeRealOrder(order);
+    } finally {
+      // Mirror the book after every attempt — fills, rejections and all — so a
+      // reload picks up exactly what the engine believes it holds.
+      this.persist();
     }
   }
 
@@ -109,7 +197,14 @@ export class OrderManager {
     if (Math.random() > 0.05) {
       order.status = 'FILLED';
       order.filledQty = order.quantity;
-      order.avgPrice = order.price || 0; // Would need real LTP here
+      // Prefer the caller's fill reference, then a limit price. A zero here would
+      // make every downstream P&L percentage divide by zero.
+      order.avgPrice =
+        order.paperFillPrice && order.paperFillPrice > 0
+          ? order.paperFillPrice
+          : order.price && order.price > 0
+            ? order.price
+            : 0;
       order.brokerOrderId = `SIM-${order.id}`;
 
       this.orders.set(order.id, order);
@@ -338,9 +433,13 @@ export class OrderManager {
 
     position.ltp = ltp;
     position.pnl = (ltp - position.avgPrice) * position.quantity;
-    position.pnlPercent = ((ltp - position.avgPrice) / position.avgPrice) * 100;
+    // An unknown entry price yields no meaningful percentage. Reporting 0 keeps
+    // the target/stop comparisons inert instead of firing on an Infinity.
+    position.pnlPercent =
+      position.avgPrice > 0 ? ((ltp - position.avgPrice) / position.avgPrice) * 100 : 0;
 
     this.positions.set(symbol, position);
+    this.persist(false);
   }
 
   /**

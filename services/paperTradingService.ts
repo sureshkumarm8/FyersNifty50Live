@@ -23,6 +23,16 @@ const STORE_KEY = 'paper_trading_book_v1';
 const DEFAULT_CAPITAL = 100000;
 
 export type PaperOptionType = 'CE' | 'PE';
+
+/**
+ * Who opened the position.
+ *
+ * MANUAL   placed on the Paper Trading screen and managed by this engine.
+ * AUTOTRADE placed by a strategy panel (the Sniper) which owns its own exit
+ *          rules. The paper book is its ledger, not its risk manager - see
+ *          `openExternal` for why that distinction has to be enforced here.
+ */
+export type PaperTradeSource = 'MANUAL' | 'AUTOTRADE';
 export type PaperExitReason = 'MANUAL' | 'TARGET' | 'STOPLOSS' | 'TRAILING' | 'EOD';
 
 export interface ChargeBreakdown {
@@ -58,6 +68,16 @@ export interface PaperPosition {
   lowWaterPremium: number;
   entryCharges: ChargeBreakdown;
   notes?: string;
+  /** Absent on positions written before sources were tracked - treat as MANUAL. */
+  source?: PaperTradeSource;
+  /** Free-form labels, e.g. ['AUTOTRADE', 'SNIPER', 'CONFLUENCE']. */
+  tags?: string[];
+  /**
+   * True when this engine may close the position on its own stop/target.
+   * False for strategy-owned positions: two systems exiting the same trade
+   * would double-count the P&L and race each other on a fast tick.
+   */
+  managed?: boolean;
 }
 
 export interface PaperTrade {
@@ -88,6 +108,9 @@ export interface PaperTrade {
   /** Worst unrealised loss seen while the trade was open (points of premium). */
   maxAdverse: number;
   notes?: string;
+  /** Absent on trades written before sources were tracked - treat as MANUAL. */
+  source?: PaperTradeSource;
+  tags?: string[];
 }
 
 export interface PaperSettings {
@@ -512,7 +535,9 @@ class PaperTradingEngine {
       exitReason: reason,
       maxFavourable: position.highWaterPremium - position.entryPrice,
       maxAdverse: position.lowWaterPremium - position.entryPrice,
-      notes: position.notes
+      notes: position.notes,
+      source: position.source ?? 'MANUAL',
+      tags: position.tags
     };
 
     this.book.positions = this.book.positions.filter((p) => p.id !== positionId);
@@ -525,6 +550,131 @@ class PaperTradingEngine {
       ok: true,
       message: `Exited ${position.displayName} at ₹${exitPrice.toFixed(2)} · ${netPnl >= 0 ? '+' : ''}₹${Math.round(netPnl).toLocaleString('en-IN')}`
     };
+  }
+
+  /**
+   * Record a position opened by a strategy panel that manages its own exits.
+   *
+   * The Sniper places its trade through its own OrderManager and runs its own
+   * +30/-30 and 10:15 rules. Before this existed those trades were invisible
+   * in the paper book, so the ledger, the equity curve and every statistic on
+   * the Paper Trading screen silently excluded the trades the system took
+   * automatically - which is the opposite of what a journal is for.
+   *
+   * Two deliberate differences from `buy()`:
+   *
+   *   - `managed: false`. This engine will mark the position to market but
+   *     will never close it on a stop or target. The strategy owns the exit;
+   *     if both systems could exit it, a fast tick would book the trade twice.
+   *   - No capital check. The order has already been placed. Refusing to
+   *     record it would not un-place it, it would only lose the record.
+   */
+  public async openExternal(params: {
+    symbol: string;
+    displayName?: string;
+    strike: number;
+    optionType: PaperOptionType;
+    expiry?: string;
+    lots: number;
+    entryPrice: number;
+    spot: number | null;
+    tags?: string[];
+    notes?: string;
+    /** Defaults to now. Supplied so a restored trade keeps its real entry time. */
+    entryTime?: number;
+  }): Promise<OrderResult> {
+    // Critical: a strategy panel can fire before the Paper screen has ever been
+    // opened, and this engine starts on an EMPTY book until `load()` runs.
+    // Writing first would persist that empty book over the saved one and wipe
+    // the user's entire trade history.
+    await this.load();
+
+    const { symbol, strike, optionType, lots, entryPrice, spot } = params;
+
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+      return { ok: false, message: 'External entry needs a positive premium.' };
+    }
+    if (!Number.isFinite(lots) || lots < 1) {
+      return { ok: false, message: 'External entry needs at least one lot.' };
+    }
+    // Recording the same fill twice would corrupt realized P&L, and the entry
+    // effect can re-run on a re-render.
+    if (this.book.positions.some((p) => p.symbol === symbol && p.source === 'AUTOTRADE')) {
+      return { ok: false, message: 'That auto-trade is already on the book.' };
+    }
+
+    const lotSize = this.book.settings.lotSize;
+    const quantity = lots * lotSize;
+    const charges = computeCharges(entryPrice, quantity, 'BUY', this.book.settings.brokeragePerOrder);
+    const now = params.entryTime ?? Date.now();
+
+    const position: PaperPosition = {
+      id: `A${now}-${Math.random().toString(36).slice(2, 7)}`,
+      symbol,
+      displayName: params.displayName ?? `${strike} ${optionType}`,
+      strike,
+      optionType,
+      expiry: params.expiry,
+      lots,
+      lotSize,
+      quantity,
+      entryPrice,
+      entryTime: now,
+      spotAtEntry: spot,
+      ltp: entryPrice,
+      lastTick: now,
+      // Null so markToMarket has nothing to trigger on even if `managed` were
+      // ever ignored - belt and braces on the double-exit risk.
+      stopLoss: null,
+      target: null,
+      trailPoints: null,
+      highWaterPremium: entryPrice,
+      lowWaterPremium: entryPrice,
+      entryCharges: charges,
+      notes: params.notes,
+      source: 'AUTOTRADE',
+      tags: params.tags,
+      managed: false
+    };
+
+    this.book.positions = [position, ...this.book.positions];
+    this.book.totalCharges += charges.total;
+    this.commit();
+
+    return { ok: true, position, message: `Logged auto-trade ${position.displayName} at ₹${entryPrice.toFixed(2)}` };
+  }
+
+  /**
+   * Mark an externally-managed position's premium without any exit check.
+   *
+   * Intentionally synchronous and load-guarded rather than load-awaiting: it
+   * runs on every tick, and if the book is not loaded there is no external
+   * position to mark anyway (openExternal loads before it creates one).
+   */
+  public markExternal(symbol: string, premium: number) {
+    if (!this.loaded) return;
+    const position = this.book.positions.find((p) => p.symbol === symbol && p.source === 'AUTOTRADE');
+    if (!position || !Number.isFinite(premium) || premium <= 0) return;
+    if (premium === position.ltp) return;
+    position.ltp = premium;
+    position.lastTick = Date.now();
+    if (premium > position.highWaterPremium) position.highWaterPremium = premium;
+    if (premium < position.lowWaterPremium) position.lowWaterPremium = premium;
+    this.book.positions = [...this.book.positions];
+    this.commit();
+  }
+
+  /** Close a strategy-owned position into the log. Safe to call twice. */
+  public async closeExternal(
+    symbol: string,
+    exitPrice: number,
+    reason: PaperExitReason,
+    spot: number | null
+  ): Promise<OrderResult> {
+    await this.load();
+    const position = this.book.positions.find((p) => p.symbol === symbol && p.source === 'AUTOTRADE');
+    if (!position) return { ok: false, message: 'No open auto-trade for that contract.' };
+    return this.exit(position.id, reason, Number.isFinite(exitPrice) && exitPrice > 0 ? exitPrice : undefined, spot);
   }
 
   public exitAll(reason: PaperExitReason = 'MANUAL', spot?: number | null): number {
@@ -575,6 +725,12 @@ class PaperTradingEngine {
       if (ltp > position.highWaterPremium) position.highWaterPremium = ltp;
       if (ltp < position.lowWaterPremium) position.lowWaterPremium = ltp;
 
+      // A strategy-owned position is marked but never exited here. The Sniper
+      // runs the +30/-30 and 10:15 rules on SPOT, not premium; letting this
+      // engine also exit on a premium level would close the trade twice and
+      // book the P&L twice with it.
+      if (position.managed === false) continue;
+
       // On a fast move both levels can be crossed inside a single refresh.
       // Stops are checked first so an ambiguous tick resolves against us
       // rather than flattering the results.
@@ -594,6 +750,7 @@ class PaperTradingEngine {
 
     if (this.book.settings.autoSquareOff && istTimeValue() >= 1520) {
       for (const position of this.book.positions) {
+        if (position.managed === false) continue;
         if (!triggered.some((t) => t.position.id === position.id)) {
           triggered.push({ position, reason: 'EOD', price: position.ltp });
         }

@@ -33,6 +33,32 @@ declare global {
   }
 }
 
+/**
+ * One snapshot per minute, newest first. Keyed by minute rather than by object
+ * identity so the same minute arriving from IndexedDB, Redis and the live poll
+ * collapses into a single entry instead of three.
+ */
+const minuteKey = (s: MarketSnapshot): string =>
+  Number.isFinite(s?.timestamp) && s.timestamp > 0
+    ? String(Math.floor(s.timestamp / 60000))
+    : String(s?.time || '').substring(0, 5);
+
+/** `preferred` wins any collision - it is the fresher/live-derived copy. */
+const mergeSnapshots = (preferred: MarketSnapshot[], incoming: MarketSnapshot[]): MarketSnapshot[] => {
+  const byMinute = new Map<string, MarketSnapshot>();
+  for (const s of [...incoming, ...preferred]) {
+    const k = s && minuteKey(s);
+    if (k) byMinute.set(k, s);
+  }
+  return Array.from(byMinute.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+};
+
+const isTodayIST = (timestamp: number): boolean => {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return false;
+  const opts = { timeZone: 'Asia/Kolkata' } as const;
+  return new Date(timestamp).toLocaleDateString('en-IN', opts) === new Date().toLocaleDateString('en-IN', opts);
+};
+
 const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     try {
@@ -119,6 +145,14 @@ const App: React.FC = () => {
   
   const prevNiftyLtpRef = useRef<number | null>(null);
   const didFetchPivots = useRef(false);
+
+  // --- Live-refresh watchdog bookkeeping ------------------------------------
+  // A single hung fetch used to wedge the loop for the rest of the session: the
+  // only cure was a browser reload, which threw away every AutoTrade position.
+  // These refs let a watchdog see a stalled cycle and restart it in place.
+  const refreshInFlightRef = useRef(false);
+  const refreshStartedAtRef = useRef(0);
+  const lastUpdatedRef = useRef(Date.now());
 
   // --- 1. Database Hydration & Config Loading (On Mount) ---
   useEffect(() => {
@@ -345,8 +379,10 @@ const App: React.FC = () => {
                     redisSnapshots[i].ptsChg = redisSnapshots[i].niftyLtp - redisSnapshots[i-1].niftyLtp;
                   }
                   
-                  // Set Redis data as the source of truth (replace, don't merge)
-                  setHistoryLog(redisSnapshots);
+                  // Merge (never replace): a mid-session reload has already
+                  // restored today's snapshots from IndexedDB, and Redis lagging
+                  // a minute behind must not wipe them.
+                  setHistoryLog(prev => mergeSnapshots(prev, redisSnapshots));
                   
                   // Initialize session history and refs from the OLDEST snapshot (last in array since newest-first)
                   if (redisSnapshots.length > 0 && filteredData[filteredData.length - 1]?.stocks) {
@@ -620,6 +656,31 @@ const App: React.FC = () => {
      };
      initPivots();
   }, [credentials]);
+
+  // --- 1b. Restore today's snapshots from IndexedDB -------------------------
+  // Every snapshot is written to IndexedDB below, but nothing ever read it back,
+  // so a mid-session reload started from an empty history. The trading engines
+  // need 5 snapshots before they will emit a signal at all, which left them
+  // blind (and unable to place any trade) for five minutes after every refresh.
+  const historyRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!isDbLoaded || historyRestoredRef.current) return;
+    historyRestoredRef.current = true;
+    (async () => {
+      try {
+        const saved = await dbService.getSnapshots();
+        const today = (saved || []).filter(s => s && isTodayIST(s.timestamp));
+        if (today.length === 0) return;
+        setHistoryLog(prev => {
+          const merged = mergeSnapshots(prev, today);
+          return merged.length > prev.length ? merged : prev;
+        });
+        console.log(`💾 Restored ${today.length} snapshot(s) for today from IndexedDB`);
+      } catch (e) {
+        console.warn('[History] Local snapshot restore failed:', e);
+      }
+    })();
+  }, [isDbLoaded]);
 
   // --- 2. Database Persistence (Debounced) ---
   useEffect(() => {
@@ -896,6 +957,21 @@ const App: React.FC = () => {
       
     if (!hasValidCredentials || !isDbLoaded) return;
 
+    // Re-entry guard. Without it a slow cycle stacks on the next tick and the
+    // two races each other; with a stale-lock release, a cycle that never
+    // settles can no longer own the lock forever.
+    const cycleInterval = credentials.refreshInterval || 60000;
+    if (refreshInFlightRef.current) {
+      const age = Date.now() - refreshStartedAtRef.current;
+      if (age < Math.max(cycleInterval * 2, 45000)) {
+        console.warn(`⏭️ [Refresh] Previous cycle still running (${Math.round(age / 1000)}s) — skipping this tick.`);
+        return;
+      }
+      console.warn(`🧹 [Refresh] Previous cycle wedged for ${Math.round(age / 1000)}s — forcing a new one.`);
+    }
+    refreshInFlightRef.current = true;
+    refreshStartedAtRef.current = Date.now();
+
     setIsLoading(true);
 
     if (!credentials.bypassMarketHours) {
@@ -909,12 +985,14 @@ const App: React.FC = () => {
         const timeVal = hour * 100 + min;
 
         const isWeekday = day >= 1 && day <= 5;
-        const isOpen = timeVal >= 900 && timeVal <= 1545;
+        // Pre-open data is useful from 09:00; the closing bell is 15:30 IST.
+        const isOpen = timeVal >= 900 && timeVal <= 1530;
 
         if (!isWeekday || !isOpen) {
-            setMarketStatusMsg("Market Closed (09:00 - 15:45 IST)");
+            setMarketStatusMsg("Market Closed (09:00 - 15:30 IST)");
             if (stocks.length > 0) {
                setIsLoading(false);
+               refreshInFlightRef.current = false;
                return; 
             }
         }
@@ -1305,15 +1383,18 @@ const App: React.FC = () => {
       }
 
       setLastUpdated(Date.now());
+      lastUpdatedRef.current = Date.now();
       setError(null);
       setMarketStatusMsg(null);
     } catch (err: any) {
-      if (err.message.includes("Market Hours") || err.message.includes("Test Mode")) {
-          setMarketStatusMsg(err.message);
+      const message = err?.message ?? String(err);
+      if (message.includes("Market Hours") || message.includes("Test Mode")) {
+          setMarketStatusMsg(message);
       } else {
-          setError(err.message);
+          setError(message);
       }
     } finally {
+      refreshInFlightRef.current = false;
       setIsLoading(false);
     }
   }, [credentials, isDbLoaded, historyLog, sessionHistory, stocks.length, runFeedbackLoop]); // Added runFeedbackLoop
@@ -1386,6 +1467,74 @@ const App: React.FC = () => {
       }
     }
   }, [configLoaded, isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval, credentials.bypassMarketHours]);
+
+  /**
+   * LIVE-DATA WATCHDOG.
+   *
+   * The interval above lives inside an effect, so anything that tears that
+   * effect down — or a cycle that never settles, or a long task that starves
+   * the timer — silently ends the live feed for the rest of the session. The
+   * only cure was a browser reload, and a reload wiped every AutoTrade
+   * position, log line and statistic with it.
+   *
+   * This watchdog is mounted once, for the life of the page, with no
+   * dependencies: nothing in the render tree can unmount it. It does not fetch
+   * on a schedule of its own — it only notices that no successful refresh has
+   * landed for well over one interval and restarts the cycle in place.
+   */
+  const watchdogCfgRef = useRef({ enabled: false, intervalMs: 60000 });
+  watchdogCfgRef.current = {
+    enabled: Boolean(
+      configLoaded &&
+      isDbLoaded &&
+      !isPaused &&
+      (credentials.dataProvider === 'paytm'
+        ? credentials.paytmAccessToken
+        : credentials.appId && credentials.accessToken)
+    ),
+    intervalMs: credentials.refreshInterval || 60000
+  };
+
+  useEffect(() => {
+    const CHECK_MS = 10_000;
+    let lastKickAt = 0;
+
+    const kick = (why: string) => {
+      const { enabled, intervalMs } = watchdogCfgRef.current;
+      if (!enabled || refreshInFlightRef.current) return;
+
+      // `lastUpdatedRef` starts at mount time, so a cold start gets one full
+      // grace window before the watchdog steps in and we never double-fetch.
+      const since = Date.now() - lastUpdatedRef.current;
+      const grace = Math.max(intervalMs * 2, 45_000);
+      if (since < grace) return;
+      // Back off between rescues. A refresh that legitimately returns without
+      // new data (market closed) must not turn this into a 10-second poll.
+      if (Date.now() - lastKickAt < grace) return;
+      lastKickAt = Date.now();
+
+      console.warn(
+        `🐕 [Watchdog] No live data for ${Math.round(since / 1000)}s (${why}) — restarting the refresh cycle.`
+      );
+      refreshDataRef.current?.();
+    };
+
+    const id = window.setInterval(() => kick('periodic check'), CHECK_MS);
+
+    // A tab that was throttled or backgrounded comes back stale; catch it up the
+    // moment it is looked at rather than on the next interval boundary.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') kick('tab became visible');
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, []);
 
 
   const handleClearQuantHistory = () => {
@@ -1567,7 +1716,7 @@ const App: React.FC = () => {
       <main className="flex-1 overflow-hidden relative flex flex-col">
         {/* Keyed by view so switching screens clears a previous crash, and so a
             single broken screen never blanks the whole dashboard. */}
-        <ErrorBoundary key={viewMode} label={viewMode}>
+        <ErrorBoundary label={viewMode}>
         
         {isPrivacyMode && (
             <div className="absolute inset-0 z-50 bg-slate-950/80 flex flex-col items-center justify-center gap-6 backdrop-blur-sm">
@@ -1675,6 +1824,7 @@ const App: React.FC = () => {
                   marketStatus={marketStatusMsg}
                   sectors={sectors}
                   aiEnabled={credentials.aiEnabled}
+                  pivots={pivots}
                />
             </div>
         )}
@@ -1778,18 +1928,18 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {viewMode === 'autotrade' && (
-            <div className="flex flex-col h-full overflow-hidden">
-                <UnifiedAutoTrade 
-                   credentials={credentials}
-                   stocks={stocks || []}
-                   niftyLtp={niftyLtp}
-                   historyLog={historyLog || []}
-                   pivots={pivots}
-                   aiEnabled={credentials.aiEnabled}
-                />
-            </div>
-        )}
+        {/* Keep UnifiedAutoTrade mounted to preserve running Sniper & Momentum processes
+            across tab switches. Only hide with CSS, never unmount. */}
+        <div className={viewMode === 'autotrade' ? 'flex flex-col h-full overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'autotrade'}>
+            <UnifiedAutoTrade 
+               credentials={credentials}
+               stocks={stocks || []}
+               niftyLtp={niftyLtp}
+               historyLog={historyLog || []}
+               pivots={pivots}
+               aiEnabled={credentials.aiEnabled}
+             />
+        </div>
 
         {viewMode === 'patterns' && (
             <div className="flex flex-col h-full overflow-hidden">

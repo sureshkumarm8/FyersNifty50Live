@@ -89,6 +89,72 @@ function readRequestBody(req) {
   });
 }
 
+/**
+ * Bridge for the Vercel-style handlers in api/*.js.
+ *
+ * Those files export `(req, res)` and speak the Express-ish dialect Vercel
+ * provides — `res.status().json()`, `req.body`, `req.query`. Locally we only
+ * have a bare node http server, so several routes existed as files but were
+ * never reachable: the request matched nothing, fell off the end of the
+ * dispatch chain and was left open until the socket died. `/api/discover-options`
+ * is called on every options fetch, so one unanswered request wedged the whole
+ * live-refresh cycle until the page was reloaded.
+ */
+async function runVercelHandler(modulePath, req, res, reqUrl) {
+  try {
+    const mod = await import(modulePath);
+    const handler = mod.default;
+    if (typeof handler !== 'function') {
+      throw new Error(`${modulePath} has no default export`);
+    }
+
+    if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+      const raw = await readRequestBody(req);
+      try {
+        req.body = raw ? JSON.parse(raw) : {};
+      } catch {
+        req.body = raw;
+      }
+    }
+    req.query = Object.fromEntries(reqUrl.searchParams.entries());
+
+    // Minimal Express shim over the node response.
+    res.status = code => { res.statusCode = code; return res; };
+    res.json = payload => {
+      if (!res.headersSent) res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(payload));
+      return res;
+    };
+    res.send = payload => {
+      res.end(typeof payload === 'string' ? payload : JSON.stringify(payload));
+      return res;
+    };
+
+    await handler(req, res);
+
+    // A handler that returns without answering would hang the client forever —
+    // the exact failure this bridge exists to remove. Never let that stand.
+    if (!res.writableEnded) {
+      if (!res.headersSent) res.writeHead(204, { 'Content-Type': 'application/json' });
+      res.end();
+    }
+  } catch (err) {
+    console.error(`[API] ${reqUrl.pathname} failed:`, err.message);
+    if (!res.writableEnded) {
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+  }
+}
+
+/** Routes that exist as api/*.js files and are served through the bridge. */
+const BRIDGED_ROUTES = {
+  '/api/discover-options': './api/discover-options.js',
+  '/api/save-redis-data': './api/save-redis-data.js',
+  '/api/auto-update-options': './api/auto-update-options.js',
+  '/api/cron-fetch': './api/cron-fetch.js'
+};
+
 const server = http.createServer(async (req, res) => {  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
@@ -115,7 +181,13 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
                           reqUrl.pathname.startsWith('/api/paytm-market-data') ||
                           reqUrl.pathname.startsWith('/api/save-paytm-token-direct') ||
                           reqUrl.pathname.startsWith('/api/ollama') ||
-                          reqUrl.pathname.startsWith('/api/vision');
+                          reqUrl.pathname.startsWith('/api/vision') ||
+                          // The SPA calls these three with no Authorization
+                          // header by design, so requiring one just breaks them
+                          // whenever LOCAL_MODE is off.
+                          reqUrl.pathname.startsWith('/api/discover-options') ||
+                          reqUrl.pathname.startsWith('/api/get-redis-data') ||
+                          reqUrl.pathname.startsWith('/api/save-redis-data');
 
   if (!LOCAL_MODE && !isLocalEndpoint && !authHeader) {
      res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -341,6 +413,15 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
     });
+    return;
+  }
+
+  // --- VERCEL-STYLE API ROUTES (api/*.js) ---
+  // These exist as serverless functions in production; locally they are served
+  // through the bridge above. Before this they matched no route at all and the
+  // request was simply never answered.
+  if (BRIDGED_ROUTES[reqUrl.pathname]) {
+    await runVercelHandler(BRIDGED_ROUTES[reqUrl.pathname], req, res, reqUrl);
     return;
   }
 
@@ -721,6 +802,32 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
         res.end(JSON.stringify({ error: err.message }));
       }
     });
+  }
+
+  /**
+   * NOTHING MATCHED.
+   *
+   * This chain used to end with no `else`, so an unrecognised request returned
+   * from the handler without `res.end()` ever being called. The socket stayed
+   * open and the browser's `fetch` never settled — not an error, not a 404,
+   * just silence. Any caller awaiting it was stuck for good, which is exactly
+   * how a missing `/api/discover-options` route froze the entire live-data
+   * refresh until the page was reloaded.
+   *
+   * An honest 404 is always better than a hang: the caller can fall back.
+   *
+   * `/api/proxy/*` is deliberately excluded — a second `server.on('request')`
+   * listener below owns those paths and answers them itself.
+   */
+  else if (!reqUrl.pathname.startsWith('/api/proxy/')) {
+    console.warn(`[Server] 404 — no route for ${req.method} ${reqUrl.pathname}`);
+    if (!res.headersSent) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: false,
+        error: `No handler for ${req.method} ${reqUrl.pathname}`
+      }));
+    }
   }
 });
 
