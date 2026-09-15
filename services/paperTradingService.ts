@@ -593,7 +593,15 @@ class PaperTradingEngine {
     };
   }
 
-  public exit(positionId: string, reason: PaperExitReason = 'MANUAL', priceOverride?: number, spot?: number | null, exitNote?: string): OrderResult {
+  public exit(
+    positionId: string,
+    reason: PaperExitReason = 'MANUAL',
+    priceOverride?: number,
+    spot?: number | null,
+    exitNote?: string,
+    /** Defaults to now. Supplied when replaying an exit that already happened. */
+    exitTime?: number
+  ): OrderResult {
     const position = this.book.positions.find((p) => p.id === positionId);
     if (!position) return { ok: false, message: 'Position not found.' };
 
@@ -606,7 +614,7 @@ class PaperTradingEngine {
     const grossPnl = (exitPrice - position.entryPrice) * position.quantity;
     const charges = position.entryCharges.total + exitCharges.total;
     const netPnl = grossPnl - charges;
-    const now = Date.now();
+    const now = exitTime ?? Date.now();
     const deployed = position.entryPrice * position.quantity;
 
     const trade: PaperTrade = {
@@ -683,6 +691,15 @@ class PaperTradingEngine {
     notes?: string;
     /** Which engine is taking the trade. */
     strategy?: PaperStrategy;
+    /**
+     * The contract's lot size, as the engine that placed the order used it.
+     *
+     * The book's own `settings.lotSize` is a manual-trading preference and can
+     * be stale (it survives an exchange lot-size change). Recomputing quantity
+     * from it booked a different size than the order actually filled, so the
+     * logged P&L silently disagreed with the trade that was taken.
+     */
+    lotSize?: number;
     /** The full reasoning behind the entry, preserved for later review. */
     entryReason?: string;
     /** Defaults to now. Supplied so a restored trade keeps its real entry time. */
@@ -708,7 +725,7 @@ class PaperTradingEngine {
       return { ok: false, message: 'That auto-trade is already on the book.' };
     }
 
-    const lotSize = this.book.settings.lotSize;
+    const lotSize = params.lotSize && params.lotSize > 0 ? params.lotSize : this.book.settings.lotSize;
     const quantity = lots * lotSize;
     const charges = computeCharges(entryPrice, quantity, 'BUY', this.book.settings.brokeragePerOrder);
     const now = params.entryTime ?? Date.now();
@@ -778,12 +795,21 @@ class PaperTradingEngine {
     reason: PaperExitReason,
     spot: number | null,
     /** The engine's own words for why it exited, kept alongside the bucket. */
-    exitNote?: string
+    exitNote?: string,
+    /** Defaults to now. Supplied when replaying an exit that already happened. */
+    exitTime?: number
   ): Promise<OrderResult> {
     await this.load();
     const position = this.book.positions.find((p) => p.symbol === symbol && isAutoTrade(p));
     if (!position) return { ok: false, message: 'No open auto-trade for that contract.' };
-    return this.exit(position.id, reason, Number.isFinite(exitPrice) && exitPrice > 0 ? exitPrice : undefined, spot, exitNote);
+    return this.exit(
+      position.id,
+      reason,
+      Number.isFinite(exitPrice) && exitPrice > 0 ? exitPrice : undefined,
+      spot,
+      exitNote,
+      exitTime
+    );
   }
 
   public exitAll(reason: PaperExitReason = 'MANUAL', spot?: number | null, exitNote?: string): number {

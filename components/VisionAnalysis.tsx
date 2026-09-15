@@ -23,6 +23,10 @@ const BIAS_STYLE: Record<VisionBias, { chip: string; text: string; Icon: React.E
 
 const biasStyle = (bias?: VisionBias) => BIAS_STYLE[bias || 'unclear'] || BIAS_STYLE.unclear;
 
+const AUTO_SYNC_KEY = 'vision.archive.autoSync';
+const SYNC_MINS_KEY = 'vision.archive.syncMinutes';
+const SYNC_MINUTE_OPTIONS = [1, 2, 5, 15];
+
 const timeOf = (iso?: string) =>
   iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '--:--:--';
 
@@ -220,6 +224,9 @@ interface ImporterProps {
   summary: VisionArchiveSummary | null;
   busy: string | null;
   note: string | null;
+  /** The folder is remembered but the browser needs one click to re-grant read access. */
+  needsReconnect: boolean;
+  syncing: boolean;
   onPickFolder: () => void;
   onFiles: (files: FileList | File[]) => void;
   onResync: () => void;
@@ -231,7 +238,9 @@ interface ImporterProps {
  * read in the browser and cached in IndexedDB, so this works on a deployed build with
  * no local server at all.
  */
-const ArchiveImporter: React.FC<ImporterProps> = ({ summary, busy, note, onPickFolder, onFiles, onResync }) => {
+const ArchiveImporter: React.FC<ImporterProps> = ({
+  summary, busy, note, needsReconnect, syncing, onPickFolder, onFiles, onResync,
+}) => {
   const folderInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -254,10 +263,22 @@ const ArchiveImporter: React.FC<ImporterProps> = ({ summary, busy, note, onPickF
       </div>
       <p className="text-[11px] text-slate-400 leading-relaxed">
         The engine mirrors every run into{' '}
-        <span className="font-mono text-slate-300">liveImageAnalsis/data/exports/</span>. Pick that folder — or drop
+        <span className="font-mono text-slate-300">liveImageAnalsis/data/exports/</span>. Pick that folder once — or drop
         <span className="font-mono text-slate-300"> vision-YYYY-MM-DD.json</span> files here — and the whole history,
         charts included, is read locally in your browser.
+        {visionArchive.directoryPickerSupported() && ' A picked folder is remembered and re-scanned automatically, so new captures appear on their own.'}
       </p>
+
+      {needsReconnect && (
+        <button
+          onClick={onResync}
+          disabled={Boolean(busy)}
+          className="w-full px-3 py-2 bg-amber-500/15 border border-amber-500/30 text-amber-200 hover:bg-amber-500/25 rounded-lg text-xs font-bold flex items-center justify-center gap-2"
+        >
+          <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+          Reconnect {summary?.sourceName ? `"${summary.sourceName}"` : 'folder'} to resume auto-sync
+        </button>
+      )}
 
       <div className="flex flex-wrap gap-2">
         <button
@@ -283,7 +304,7 @@ const ArchiveImporter: React.FC<ImporterProps> = ({ summary, busy, note, onPickF
             className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-white/10 disabled:opacity-40 text-slate-200 rounded-lg text-xs font-bold flex items-center gap-2"
             title="Re-read the folder picked earlier and pull in anything new"
           >
-            <RefreshCw size={14} className={busy ? 'animate-spin' : ''} /> Re-sync folder
+            <RefreshCw size={14} className={busy || syncing ? 'animate-spin' : ''} /> Sync now
           </button>
         )}
       </div>
@@ -401,6 +422,15 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
   const [importBusy, setImportBusy] = useState<string | null>(null);
   const [importNote, setImportNote] = useState<string | null>(null);
   const [showImporter, setShowImporter] = useState(false);
+  const [autoSync, setAutoSync] = useState(() => localStorage.getItem(AUTO_SYNC_KEY) !== 'off');
+  const [syncMinutes, setSyncMinutes] = useState(() => Number(localStorage.getItem(SYNC_MINS_KEY)) || 1);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [needsReconnect, setNeedsReconnect] = useState(false);
+  const syncInFlight = useRef(false);
+  // Set when the user explicitly asks for the live engine, so the auto-switch below
+  // doesn't yank them straight back into the archive.
+  const preferLive = useRef(false);
 
   const loadArchive = useCallback(async (day: string = 'all') => {
     if (!visionArchive.supported()) return null;
@@ -447,6 +477,68 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
     [loadArchive]
   );
 
+  /**
+   * Pulls anything new out of the connected folder. The silent variant is what the timer
+   * calls: it never prompts, so a lapsed permission just flips the Reconnect button on
+   * instead of throwing a dialog at the user once a minute.
+   */
+  const syncNow = useCallback(
+    async (silent = true) => {
+      if (syncInFlight.current) return;
+      syncInFlight.current = true;
+      if (!silent) setSyncing(true);
+      else setSyncing(true);
+      try {
+        const result = await visionArchive.resync(undefined, { silent });
+        if (!result) {
+          setNeedsReconnect((await visionArchive.folderAccess()) === 'prompt');
+          return;
+        }
+        setNeedsReconnect(false);
+        setLastSyncAt(Date.now());
+        if (result.unchanged) return;
+        await loadArchive(archiveDay);
+        if (result.newRunIds.length) {
+          setImportNote(`Auto-sync picked up ${result.newRunIds.length} new run(s).`);
+          // Keep following the latest capture unless a specific run is pinned.
+          if (!selectedId) setSelectedId(null);
+        }
+      } catch (err: any) {
+        if (!silent) setError(err.message || 'Folder sync failed.');
+      } finally {
+        syncInFlight.current = false;
+        setSyncing(false);
+      }
+    },
+    [archiveDay, loadArchive, selectedId]
+  );
+
+  // Reconnect on load: if the folder grant is still live, the archive fills itself in.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!visionArchive.supported()) return;
+      const access = await visionArchive.folderAccess();
+      if (cancelled) return;
+      if (access === 'prompt') setNeedsReconnect(true);
+      if (access === 'granted') await syncNow(true);
+    })();
+    return () => { cancelled = true; };
+    // Intentionally once on mount - syncNow is stable enough for the initial pull.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The poll itself. Cheap: the engine's index.json carries the latest run id, so an
+  // unchanged folder costs one small file read.
+  useEffect(() => {
+    if (!autoSync || !archiveSummary?.canResync) return;
+    const timer = setInterval(() => syncNow(true), Math.max(1, syncMinutes) * 60000);
+    return () => clearInterval(timer);
+  }, [autoSync, syncMinutes, archiveSummary?.canResync, syncNow]);
+
+  useEffect(() => { localStorage.setItem(AUTO_SYNC_KEY, autoSync ? 'on' : 'off'); }, [autoSync]);
+  useEffect(() => { localStorage.setItem(SYNC_MINS_KEY, String(syncMinutes)); }, [syncMinutes]);
+
   const importer: ImporterProps = {
     summary: archiveSummary,
     busy: importBusy,
@@ -457,6 +549,8 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
         visionArchive.importFiles(files, (done, total) => setImportBusy(`Reading ${done}/${total}…`))
       ),
     onResync: () => runImport('Re-syncing folder…', () => visionArchive.resync((m) => setImportBusy(m))),
+    needsReconnect,
+    syncing,
   };
 
   const load = useCallback(async () => {
@@ -465,6 +559,7 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
       setStatus(s);
       setRuns(h);
       setOffline(null);
+      preferLive.current = false;
       setError(s.lastError);
     } catch (err: any) {
       if (err instanceof VisionSidecarOfflineError) setOffline(err.message);
@@ -490,6 +585,14 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
     return unsubscribe;
   }, [offline, source]);
 
+  // With an engine that can't be reached and an archive already on hand, there is nothing
+  // useful to click: show the imported data straight away.
+  useEffect(() => {
+    if (offline && source === 'live' && !preferLive.current && (archiveSummary?.runs ?? 0) > 0) {
+      setSource('archive');
+    }
+  }, [offline, source, archiveSummary?.runs]);
+
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -510,8 +613,8 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
     return (
       <OfflineNotice
         message={offline}
-        onRetry={() => { setOffline(null); load(); }}
-        onOpenArchive={() => { setSelectedId(null); setSource('archive'); }}
+        onRetry={() => { preferLive.current = true; setOffline(null); load(); }}
+        onOpenArchive={() => { preferLive.current = false; setSelectedId(null); setSource('archive'); }}
         importer={importer}
       />
     );
@@ -581,15 +684,61 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
             </select>
 
             {archiveSummary?.canResync && (
-              <button
-                onClick={importer.onResync}
-                disabled={Boolean(importBusy)}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-white/10 disabled:opacity-40 text-slate-300 rounded-lg text-xs font-bold flex items-center gap-2"
-                title="Re-read the exports folder and pull in new runs"
+              <div
+                className={`flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-lg border text-xs ${
+                  needsReconnect
+                    ? 'bg-amber-500/10 border-amber-500/30'
+                    : autoSync
+                      ? 'bg-emerald-500/10 border-emerald-500/25'
+                      : 'bg-slate-900/50 border-white/5'
+                }`}
+                title={
+                  needsReconnect
+                    ? 'The browser needs one click to re-grant access to the folder'
+                    : `Re-scans ${archiveSummary.sourceName || 'the exports folder'} every ${syncMinutes} min and imports new runs automatically`
+                }
               >
-                <RefreshCw size={14} className={importBusy ? 'animate-spin' : ''} />
-                <span className="hidden sm:inline">Re-sync</span>
-              </button>
+                <button
+                  onClick={() => (needsReconnect ? syncNow(false) : setAutoSync((v) => !v))}
+                  className="flex items-center gap-1.5 font-bold"
+                >
+                  <RefreshCw
+                    size={13}
+                    className={`${syncing ? 'animate-spin ' : ''}${
+                      needsReconnect ? 'text-amber-300' : autoSync ? 'text-emerald-400' : 'text-slate-500'
+                    }`}
+                  />
+                  <span className={needsReconnect ? 'text-amber-200' : autoSync ? 'text-emerald-300' : 'text-slate-400'}>
+                    {needsReconnect ? 'Reconnect' : autoSync ? 'Auto-sync' : 'Paused'}
+                  </span>
+                </button>
+
+                {!needsReconnect && (
+                  <select
+                    value={syncMinutes}
+                    onChange={(e) => setSyncMinutes(Number(e.target.value))}
+                    className="bg-transparent text-[11px] text-slate-400 outline-none cursor-pointer"
+                    title="How often the folder is re-scanned"
+                  >
+                    {SYNC_MINUTE_OPTIONS.map((m) => (
+                      <option key={m} value={m} className="bg-slate-950">{m}m</option>
+                    ))}
+                  </select>
+                )}
+
+                {!needsReconnect && lastSyncAt && (
+                  <span className="text-[10px] font-mono text-slate-500 hidden md:inline">{timeOf(new Date(lastSyncAt).toISOString())}</span>
+                )}
+
+                <button
+                  onClick={() => syncNow(false)}
+                  disabled={syncing}
+                  className="text-[10px] font-bold uppercase text-slate-400 hover:text-white px-1.5 disabled:opacity-40"
+                  title="Sync now"
+                >
+                  Now
+                </button>
+              </div>
             )}
 
             <button
@@ -600,7 +749,7 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
             </button>
 
             <button
-              onClick={() => { setSource('live'); setSelectedId(null); setOffline(null); load(); }}
+              onClick={() => { preferLive.current = true; setSource('live'); setSelectedId(null); setOffline(null); load(); }}
               className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-white/10 text-slate-300 rounded-lg text-xs font-bold flex items-center gap-2"
               title="Switch back to the live capture engine"
             >

@@ -37,9 +37,12 @@ export interface VisionArchiveSummary {
   images: number;
   days: VisionArchiveDay[];
   lastImportAt: string | null;
+  lastSyncAt: string | null;
   sourceName: string | null;
   /** True when a directory handle was remembered and can be re-synced in one click. */
   canResync: boolean;
+  /** 'granted' means the folder can be auto-synced without any further prompt. */
+  access: FolderAccess;
 }
 
 export interface VisionArchiveImport {
@@ -49,6 +52,10 @@ export interface VisionArchiveImport {
   bundles: number;
   skipped: number;
   errors: string[];
+  /** Runs that weren't already cached — what an auto-sync just picked up. */
+  newRunIds: string[];
+  /** True when the folder's manifest showed nothing had changed since the last sync. */
+  unchanged?: boolean;
 }
 
 interface StoredRun extends VisionRun {
@@ -56,7 +63,9 @@ interface StoredRun extends VisionRun {
   importedAt: string;
 }
 
-const emptyImport = (): VisionArchiveImport => ({ runs: 0, images: 0, days: [], bundles: 0, skipped: 0, errors: [] });
+const emptyImport = (): VisionArchiveImport => ({
+  runs: 0, images: 0, days: [], bundles: 0, skipped: 0, errors: [], newRunIds: [],
+});
 
 export const archiveSupported = () => typeof indexedDB !== 'undefined';
 
@@ -174,6 +183,10 @@ function normaliseRun(raw: any, date: string): { run: StoredRun; images: Array<[
   };
 }
 
+async function knownRunIds(): Promise<string[]> {
+  return tx(RUNS, 'readonly', (t) => wrap<IDBValidKey[]>(t.objectStore(RUNS).getAllKeys())).then((k) => k.map(String));
+}
+
 async function persist(runs: StoredRun[], images: Array<[string, Blob]>): Promise<void> {
   if (!runs.length && !images.length) return;
   await tx([RUNS, IMAGES], 'readwrite', (t) => {
@@ -210,6 +223,8 @@ async function ingestBundleText(text: string, label: string, out: VisionArchiveI
     images.push(...norm.images);
   }
 
+  const before = new Set(await knownRunIds());
+  runs.forEach((r) => { if (!before.has(r.id)) out.newRunIds.push(r.id); });
   await persist(runs, images);
   out.bundles += 1;
   out.runs += runs.length;
@@ -264,54 +279,142 @@ export async function importFiles(
   return out;
 }
 
-// --- File System Access API (Chrome/Edge): remembered folder + one-click re-sync ---
+// --- File System Access API (Chrome/Edge): remembered folder, auto-synced ---
+
+interface ScanContext {
+  /** Screenshot filenames already cached — they never change, so they're never re-read. */
+  images: Set<string>;
+  /** name -> lastModified of every JSON already parsed, so untouched files are skipped. */
+  seen: Record<string, number>;
+  /** Dates that publish immutable per-run files under runs/<date>/. */
+  runDays: Set<string>;
+}
+
+const DAY_BUNDLE_RE = /^vision-(\d{4}-\d{2}-\d{2})\.json$/i;
 
 async function walkDirectory(
   dir: any,
   out: VisionArchiveImport,
-  known: Set<string>,
+  ctx: ScanContext,
   onProgress?: (message: string) => void,
   prefix = ''
 ): Promise<void> {
   for await (const [name, handle] of dir.entries()) {
     const rel = prefix ? `${prefix}/${name}` : name;
     if (handle.kind === 'directory') {
-      await walkDirectory(handle, out, known, onProgress, rel);
+      await walkDirectory(handle, out, ctx, onProgress, rel);
       continue;
     }
+
     if (name.toLowerCase().endsWith('.json')) {
-      // The folder always carries the screenshots next to the plain bundle, so a
-      // multi-megabyte embedded copy would only duplicate work.
+      // The screenshots sit right next to the plain bundle, so a multi-megabyte
+      // embedded copy would only duplicate work.
       if (EMBEDDED_RE.test(name)) continue;
+      if (name === 'index.json') continue;
+
+      // The day bundle is rewritten after every capture, so re-reading it every sync
+      // would mean re-parsing the whole day. When runs/<date>/ exists it holds the same
+      // runs as immutable timestamped files, and only the new ones get touched.
+      const day = DAY_BUNDLE_RE.exec(name)?.[1];
+      if (day && ctx.runDays.has(day)) continue;
+
+      const file = await handle.getFile();
+      if (ctx.seen[rel] === file.lastModified) continue;
+
       onProgress?.(`Reading ${rel}`);
-      await ingestBundleText(await (await handle.getFile()).text(), rel, out);
+      await ingestBundleText(await file.text(), rel, out);
+      ctx.seen[rel] = file.lastModified;
     } else if (/\.(png|jpe?g|webp)$/i.test(name)) {
       const key = imageKey(name);
-      // Screenshots never change once written, so anything already cached is skipped:
-      // that makes a re-sync of a full trading day near-instant.
-      if (known.has(key)) continue;
+      if (ctx.images.has(key)) continue;
       const file = await handle.getFile();
       await persist([], [[key, file.slice(0, file.size, file.type || 'image/png')]]);
-      known.add(key);
+      ctx.images.add(key);
       out.images += 1;
     }
   }
 }
 
-async function readFromDirectory(handle: any, onProgress?: (message: string) => void): Promise<VisionArchiveImport> {
+/** Dates covered by runs/<date>/ per-run files, so their day bundle can be ignored. */
+async function listRunDays(dir: any): Promise<Set<string>> {
+  const days = new Set<string>();
+  try {
+    const runs = await dir.getDirectoryHandle('runs');
+    for await (const [name, handle] of runs.entries()) {
+      if (handle.kind === 'directory' && /^\d{4}-\d{2}-\d{2}$/.test(name)) days.add(name);
+    }
+  } catch {
+    /* no runs/ folder - the day bundles are the only source */
+  }
+  return days;
+}
+
+/**
+ * Reads an exports folder incrementally.
+ *
+ * A sync first reads the tiny index.json: if its `latestRunId` matches what we imported
+ * last time, nothing has been captured since and the scan stops right there. That makes a
+ * once-a-minute poll essentially free.
+ */
+async function readFromDirectory(
+  handle: any,
+  onProgress?: (message: string) => void,
+  { force = false }: { force?: boolean } = {}
+): Promise<VisionArchiveImport> {
   const out = emptyImport();
-  const known = new Set(await tx(IMAGES, 'readonly', (t) => wrap<IDBValidKey[]>(t.objectStore(IMAGES).getAllKeys())).then((k) => k.map(String)));
-  await walkDirectory(handle, out, known, onProgress);
-  await metaSet('lastImportAt', new Date().toISOString());
+
+  let manifest: any = null;
+  try {
+    manifest = JSON.parse(await (await (await handle.getFileHandle('index.json')).getFile()).text());
+  } catch {
+    /* a folder of loose bundles has no manifest - fall through to a full scan */
+  }
+
+  const lastSeenRun = await metaGet<string>('latestRunId');
+  if (!force && manifest?.latestRunId && manifest.latestRunId === lastSeenRun) {
+    out.unchanged = true;
+    await metaSet('lastSyncAt', new Date().toISOString());
+    return out;
+  }
+
+  const [images, seen, runDays] = await Promise.all([
+    tx(IMAGES, 'readonly', (t) => wrap<IDBValidKey[]>(t.objectStore(IMAGES).getAllKeys())).then((k) => k.map(String)),
+    metaGet<Record<string, number>>('seenFiles'),
+    listRunDays(handle),
+  ]);
+
+  const ctx: ScanContext = {
+    images: new Set(images),
+    seen: force ? {} : { ...(seen || {}) },
+    // A forced re-read falls back to the day bundles so a hand-edited folder can heal.
+    runDays: force ? new Set<string>() : runDays,
+  };
+
+  await walkDirectory(handle, out, ctx, onProgress);
+
+  const now = new Date().toISOString();
+  await metaSet('seenFiles', ctx.seen);
+  await metaSet('lastImportAt', now);
+  await metaSet('lastSyncAt', now);
   await metaSet('sourceName', handle.name);
+  if (manifest?.latestRunId) await metaSet('latestRunId', manifest.latestRunId);
   return out;
 }
 
 /** Opens the folder picker, remembers the handle and imports everything inside. */
+/**
+ * Firefox/Safari refuse to structured-clone a directory handle into IndexedDB. Holding it
+ * in memory keeps auto-sync working for the rest of the page session.
+ */
+let sessionHandle: any = null;
+
+const storedHandle = async (): Promise<any> => sessionHandle || (await metaGet<any>('dirHandle'));
+
 export async function pickDirectory(onProgress?: (message: string) => void): Promise<VisionArchiveImport> {
   if (!directoryPickerSupported()) throw new Error('This browser cannot open a folder directly. Use "Choose files" instead.');
   const handle = await (window as any).showDirectoryPicker({ id: 'vision-archive', mode: 'read' });
   const result = await readFromDirectory(handle, onProgress);
+  sessionHandle = handle;
   try {
     await metaSet('dirHandle', handle);
   } catch {
@@ -320,19 +423,41 @@ export async function pickDirectory(onProgress?: (message: string) => void): Pro
   return result;
 }
 
-/** Re-reads the remembered folder, picking up days captured since the last import. */
-export async function resync(onProgress?: (message: string) => void): Promise<VisionArchiveImport | null> {
-  const handle = await metaGet<any>('dirHandle');
+/** How the remembered folder can be read right now. */
+export type FolderAccess = 'none' | 'prompt' | 'granted';
+
+export async function folderAccess(): Promise<FolderAccess> {
+  const handle = await storedHandle();
+  if (!handle) return 'none';
+  const permission = await handle.queryPermission?.({ mode: 'read' });
+  return permission === 'granted' ? 'granted' : 'prompt';
+}
+
+/**
+ * Re-reads the remembered folder and picks up anything captured since the last sync.
+ *
+ * `silent` is what the auto-sync timer uses: it never calls requestPermission(), because
+ * that needs a user gesture — if the grant has lapsed it simply reports `null` and the UI
+ * shows a one-click Reconnect button instead of nagging on a timer.
+ */
+export async function resync(
+  onProgress?: (message: string) => void,
+  { silent = false, force = false }: { silent?: boolean; force?: boolean } = {}
+): Promise<VisionArchiveImport | null> {
+  const handle = await storedHandle();
   if (!handle) return null;
   const opts = { mode: 'read' as const };
   let permission = await handle.queryPermission?.(opts);
-  if (permission !== 'granted') permission = await handle.requestPermission?.(opts);
+  if (permission !== 'granted') {
+    if (silent) return null;
+    permission = await handle.requestPermission?.(opts);
+  }
   if (permission !== 'granted') throw new Error('Permission to read the archive folder was declined.');
-  return readFromDirectory(handle, onProgress);
+  return readFromDirectory(handle, onProgress, { force });
 }
 
 export async function hasRememberedDirectory(): Promise<boolean> {
-  return Boolean(await metaGet('dirHandle'));
+  return Boolean(await storedHandle());
 }
 
 // --- reads ------------------------------------------------------------------
@@ -349,14 +474,18 @@ export async function getRuns(date?: string, limit = 400): Promise<VisionRun[]> 
 
 export async function getSummary(): Promise<VisionArchiveSummary> {
   if (!archiveSupported()) {
-    return { runs: 0, images: 0, days: [], lastImportAt: null, sourceName: null, canResync: false };
+    return {
+      runs: 0, images: 0, days: [], lastImportAt: null, lastSyncAt: null,
+      sourceName: null, canResync: false, access: 'none',
+    };
   }
-  const [runs, images, lastImportAt, sourceName, canResync] = await Promise.all([
+  const [runs, images, lastImportAt, lastSyncAt, sourceName, access] = await Promise.all([
     tx(RUNS, 'readonly', (t) => wrap<StoredRun[]>(t.objectStore(RUNS).getAll())),
     tx(IMAGES, 'readonly', (t) => wrap<number>(t.objectStore(IMAGES).count())),
     metaGet<string>('lastImportAt'),
+    metaGet<string>('lastSyncAt'),
     metaGet<string>('sourceName'),
-    hasRememberedDirectory(),
+    folderAccess(),
   ]);
 
   const counts = new Map<string, number>();
@@ -367,8 +496,10 @@ export async function getSummary(): Promise<VisionArchiveSummary> {
     images,
     days: [...counts.entries()].map(([date, n]) => ({ date, runs: n })).sort((a, b) => b.date.localeCompare(a.date)),
     lastImportAt: lastImportAt || null,
+    lastSyncAt: lastSyncAt || null,
     sourceName: sourceName || null,
-    canResync,
+    canResync: access !== 'none',
+    access,
   };
 }
 
@@ -380,6 +511,7 @@ export async function getImage(file?: string): Promise<Blob | null> {
 }
 
 export async function clear(): Promise<void> {
+  sessionHandle = null;
   await tx([RUNS, IMAGES, META], 'readwrite', (t) => {
     t.objectStore(RUNS).clear();
     t.objectStore(IMAGES).clear();
@@ -394,6 +526,7 @@ export const visionArchive = {
   pickDirectory,
   resync,
   hasRememberedDirectory,
+  folderAccess,
   getRuns,
   getSummary,
   getImage,

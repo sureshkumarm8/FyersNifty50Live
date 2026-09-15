@@ -319,15 +319,28 @@ reviewable anywhere, with no engine, no local server and no upload.
     **Import saved analysis** panel (it is also reachable from the **Archive** button when the
     engine *is* running).
 3.  Choose one of:
-    *   **Choose exports folder** — pick `data/exports`. In Chrome/Edge the folder is remembered,
-        so a later **Re-sync** pulls in new days with one click.
+    *   **Choose exports folder** — pick `data/exports`. In Chrome/Edge this is a **one-time**
+        choice: the folder is remembered, and the screen re-scans it automatically (see below).
     *   **Choose JSON files** — pick `vision-YYYY-MM-DD.json` bundles (and any PNGs), or a single
         `vision-YYYY-MM-DD.embedded.json` which already contains its screenshots.
     *   **Drag and drop** any of those onto the panel.
 
-Imported runs are cached in IndexedDB, so they survive reloads. The archive view is read-only —
-a day selector replaces the capture controls, and the trash button clears only the browser copy;
-the exported files on disk are never touched. Re-importing the same files is idempotent.
+Imported runs are cached in IndexedDB, so they survive reloads — and once an archive is cached the
+Vision screen opens straight into it whenever the engine is unreachable.
+
+**Auto-sync.** After the folder has been picked once, an **Auto-sync** chip appears in the toolbar
+with a cadence selector (1 / 2 / 5 / 15 min), the time of the last check and a **Now** button. Each
+check reads only `index.json`; if its `latestRunId` is unchanged nothing else is touched (a couple
+of milliseconds), and when the engine has captured something new only the new
+`runs/<date>/run-*.json` files and their screenshots are read. With the newest run selected, fresh
+captures simply appear — so a browser left open on this screen keeps following the engine.
+
+Browsers may drop folder permission between sessions; when that happens the chip turns into
+**Reconnect**, which restores auto-sync with one click.
+
+The archive view is read-only — a day selector replaces the capture controls, and the trash button
+clears only the browser copy; the exported files on disk are never touched. Re-importing the same
+files is idempotent.
 
 ## 🎓 Paper Trading
 
