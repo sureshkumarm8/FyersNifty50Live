@@ -14,7 +14,7 @@
 
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, LogIn, LogOut } from 'lucide-react';
-import { PaperTrade } from '../../services/paperTradingService';
+import { isAutoTrade, ownerStrategy, PaperTrade } from '../../services/paperTradingService';
 
 const inr = (n: number, decimals = 0) =>
   `${n < 0 ? '-' : ''}₹${Math.abs(n).toLocaleString('en-IN', {
@@ -58,13 +58,16 @@ export const AutoTag: React.FC<{ source?: string; strategy?: string; tags?: stri
   strategy,
   tags
 }) => {
-  if (source !== 'AUTOTRADE') return null;
-  const label = strategy ?? 'AUTO';
+  // Matched through the helpers so rows written before `source`/`strategy`
+  // existed still show which engine took them, instead of passing as manual.
+  if (!isAutoTrade({ source: source as any, tags })) return null;
+  const owner = ownerStrategy({ strategy: strategy as any, tags });
+  const label = owner ?? 'AUTO';
   return (
     <span
       title={tags?.length ? tags.join(' \u00b7 ') : 'Placed automatically'}
       className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${
-        strategy === 'MOMENTUM'
+        owner === 'MOMENTUM'
           ? 'bg-sky-500/15 text-sky-300 border-sky-500/30'
           : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
       }`}
