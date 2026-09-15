@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Eye, RefreshCw, Play, Pause, Clock, AlertTriangle, CheckCircle2,
   TrendingUp, TrendingDown, Minus, Activity, Monitor, MonitorOff,
-  Trash2, Camera, Cpu, Radio, ChevronRight, ExternalLink, HardDrive
+  Trash2, Camera, Cpu, Radio, ChevronRight, ExternalLink, HardDrive,
+  FolderOpen, FileJson, Archive, Download, Zap
 } from 'lucide-react';
-import { VisionRun, VisionStatus, VisionVerdict, VisionBias } from '../types';
+import { VisionRun, VisionShot, VisionStatus, VisionVerdict, VisionBias } from '../types';
 import { visionService, shotUrl, VisionSidecarOfflineError } from '../services/visionService';
+import { visionArchive, VisionArchiveSummary, VisionArchiveImport } from '../services/visionArchive';
 
 interface VisionAnalysisProps {
   niftyLtp: number | null;
@@ -160,9 +162,178 @@ const Verdict: React.FC<{ verdict: VisionVerdict; niftyLtp: number | null }> = (
   );
 };
 
-const OfflineNotice: React.FC<{ message: string; onRetry: () => void }> = ({ message, onRetry }) => (
-  <div className="flex-1 flex items-center justify-center p-6">
-    <div className="glass-panel rounded-2xl p-8 max-w-2xl space-y-5">
+/** Screenshot tile. Live runs stream from the sidecar proxy; archived ones come out of IndexedDB. */
+const ShotCard: React.FC<{ shot: VisionShot; archived: boolean }> = ({ shot, archived }) => {
+  const [src, setSrc] = useState<string | null>(archived ? null : shotUrl(shot.shotUrl));
+
+  useEffect(() => {
+    if (!archived) {
+      setSrc(shotUrl(shot.shotUrl));
+      return;
+    }
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setSrc(null);
+    visionArchive
+      .getImage(shot.file)
+      .then((blob) => {
+        if (!blob || cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [archived, shot.file, shot.shotUrl]);
+
+  return (
+    <div className="glass-panel rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between gap-2">
+        <h3 className="text-xs font-bold text-white truncate">{shot.label}</h3>
+        <div className="flex items-center gap-2 shrink-0">
+          {shot.awaitingLogin && <span className="text-[9px] font-bold text-amber-400 uppercase">Login</span>}
+          {shot.ok ? <CheckCircle2 size={13} className="text-emerald-500" /> : <AlertTriangle size={13} className="text-red-500" />}
+          <a href={shot.url} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-white">
+            <ExternalLink size={12} />
+          </a>
+        </div>
+      </div>
+      {src ? (
+        <a href={src} target="_blank" rel="noreferrer">
+          <img src={src} alt={shot.label} loading="lazy" className="w-full bg-slate-950 hover:opacity-90 transition-opacity" />
+        </a>
+      ) : (
+        <div className="p-8 text-center text-xs text-slate-500">
+          {shot.error || (archived ? 'Screenshot not included in this import.' : 'No screenshot captured.')}
+        </div>
+      )}
+      {shot.notes?.length ? (
+        <p className="px-4 py-2 text-[10px] text-amber-500/80 border-t border-white/5">{shot.notes.join(' · ')}</p>
+      ) : null}
+    </div>
+  );
+};
+
+interface ImporterProps {
+  summary: VisionArchiveSummary | null;
+  busy: string | null;
+  note: string | null;
+  onPickFolder: () => void;
+  onFiles: (files: FileList | File[]) => void;
+  onResync: () => void;
+}
+
+/**
+ * Loads an export produced by the capture engine (`npm run export` there, or written
+ * automatically after every run) straight off disk. Nothing is uploaded — the files are
+ * read in the browser and cached in IndexedDB, so this works on a deployed build with
+ * no local server at all.
+ */
+const ArchiveImporter: React.FC<ImporterProps> = ({ summary, busy, note, onPickFolder, onFiles, onResync }) => {
+  const folderInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        if (e.dataTransfer.files?.length) onFiles(e.dataTransfer.files);
+      }}
+      className={`rounded-xl border-2 border-dashed p-4 space-y-3 transition-colors ${
+        dragging ? 'border-cyan-500 bg-cyan-500/5' : 'border-slate-700 bg-slate-950/40'
+      }`}
+    >
+      <div className="flex items-center gap-2 text-xs font-bold text-white">
+        <Archive size={14} className="text-cyan-400" /> Import saved analysis
+      </div>
+      <p className="text-[11px] text-slate-400 leading-relaxed">
+        The engine mirrors every run into{' '}
+        <span className="font-mono text-slate-300">liveImageAnalsis/data/exports/</span>. Pick that folder — or drop
+        <span className="font-mono text-slate-300"> vision-YYYY-MM-DD.json</span> files here — and the whole history,
+        charts included, is read locally in your browser.
+      </p>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => (visionArchive.directoryPickerSupported() ? onPickFolder() : folderInput.current?.click())}
+          disabled={Boolean(busy)}
+          className="px-3 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold flex items-center gap-2"
+        >
+          <FolderOpen size={14} /> Choose exports folder
+        </button>
+
+        <button
+          onClick={() => fileInput.current?.click()}
+          disabled={Boolean(busy)}
+          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-white/10 disabled:opacity-40 text-slate-200 rounded-lg text-xs font-bold flex items-center gap-2"
+        >
+          <FileJson size={14} /> Choose JSON files
+        </button>
+
+        {summary?.canResync && (
+          <button
+            onClick={onResync}
+            disabled={Boolean(busy)}
+            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-white/10 disabled:opacity-40 text-slate-200 rounded-lg text-xs font-bold flex items-center gap-2"
+            title="Re-read the folder picked earlier and pull in anything new"
+          >
+            <RefreshCw size={14} className={busy ? 'animate-spin' : ''} /> Re-sync folder
+          </button>
+        )}
+      </div>
+
+      {busy && <p className="text-[11px] text-cyan-300 font-mono truncate">{busy}</p>}
+      {!busy && note && (
+        <p className="text-[11px] text-emerald-300 flex items-center gap-1.5">
+          <CheckCircle2 size={12} className="shrink-0" /> {note}
+        </p>
+      )}
+
+      {summary && summary.runs > 0 && (
+        <p className="text-[11px] text-slate-400">
+          <span className="text-emerald-400 font-bold">{summary.runs} runs</span> and {summary.images} screenshots cached
+          {summary.sourceName ? ` from ${summary.sourceName}` : ''}
+          {summary.days.length ? ` · ${summary.days.length} day(s): ${summary.days.slice(0, 4).map((d) => d.date).join(', ')}` : ''}
+        </p>
+      )}
+
+      {/* webkitdirectory is non-standard but supported everywhere, and hands us the PNGs too. */}
+      <input
+        ref={folderInput}
+        type="file"
+        multiple
+        // @ts-expect-error - non-standard directory picker attributes
+        webkitdirectory=""
+        directory=""
+        className="hidden"
+        onChange={(e) => e.target.files && onFiles(e.target.files)}
+      />
+      <input
+        ref={fileInput}
+        type="file"
+        multiple
+        accept=".json,.png,.jpg,.jpeg,.webp"
+        className="hidden"
+        onChange={(e) => e.target.files && onFiles(e.target.files)}
+      />
+    </div>
+  );
+};
+
+const OfflineNotice: React.FC<{
+  message: string;
+  onRetry: () => void;
+  onOpenArchive: () => void;
+  importer: ImporterProps;
+}> = ({ message, onRetry, onOpenArchive, importer }) => (
+  <div className="flex-1 overflow-y-auto custom-scrollbar p-6 flex items-start justify-center">
+    <div className="glass-panel rounded-2xl p-8 max-w-2xl w-full space-y-5">
       <div className="flex items-center gap-3">
         <div className="p-3 bg-amber-500/10 rounded-xl text-amber-400"><HardDrive size={24} /></div>
         <div>
@@ -171,17 +342,31 @@ const OfflineNotice: React.FC<{ message: string; onRetry: () => void }> = ({ mes
         </div>
       </div>
 
+      {(importer.summary?.runs ?? 0) > 0 && (
+        <button
+          onClick={onOpenArchive}
+          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all"
+        >
+          <Zap size={14} /> Open imported analysis ({importer.summary?.runs} runs)
+        </button>
+      )}
+
+      <ArchiveImporter {...importer} />
+
       <div className="space-y-3 text-xs text-slate-300">
         <p className="leading-relaxed">
-          This screen drives a real Chrome window that stays logged in to Zerodha Kite and Sensibull,
-          screenshots both charts every cycle and reads them with a local Ollama vision model.
-          It has to run on your machine, so it is not available in a deployed build.
+          Live capture drives a real Chrome window that stays logged in to Zerodha Kite and Sensibull,
+          screenshots both charts every cycle and reads them with a local Ollama vision model. That part has to run
+          on your machine — but its exports can be imported and reviewed anywhere, including here.
         </p>
         <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-[11px] space-y-1">
           <div className="text-slate-500"># 1. start the local dashboard server</div>
           <div className="text-cyan-400">npm run server</div>
           <div className="text-slate-500 pt-2"># 2. start the capture engine</div>
           <div className="text-cyan-400">cd ../liveImageAnalsis &amp;&amp; npm start</div>
+          <div className="text-slate-500 pt-2"># or export the history for importing above</div>
+          <div className="text-cyan-400">cd ../liveImageAnalsis &amp;&amp; npm run export</div>
+          <div className="text-slate-500"># add --embed for one self-contained file per day</div>
         </div>
         <p className="text-[11px] text-slate-500">
           The engine listens on <span className="font-mono text-slate-400">http://localhost:4321</span>.
@@ -208,6 +393,72 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
   const [error, setError] = useState<string | null>(null);
   const didLoad = useRef(false);
 
+  // --- archive (imported) mode ---
+  const [source, setSource] = useState<'live' | 'archive'>('live');
+  const [archiveSummary, setArchiveSummary] = useState<VisionArchiveSummary | null>(null);
+  const [archiveRuns, setArchiveRuns] = useState<VisionRun[]>([]);
+  const [archiveDay, setArchiveDay] = useState<string>('all');
+  const [importBusy, setImportBusy] = useState<string | null>(null);
+  const [importNote, setImportNote] = useState<string | null>(null);
+  const [showImporter, setShowImporter] = useState(false);
+
+  const loadArchive = useCallback(async (day: string = 'all') => {
+    if (!visionArchive.supported()) return null;
+    try {
+      const [summary, stored] = await Promise.all([
+        visionArchive.getSummary(),
+        visionArchive.getRuns(day === 'all' ? undefined : day),
+      ]);
+      setArchiveSummary(summary);
+      setArchiveRuns(stored);
+      return summary;
+    } catch (err: any) {
+      setError(err.message);
+      return null;
+    }
+  }, []);
+
+  const runImport = useCallback(
+    async (label: string, job: () => Promise<VisionArchiveImport | null>) => {
+      setImportBusy(label);
+      setImportNote(null);
+      setError(null);
+      try {
+        const result = await job();
+        if (!result) {
+          setImportNote('No folder is remembered yet — pick the exports folder first.');
+          return;
+        }
+        setArchiveDay('all');
+        const summary = await loadArchive('all');
+        setImportNote(
+          result.runs || result.images
+            ? `Imported ${result.runs} run(s) and ${result.images} screenshot(s) from ${result.bundles} bundle(s).`
+            : 'Nothing new to import — everything in that folder was already loaded.'
+        );
+        if (result.errors.length) setError(result.errors.slice(0, 3).join(' · '));
+        if ((summary?.runs ?? 0) > 0) setSelectedId(null);
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') setError(err.message || 'Import failed.');
+      } finally {
+        setImportBusy(null);
+      }
+    },
+    [loadArchive]
+  );
+
+  const importer: ImporterProps = {
+    summary: archiveSummary,
+    busy: importBusy,
+    note: importNote,
+    onPickFolder: () => runImport('Reading folder…', () => visionArchive.pickDirectory((m) => setImportBusy(m))),
+    onFiles: (files) =>
+      runImport('Reading files…', () =>
+        visionArchive.importFiles(files, (done, total) => setImportBusy(`Reading ${done}/${total}…`))
+      ),
+    onResync: () => runImport('Re-syncing folder…', () => visionArchive.resync((m) => setImportBusy(m))),
+  };
+
   const load = useCallback(async () => {
     try {
       const [s, h] = await Promise.all([visionService.getStatus(), visionService.getHistory(40)]);
@@ -225,18 +476,19 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
     if (didLoad.current) return;
     didLoad.current = true;
     load();
-  }, [load]);
+    loadArchive();
+  }, [load, loadArchive]);
 
   // Live push from the engine: status transitions and finished runs.
   useEffect(() => {
-    if (offline) return;
+    if (offline || source === 'archive') return;
     const unsubscribe = visionService.subscribe({
       onStatus: (s) => { setStatus(s); setError(s.lastError); },
       onRun: (run) => setRuns((prev) => (prev.some((r) => r.id === run.id) ? prev : [run, ...prev].slice(0, 40))),
       onError: (message) => setError(message),
     });
     return unsubscribe;
-  }, [offline]);
+  }, [offline, source]);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -252,12 +504,24 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
     }
   };
 
-  if (offline) return <OfflineNotice message={offline} onRetry={() => { setOffline(null); load(); }} />;
+  const archiveMode = source === 'archive';
 
-  const selected = runs.find((r) => r.id === selectedId) || runs[0] || null;
+  if (offline && !archiveMode) {
+    return (
+      <OfflineNotice
+        message={offline}
+        onRetry={() => { setOffline(null); load(); }}
+        onOpenArchive={() => { setSelectedId(null); setSource('archive'); }}
+        importer={importer}
+      />
+    );
+  }
+
+  const activeRuns = archiveMode ? archiveRuns : runs;
+  const selected = activeRuns.find((r) => r.id === selectedId) || activeRuns[0] || null;
   const verdict = selected?.analysis?.parsed || null;
-  const isLive = !selectedId || selected?.id === runs[0]?.id;
-  const needsLogin = status?.targets?.filter((t) => t.awaitingLogin) || [];
+  const isLive = !selectedId || selected?.id === activeRuns[0]?.id;
+  const needsLogin = archiveMode ? [] : status?.targets?.filter((t) => t.awaitingLogin) || [];
 
   return (
     <div className="flex flex-col h-full overflow-hidden p-4 max-w-7xl mx-auto w-full gap-4">
@@ -270,8 +534,16 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
             VISION <span className="text-cyan-500">ANALYSIS</span>
           </h1>
           <div className="flex items-center gap-3 flex-wrap">
-            <p className="text-xs text-slate-400 font-mono">Chart screenshots read by a local vision model</p>
-            {status && (
+            <p className="text-xs text-slate-400 font-mono">
+              {archiveMode ? 'Imported archive — read-only replay' : 'Chart screenshots read by a local vision model'}
+            </p>
+            {archiveMode && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border bg-amber-900/30 border-amber-500/20">
+                <Archive size={10} className="text-amber-300" />
+                <span className="text-[9px] font-bold uppercase tracking-wide text-amber-300">Archive</span>
+              </div>
+            )}
+            {!archiveMode && status && (
               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border bg-cyan-900/30 border-cyan-500/20">
                 <span className="relative flex h-2 w-2">
                   {status.phase !== 'idle' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />}
@@ -282,14 +554,70 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
                 </span>
               </div>
             )}
-            {status && (
+            {!archiveMode && status && (
               <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
                 <Cpu size={11} /> {status.model}
+              </span>
+            )}
+            {archiveMode && archiveSummary?.lastImportAt && (
+              <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
+                <Download size={11} /> imported {new Date(archiveSummary.lastImportAt).toLocaleString('en-IN')}
               </span>
             )}
           </div>
         </div>
 
+        {archiveMode ? (
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={archiveDay}
+              onChange={(e) => { setArchiveDay(e.target.value); setSelectedId(null); loadArchive(e.target.value); }}
+              className="bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-xs text-white outline-none cursor-pointer focus:ring-2 focus:ring-cyan-500"
+            >
+              <option value="all">All days ({archiveSummary?.runs || 0})</option>
+              {archiveSummary?.days.map((d) => (
+                <option key={d.date} value={d.date}>{d.date} ({d.runs})</option>
+              ))}
+            </select>
+
+            {archiveSummary?.canResync && (
+              <button
+                onClick={importer.onResync}
+                disabled={Boolean(importBusy)}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-white/10 disabled:opacity-40 text-slate-300 rounded-lg text-xs font-bold flex items-center gap-2"
+                title="Re-read the exports folder and pull in new runs"
+              >
+                <RefreshCw size={14} className={importBusy ? 'animate-spin' : ''} />
+                <span className="hidden sm:inline">Re-sync</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowImporter((v) => !v)}
+              className="px-3 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-xs font-bold flex items-center gap-2"
+            >
+              <FolderOpen size={14} /><span className="hidden sm:inline">Import data</span>
+            </button>
+
+            <button
+              onClick={() => { setSource('live'); setSelectedId(null); setOffline(null); load(); }}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-white/10 text-slate-300 rounded-lg text-xs font-bold flex items-center gap-2"
+              title="Switch back to the live capture engine"
+            >
+              <Radio size={14} /><span className="hidden sm:inline">Live engine</span>
+            </button>
+
+            <button
+              onClick={() => {
+                if (!confirm('Delete the imported archive from this browser? The exported files on disk are untouched.')) return;
+                visionArchive.clear().then(() => { setArchiveRuns([]); setSelectedId(null); loadArchive('all'); });
+              }}
+              className="px-3 py-2 bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 rounded-lg text-xs font-bold transition-all"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ) : (
         <div className="flex items-center gap-2 flex-wrap">
           {status && (
             <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900/50 border border-white/5 text-xs">
@@ -348,8 +676,32 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
           >
             <Trash2 size={14} />
           </button>
+
+          {(archiveSummary?.runs ?? 0) > 0 && (
+            <button
+              onClick={() => { setSource('archive'); setSelectedId(null); loadArchive(archiveDay); }}
+              className="px-3 py-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 rounded-lg text-xs font-bold flex items-center gap-2 transition-all"
+              title="Review an imported export instead of the live engine"
+            >
+              <Archive size={14} /><span className="hidden sm:inline">Archive</span>
+            </button>
+          )}
         </div>
+        )}
       </div>
+
+      {/* Import panel (archive mode) */}
+      {archiveMode && showImporter && (
+        <div className="shrink-0">
+          <ArchiveImporter {...importer} />
+        </div>
+      )}
+      {importNote && (
+        <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-300 text-xs">
+          <CheckCircle2 size={14} className="shrink-0" /><span>{importNote}</span>
+          <button onClick={() => setImportNote(null)} className="ml-auto text-emerald-500/70 hover:text-emerald-300">✕</button>
+        </div>
+      )}
 
       {/* Alerts */}
       {needsLogin.length > 0 && (
@@ -375,10 +727,10 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
           <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
             <Radio size={14} className="text-slate-500" />
             <h3 className="text-xs font-bold text-white uppercase tracking-wider">Runs</h3>
-            <span className="ml-auto text-[10px] text-slate-500 font-mono">{runs.length}</span>
+            <span className="ml-auto text-[10px] text-slate-500 font-mono">{activeRuns.length}</span>
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-white/5">
-            {runs.map((run, idx) => {
+            {activeRuns.map((run, idx) => {
               const s = biasStyle(run.analysis?.parsed?.bias);
               const active = selected?.id === run.id;
               return (
@@ -389,7 +741,14 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-mono text-slate-300">{timeOf(run.startedAt)}</span>
-                    {idx === 0 && <span className="text-[9px] font-bold text-cyan-400 uppercase">Live</span>}
+                    {idx === 0 && (
+                      <span className={`text-[9px] font-bold uppercase ${archiveMode ? 'text-amber-400' : 'text-cyan-400'}`}>
+                        {archiveMode ? 'Newest' : 'Live'}
+                      </span>
+                    )}
+                    {archiveMode && run.day && idx > 0 && activeRuns[idx - 1]?.day !== run.day && (
+                      <span className="text-[9px] font-mono text-slate-500">{run.day}</span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between mt-1">
                     <span className={`text-[10px] font-bold uppercase ${s.text}`}>
@@ -402,18 +761,33 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
                 </button>
               );
             })}
-            {runs.length === 0 && (
-              <p className="p-4 text-xs text-slate-500">No runs captured yet.</p>
+            {activeRuns.length === 0 && (
+              <p className="p-4 text-xs text-slate-500">
+                {archiveMode ? 'Nothing imported yet.' : 'No runs captured yet.'}
+              </p>
             )}
           </div>
         </div>
 
         {/* Selected run */}
         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-1">
-          {!selected && (
+          {!selected && !archiveMode && (
             <div className="glass-panel rounded-xl p-8 text-center">
               <Camera size={40} className="mx-auto text-slate-700 mb-3" />
               <p className="text-sm text-slate-400">No captures yet. Press <strong className="text-white">Capture Now</strong> to take the first one.</p>
+            </div>
+          )}
+
+          {!selected && archiveMode && (
+            <div className="glass-panel rounded-xl p-6 space-y-4">
+              <div className="text-center">
+                <Archive size={40} className="mx-auto text-slate-700 mb-3" />
+                <p className="text-sm text-slate-400">
+                  Nothing imported for this selection. Point the picker at the engine's
+                  <span className="font-mono text-slate-300"> data/exports </span> folder.
+                </p>
+              </div>
+              <ArchiveImporter {...importer} />
             </div>
           )}
 
@@ -427,7 +801,12 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
                   <Activity size={13} /> {(selected.durationMs / 1000).toFixed(1)}s
                 </span>
                 {selected.manual && <span className="px-2 py-0.5 rounded bg-slate-800 text-[10px] font-bold uppercase">Manual</span>}
-                {isLive && <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-bold uppercase">Latest</span>}
+                {isLive && !archiveMode && <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-bold uppercase">Latest</span>}
+                {archiveMode && (
+                  <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold uppercase">
+                    {selected.day || 'archived'}
+                  </span>
+                )}
                 {selectedId && !isLive && (
                   <button onClick={() => setSelectedId(null)} className="text-cyan-400 hover:underline text-[11px]">
                     Back to latest
@@ -437,39 +816,9 @@ export const VisionAnalysis: React.FC<VisionAnalysisProps> = ({ niftyLtp }) => {
 
               {/* Screenshots */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {selected.shots.map((shot) => {
-                  const src = shotUrl(shot.shotUrl);
-                  return (
-                    <div key={shot.id} className="glass-panel rounded-xl overflow-hidden">
-                      <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between gap-2">
-                        <h3 className="text-xs font-bold text-white truncate">{shot.label}</h3>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {shot.awaitingLogin && (
-                            <span className="text-[9px] font-bold text-amber-400 uppercase">Login</span>
-                          )}
-                          {shot.ok
-                            ? <CheckCircle2 size={13} className="text-emerald-500" />
-                            : <AlertTriangle size={13} className="text-red-500" />}
-                          <a href={shot.url} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-white">
-                            <ExternalLink size={12} />
-                          </a>
-                        </div>
-                      </div>
-                      {src ? (
-                        <a href={src} target="_blank" rel="noreferrer">
-                          <img src={src} alt={shot.label} loading="lazy" className="w-full bg-slate-950 hover:opacity-90 transition-opacity" />
-                        </a>
-                      ) : (
-                        <div className="p-8 text-center text-xs text-slate-500">
-                          {shot.error || 'No screenshot captured.'}
-                        </div>
-                      )}
-                      {shot.notes?.length ? (
-                        <p className="px-4 py-2 text-[10px] text-amber-500/80 border-t border-white/5">{shot.notes.join(' · ')}</p>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                {selected.shots.map((shot) => (
+                  <ShotCard key={shot.id} shot={shot} archived={archiveMode} />
+                ))}
               </div>
 
               {/* Verdict */}

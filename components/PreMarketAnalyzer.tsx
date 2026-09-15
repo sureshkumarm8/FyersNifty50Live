@@ -8,6 +8,9 @@ import {
   dueRevalidation, isProvisional
 } from '../services/premarketSchedule';
 import { PhaseReview, ReviewInput, requestPhaseReview } from '../services/premarketReview';
+import {
+  buildPreMarketExport, downloadPreMarketExport, readPreMarketExportFile
+} from '../services/premarketExport';
 import { AlertCircle } from 'lucide-react';
 import {
   ActivityLog, CaptureChecklist, ChartWorkspace, CommandBar, EvidenceGrid, ForwardBoard, KeyNumbers,
@@ -1190,6 +1193,98 @@ export const PreMarketAnalyzer: React.FC<{
     addLog('🔄 Workspace cleared');
   };
 
+  // --- portability ---------------------------------------------------------
+
+  /**
+   * Writes the whole workspace out as one JSON envelope.
+   *
+   * With images it is a restore point (this browser or another one); without
+   * them it is a compact record other systems can read - the verdicts, the
+   * levels and every phase of the plan, minus a few megabytes of base64.
+   */
+  const exportSession = (includeImages: boolean) => {
+    if (coverage === 0 && !preMarketDecision && Object.keys(charts).length === 0) {
+      addLog('⚠️ Nothing to export yet - upload charts or generate a decision first');
+      return;
+    }
+    try {
+      const payload = buildPreMarketExport({ charts, decision: preMarketDecision, includeImages });
+      const fileName = downloadPreMarketExport(payload);
+      addLog(
+        `⬇️ Exported ${payload.charts.length} chart(s)${payload.decision ? ' + plan' : ''}` +
+          `${payload.includesImages ? ' with screenshots' : ' (data only)'} → ${fileName}`
+      );
+    } catch (err: any) {
+      addLog(`❌ Export failed: ${err?.message || err}`);
+    }
+  };
+
+  /**
+   * Replaces the workspace with the contents of an exported file.
+   *
+   * Replace, not merge: a half-imported session where two charts are from the
+   * file and two are from this morning would be cut into a single plan with no
+   * way to tell which read came from where.
+   */
+  const importSession = async (file: File) => {
+    addLog(`📥 Reading ${file.name}...`);
+    let result;
+    try {
+      result = await readPreMarketExportFile(file);
+    } catch (err: any) {
+      addLog(`❌ Import failed: ${err?.message || err}`);
+      return;
+    }
+
+    result.warnings.forEach(w => addLog(`⚠️ ${w}`));
+
+    try {
+      /**
+       * A plan-only file restores the plan, not an empty workspace.
+       *
+       * The data-only export deliberately carries no screenshots, so treating
+       * it as a full restore would delete this morning's four captures - an
+       * irreversible loss triggered by a file the menu describes as "for other
+       * systems". Images are only replaced when the file actually brings some.
+       */
+      const carriesImages = Object.keys(result.charts).length > 0;
+      if (carriesImages) {
+        for (const slot of CHART_SLOTS) {
+          const entry = result.charts[slot.id];
+          if (entry) await imageStorageService.putImage(IMAGE_KEY(slot.id), entry.data).catch(() => {});
+          else await imageStorageService.deleteImage(IMAGE_KEY(slot.id)).catch(() => {});
+        }
+      }
+
+      const decision = result.decision ? migrateDecision(result.decision) : null;
+      if (carriesImages) {
+        setCharts(result.charts);
+        setPendingImages([]);
+      }
+      setPinnedPhase(null);
+      reviewedCutRef.current = null;
+      setPreMarketDecision(decision);
+      await imageStorageService.saveState(DECISION_STATE_KEY, decision).catch(() => {});
+
+      const analyzed = CHART_SLOTS.map(s => result.charts[s.id]).filter(
+        c => c?.verdict && !isUnreadable(c.verdict)
+      ).length;
+      addLog(
+        carriesImages
+          ? `✅ Imported ${Object.keys(result.charts).length} chart(s) (${analyzed} analyzed)` +
+              `${decision ? ' + plan' : ''} from session ${result.sessionDate}`
+          : `✅ Imported the plan from session ${result.sessionDate}. The file carried no screenshots, so the current charts were left untouched.`
+      );
+      // The plan is restored as-is so it can be reviewed, but a plan cut on
+      // another day must never be mistaken for today's zones.
+      if (decision && istDateKey(decision.generatedAt) !== istDateKey(Date.now())) {
+        addLog('🗓️ This plan was cut on another day - re-generate before trading it.');
+      }
+    } catch (err: any) {
+      addLog(`❌ Import failed while restoring: ${err?.message || err}`);
+    }
+  };
+
   const copyToClipboard = (text?: string) => {
     if (typeof text === 'string') {
       navigator.clipboard.writeText(text);
@@ -1268,6 +1363,8 @@ export const PreMarketAnalyzer: React.FC<{
           onGenerate={generatePreMarketDecision}
           isGenerating={isGenerating}
           onCopy={() => copyToClipboard()}
+          onExport={exportSession}
+          onImport={importSession}
           onReset={clearAll}
           hasDecision={hasDecision}
           generatedAtStr={preMarketDecision?.generatedAtStr}

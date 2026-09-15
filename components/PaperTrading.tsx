@@ -5,6 +5,7 @@ import {
   ArrowUpRight, ArrowDownRight, GraduationCap, Zap, Check, Percent, Trash2
 } from 'lucide-react';
 import { EnrichedFyersQuote } from '../types';
+import { TradeHistoryTable, AutoTag } from './ui/TradeHistoryTable';
 import {
   paperTradingEngine, PaperBook, PaperPosition, PaperOptionType,
   parseOptionQuote, computeCharges, positionPnl, positionPnlPercent,
@@ -61,20 +62,10 @@ const MetricCard: React.FC<{
 
 /**
  * Marks a row the system took on its own, so the log distinguishes the trades
- * the Sniper placed from the ones placed by hand. Hover shows the thesis tags
- * the trade was taken under.
+ * the engines placed from the ones placed by hand. Hover shows the thesis tags
+ * the trade was taken under. Defined once in ./ui/TradeHistoryTable and shared
+ * with the AutoTrade screen so both describe a trade identically.
  */
-const AutoTag: React.FC<{ source?: string; tags?: string[] }> = ({ source, tags }) => {
-  if (source !== 'AUTOTRADE') return null;
-  return (
-    <span
-      title={tags?.length ? tags.join(' \u00b7 ') : 'Placed automatically by the Sniper'}
-      className="text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30"
-    >
-      AUTO
-    </span>
-  );
-};
 
 export const PaperTrading: React.FC<PaperTradingProps> = ({ optionQuotes, niftyLtp, lastUpdated }) => {
   const [book, setBook] = useState<PaperBook>(paperTradingEngine.getBook());
@@ -87,8 +78,10 @@ export const PaperTrading: React.FC<PaperTradingProps> = ({ optionQuotes, niftyL
   const [side, setSide] = useState<PaperOptionType>('CE');
   const [selectedStrike, setSelectedStrike] = useState<number | null>(null);
   const [lots, setLots] = useState(1);
-  const [slPercent, setSlPercent] = useState<number | ''>(30);
-  const [tgtPercent, setTgtPercent] = useState<number | ''>(50);
+  // A symmetric 10% stop and target. Both stay editable per order; this is only
+  // the starting point the form opens with.
+  const [slPercent, setSlPercent] = useState<number | ''>(10);
+  const [tgtPercent, setTgtPercent] = useState<number | ''>(10);
   const [useSl, setUseSl] = useState(true);
   const [useTgt, setUseTgt] = useState(true);
   const [trailPoints, setTrailPoints] = useState<number | ''>('');
@@ -212,12 +205,22 @@ export const PaperTrading: React.FC<PaperTradingProps> = ({ optionQuotes, niftyL
   };
 
   const handleExit = (position: PaperPosition) => {
-    const result = paperTradingEngine.exit(position.id, 'MANUAL', undefined, niftyLtp);
+    const result = paperTradingEngine.exit(
+      position.id,
+      'MANUAL',
+      undefined,
+      niftyLtp,
+      `Closed by hand from the Paper Trading screen at ₹${position.ltp.toFixed(2)}.`
+    );
     flash(result.message, result.ok);
   };
 
   const handleExitAll = () => {
-    const count = paperTradingEngine.exitAll('MANUAL', niftyLtp);
+    const count = paperTradingEngine.exitAll(
+      'MANUAL',
+      niftyLtp,
+      'Squared off by hand — "Exit all" on the Paper Trading screen.'
+    );
     if (count) flash(`Squared off ${count} position${count > 1 ? 's' : ''}.`, true);
   };
 
@@ -576,7 +579,7 @@ export const PaperTrading: React.FC<PaperTradingProps> = ({ optionQuotes, niftyL
                               <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${p.optionType === 'CE' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
                                 {p.optionType}
                               </span>
-                              <AutoTag source={p.source} tags={p.tags} />
+                              <AutoTag source={p.source} strategy={p.strategy} tags={p.tags} />
                               <div>
                                 <div className="font-bold text-white font-mono">{p.strike}</div>
                                 <div className="text-[9px] text-slate-500">{clockTime(p.entryTime)}{p.expiry ? ` · ${p.expiry}` : ''}</div>
@@ -626,62 +629,7 @@ export const PaperTrading: React.FC<PaperTradingProps> = ({ optionQuotes, niftyL
                   <div><div className="text-[9px] uppercase text-slate-500 font-bold">Streaks</div><div className="text-sm font-mono font-bold"><span className="text-emerald-400">{stats.bestStreak}W</span> <span className="text-slate-600">/</span> <span className="text-red-400">{stats.worstStreak}L</span></div></div>
                 </div>
 
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-slate-950/90 backdrop-blur text-[9px] uppercase tracking-wider text-slate-500">
-                    <tr>
-                      <th className="px-3 py-2.5 text-left font-bold">Contract</th>
-                      <th className="px-3 py-2.5 text-right font-bold">Qty</th>
-                      <th className="px-3 py-2.5 text-right font-bold">Entry → Exit</th>
-                      <th className="px-3 py-2.5 text-right font-bold">MFE / MAE</th>
-                      <th className="px-3 py-2.5 text-right font-bold">Charges</th>
-                      <th className="px-3 py-2.5 text-right font-bold">Net P&L</th>
-                      <th className="px-3 py-2.5 text-center font-bold">Reason</th>
-                      <th className="px-3 py-2.5 text-right font-bold">Held</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {book.trades.map((t) => (
-                      <tr key={t.id} className="hover:bg-white/5">
-                        <td className="px-3 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${t.optionType === 'CE' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
-                              {t.optionType}
-                            </span>
-                            <AutoTag source={t.source} tags={t.tags} />
-                            <div>
-                              <div className="font-bold text-white font-mono">{t.strike}</div>
-                              <div className="text-[9px] text-slate-500">{clockTime(t.entryTime)} → {clockTime(t.exitTime)}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono text-slate-400">{t.lots}L</td>
-                        <td className="px-3 py-3 text-right font-mono text-slate-300">₹{t.entryPrice.toFixed(2)} → ₹{t.exitPrice.toFixed(2)}</td>
-                        <td className="px-3 py-3 text-right font-mono text-[10px]">
-                          <span className="text-emerald-400">+{t.maxFavourable.toFixed(1)}</span>
-                          <span className="text-slate-600"> / </span>
-                          <span className="text-red-400">{t.maxAdverse.toFixed(1)}</span>
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono text-amber-400/80">{inr(t.charges, 0)}</td>
-                        <td className={`px-3 py-3 text-right font-mono font-bold ${pnlColor(t.netPnl)}`}>
-                          <div>{signed(t.netPnl)}</div>
-                          <div className="text-[10px] opacity-80">{t.netPnlPercent >= 0 ? '+' : ''}{t.netPnlPercent.toFixed(1)}%</div>
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                            t.exitReason === 'TARGET' ? 'bg-emerald-500/15 text-emerald-400'
-                            : t.exitReason === 'STOPLOSS' ? 'bg-red-500/15 text-red-400'
-                            : t.exitReason === 'TRAILING' ? 'bg-amber-500/15 text-amber-400'
-                            : t.exitReason === 'EOD' ? 'bg-blue-500/15 text-blue-400'
-                            : 'bg-slate-700/40 text-slate-400'
-                          }`}>
-                            {t.exitReason}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-right font-mono text-slate-500 text-[10px]">{holdLabel(t.holdMs)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <TradeHistoryTable trades={book.trades} showDate />
               </>
             )}
           </div>

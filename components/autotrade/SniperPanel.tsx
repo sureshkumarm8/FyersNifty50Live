@@ -26,12 +26,15 @@ import {
 } from '../../services/sniperEngine';
 import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
 import { LiveThesis, reconcile, sessionDrift } from '../../services/sniperReconcile';
-import { LiveVerdict, isLiveReviewConfigured, requestLiveVerdict } from '../../services/sniperReview';
+import {
+  LiveVerdict, allowedDirectionOf, isLiveReviewConfigured, needsFreshVerdict, requestLiveVerdict
+} from '../../services/sniperReview';
 import { getAIProviderLabel } from '../../services/aiProvider';
 import { isMarketLive, readFlag, writeFlag } from '../../services/marketSession';
 import { estimateOptionPremium } from '../../services/optionPricing';
 import { PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
 import { BlockList, Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
+import AutoTradeHistory from './AutoTradeHistory';
 import { RangeBoard, SetupBoard, ThesisBoard, fmt } from './SniperViews';
 
 const LOTS_KEY = 'sniper_lots';
@@ -209,7 +212,15 @@ export const SniperPanel: React.FC<Props> = ({
   // Roll the one-trade-per-day lock over at IST midnight.
   useEffect(() => {
     const today = istDayKey(tick);
-    if (dayState.day !== today) persistDay(freshDay(today));
+    if (dayState.day !== today) {
+      persistDay(freshDay(today));
+      // Yesterday's opinion and its re-ask budget die with yesterday's trade,
+      // or a tab left open overnight starts the new session with the officer
+      // exhausted and a stale verdict still standing.
+      setLiveVerdict(null);
+      reviewCountRef.current = 0;
+      lastAskedRef.current = 0;
+    }
   }, [tick, dayState.day, persistDay]);
 
   /**
@@ -301,6 +312,8 @@ export const SniperPanel: React.FC<Props> = ({
    * adopts and announces a plan that has actually changed.
    */
   const loadedPlanRef = useRef<number | null>(null);
+  /** Set while the store is unreadable, so the warning is logged once per outage. */
+  const planReadFailedRef = useRef(false);
   const loadPlaybook = useCallback(async () => {
     try {
       const saved = await imageStorageService.loadState<{
@@ -330,11 +343,28 @@ export const SniperPanel: React.FC<Props> = ({
         setPlaybook(null);
         setPlanProvisional(false);
       }
-    } catch {
-      loadedPlanRef.current = null;
-      setPlaybook(null);
-      setPlanProvisional(false);
+    } catch (err: any) {
+      /**
+       * A failed read is not the absence of a plan.
+       *
+       * This used to null the plan and the ref, which had two consequences: the
+       * thesis flapped back to NO_PLAN for a poll - dropping the morning's
+       * levels mid-window - and the next successful read re-announced the same
+       * plan as if it were new. That is the "Pre-market plan loaded" line
+       * repeating eight times in a minute while the pre-market screen next door
+       * was writing to the same store. Whatever was loaded last stays loaded.
+       */
+      if (loadedPlanRef.current === null) {
+        setPlaybook(null);
+        setPlanProvisional(false);
+      }
+      if (!planReadFailedRef.current) {
+        planReadFailedRef.current = true;
+        addLog(`📋 Could not read the pre-market plan (${err?.message ?? 'storage error'}) — keeping the last one.`, 'warn');
+      }
+      return;
     }
+    planReadFailedRef.current = false;
   }, [addLog]);
 
   /** The manual Reload button must re-announce even when nothing changed. */
@@ -408,8 +438,9 @@ export const SniperPanel: React.FC<Props> = ({
     if (!range || rangeLockedRef.current) return;
     if (istMinutesOf(new Date(tick)) < ENTRY_OPEN) return;
     rangeLockedRef.current = true;
+    const width = Math.round(range.resistance - range.support);
     addLog(
-      `🔒 Range locked — high ${fmt(range.high)} / low ${fmt(range.low)} → support ${fmt(range.support)}, resistance ${fmt(range.resistance)} (${range.openType.replace('_', ' ')})`,
+      `🔒 Range locked — high ${fmt(range.high)} / low ${fmt(range.low)} → support ${fmt(range.support)}, resistance ${fmt(range.resistance)} (${width}pt zone, ${range.openType.replace('_', ' ')})`,
       'good'
     );
   }, [range, tick, addLog]);
@@ -505,11 +536,21 @@ export const SniperPanel: React.FC<Props> = ({
     const spot = niftyLtp;
     const { direction: signalDirection, confidence: signalConfidence, reasons: signalReasons } = liveSignal;
 
-    // The AI pass is veto-only, so it can only ever make the thesis stricter.
-    const aiPenalty =
-      liveVerdict && liveVerdict.call !== 'PROCEED' ? liveVerdict.confidencePenalty : 0;
-    const aiVeto =
-      liveVerdict?.call === 'BLOCK' ? `Risk officer stood the day down — ${liveVerdict.reason}` : null;
+    /**
+     * The latest opinion stays in force until another one replaces it.
+     *
+     * Ageing a verdict out into "no opinion" would mean a BLOCK quietly lifting
+     * itself six minutes later with auto-execute still armed. Staleness only
+     * schedules a re-ask (see the review effect below); the answer that comes
+     * back is what reopens or re-closes the day.
+     */
+    const verdict = liveVerdict;
+
+    // The AI pass can only narrow: subtract confidence, close one side, or
+    // stand the day down. It can never open a trade the mechanics refused.
+    const aiPenalty = verdict && verdict.call !== 'PROCEED' ? verdict.confidencePenalty : 0;
+    const aiVeto = verdict?.call === 'BLOCK' ? `Risk officer stood the day down — ${verdict.reason}` : null;
+    const allowedDirection = allowedDirectionOf(verdict);
 
     setEvaluation(
       evaluate({
@@ -527,7 +568,9 @@ export const SniperPanel: React.FC<Props> = ({
           resistance: thesis.resistance,
           confidenceDelta: thesis.confidenceDelta + (aiPenalty === -100 ? 0 : aiPenalty),
           veto: thesis.veto ?? aiVeto,
-          state: thesis.state
+          state: thesis.state,
+          allowedDirection,
+          allowedReason: allowedDirection ? verdict?.reason ?? null : null
         }
       })
     );
@@ -537,6 +580,12 @@ export const SniperPanel: React.FC<Props> = ({
 
   const aiReady = useMemo(() => isLiveReviewConfigured(credentials), [credentials]);
   const aiLabel = useMemo(() => getAIProviderLabel(credentials), [credentials]);
+
+  /** Re-ask budget. Spent on answers, never on attempts — see the effect below. */
+  const MIN_REVIEW_GAP_MS = 90 * 1000;
+  const MAX_REVIEWS_PER_DAY = 8;
+  const reviewCountRef = useRef(0);
+  const lastAskedRef = useRef(0);
 
   /**
    * The live second opinion.
@@ -591,10 +640,19 @@ export const SniperPanel: React.FC<Props> = ({
         aiLabel
       );
       setLiveVerdict(verdict);
+      reviewCountRef.current += 1;
       addLog(
         `🧠 Risk officer: ${verdict.call} — ${verdict.reason}`,
-        verdict.call === 'BLOCK' ? 'bad' : verdict.call === 'TRIM' ? 'warn' : 'good'
+        verdict.call === 'BLOCK' ? 'bad' : verdict.call === 'PROCEED' ? 'good' : 'warn'
       );
+      if (verdict.call === 'REFRAME') {
+        const survivor =
+          verdict.allow === 'LONG_ONLY'
+            ? `the bounce — ${SNIPER.itmPoints}-ITM CE at ${fmt(thesisRef.current.support ?? 0)}`
+            : `the fade — ${SNIPER.itmPoints}-ITM PE at ${fmt(thesisRef.current.resistance ?? 0)}`;
+        addLog(`🎯 Day narrowed to one side: ${survivor}. The other wall is off the table.`, 'warn');
+        if (verdict.waitFor) addLog(`⏳ Trigger to wait for: ${verdict.waitFor}`, 'info');
+      }
     } catch (err: any) {
       // A failed second opinion must never become a reason not to trade, nor a
       // reason to trade. It simply leaves the mechanical decision untouched.
@@ -605,22 +663,42 @@ export const SniperPanel: React.FC<Props> = ({
   }, [aiReady, aiLabel, credentials, reviewing, range, playbook, liveSignal, addLog]);
 
   /**
-   * One automatic pass, fired when the range locks at 09:25.
+   * The officer is asked repeatedly through the entry window, not once.
    *
-   * That is the moment the morning's thesis has been fully tested and the
-   * entry window opens - the only point where a second opinion can change
-   * anything and still leave time to act on it.
+   * A single 09:25 pass made one model round-trip the whole session's verdict:
+   * a BLOCK at 09:26 ended a day that still had nineteen minutes of window and
+   * a completely different market in it by 09:40. So the pass re-runs whenever
+   * its previous answer has stopped describing the tape - `needsFreshVerdict`
+   * decides that on age and on distance travelled - and is rate-limited so a
+   * local model is never asked twice inside ninety seconds.
+   *
+   * A re-ask is the ONLY thing that can overturn a standing verdict, which is
+   * why the budget is spent on answers rather than attempts: a failed call does
+   * not consume it, or a flaky endpoint could permanently freeze a blocked day.
+   *
+   * It is still not in the hot path. Nothing waits for it; a missing answer
+   * simply leaves the previous decision in force.
    */
-  const autoReviewedRef = useRef(false);
   useEffect(() => {
-    if (autoReviewedRef.current || !aiReady || !armed) return;
+    if (!aiReady || !armed || reviewing) return;
     if (!range || thesis.state === 'PENDING' || thesis.state === 'NO_PLAN') return;
-    if (istMinutesOf(new Date(tick)) < ENTRY_OPEN) return;
-    if (istMinutesOf(new Date(tick)) >= ENTRY_CLOSE) return;
-    autoReviewedRef.current = true;
-    addLog(`🧠 Asking ${aiLabel} to sanity-check the reconciled thesis…`, 'info');
+    const mins = istMinutesOf(new Date(tick));
+    if (mins < ENTRY_OPEN || mins >= ENTRY_CLOSE) return;
+    if (reviewCountRef.current >= MAX_REVIEWS_PER_DAY) return;
+    if (tick - lastAskedRef.current < MIN_REVIEW_GAP_MS) return;
+    if (!needsFreshVerdict(liveVerdict, niftyLtp, tick)) return;
+
+    lastAskedRef.current = tick;
+    addLog(
+      liveVerdict
+        ? `🧠 The ${liveVerdict.atStr} read was taken at ${fmt(liveVerdict.spot)} and no longer fits the tape — asking ${aiLabel} again…`
+        : `🧠 Asking ${aiLabel} to sanity-check the reconciled thesis…`,
+      'info'
+    );
     runLiveReview();
-  }, [tick, aiReady, armed, range, thesis.state, aiLabel, runLiveReview, addLog]);
+  }, [
+    tick, aiReady, armed, reviewing, range, thesis.state, liveVerdict, niftyLtp, aiLabel, runLiveReview, addLog
+  ]);
 
   // --- paper ledger mirror --------------------------------------------------
 
@@ -655,6 +733,18 @@ export const SniperPanel: React.FC<Props> = ({
         `THESIS-${t.state}`,
         `LEVELS-${t.levelSource}`
       ];
+      // The whole decision, not a truncated one-liner. This is what the trade
+      // will have to be judged against once the outcome is known.
+      const entryReason = [
+        `Sniper took ${setup.direction} via the ${setup.strike} ${setup.optionType} at ₹${premium.toFixed(2)}, ` +
+          `with Nifty at ${fmt(setup.entrySpot)}.`,
+        `Price was ${setup.zone === 'NEAR_SUPPORT' ? 'near support' : 'near resistance'} and the ` +
+          `overnight thesis read ${t.state} off ${t.levelSource} levels.`,
+        `Plan: target ${fmt(setup.targetSpot)} (+${SNIPER.targetPoints}), stop ${fmt(setup.stopSpot)} ` +
+          `(−${SNIPER.stopPoints}), flat by ${SNIPER.hardStop} regardless.`,
+        ...(setup.reasoning?.length ? [`Confluence: ${setup.reasoning.join(' · ')}`] : [])
+      ].join('\n');
+
       paperTradingEngine
         .openExternal({
           symbol: setup.symbol,
@@ -666,6 +756,8 @@ export const SniperPanel: React.FC<Props> = ({
           entryPrice: premium,
           spot: setup.entrySpot,
           tags,
+          strategy: 'SNIPER',
+          entryReason,
           notes: `Sniper ${setup.optionType} at ${fmt(setup.entrySpot)} · target ${fmt(setup.targetSpot)} / stop ${fmt(
             setup.stopSpot
           )} · ${setup.reasoning[0] ?? ''}`
@@ -681,20 +773,52 @@ export const SniperPanel: React.FC<Props> = ({
     [addLog, lots]
   );
 
-  /** Map the protocol's exit labels onto the paper book's reasons. */
+  /**
+   * Map the protocol's exit labels onto the paper book's reasons.
+   *
+   * The bucket is coarse by design — it is shared with manual trading — so the
+   * engine's own wording is carried alongside it. Without that, "10:15 hard
+   * stop" and a hand-clicked exit both land as EOD/MANUAL and the history can
+   * no longer tell you which rule actually ended the trade.
+   */
   const journalExit = useCallback(
-    (symbol: string, premium: number, reason: string) => {
+    (symbol: string, premium: number, reason: string, pnl?: number) => {
       if (tradingModeRef.current !== 'PAPER') return;
       const r = reason.toLowerCase();
       const mapped: PaperExitReason = r.includes('target')
         ? 'TARGET'
-        : r.includes('stop -') || r.includes('stoploss') || r.includes('stop loss')
+        : r.includes('stop -') || r.includes('stop −') || r.includes('stoploss') || r.includes('stop loss')
           ? 'STOPLOSS'
           : r.includes('hard stop')
             ? 'EOD'
             : 'MANUAL';
+
+      const spot = latest.current.niftyLtp;
+      const setup = setupRef.current;
+      const drift =
+        setup && spot != null
+          ? (spot - setup.entrySpot) * (setup.direction === 'LONG' ? 1 : -1)
+          : null;
+
+      const exitNote = [
+        `Exited at ₹${premium.toFixed(2)} — ${reason}.`,
+        drift != null
+          ? `Nifty moved ${drift >= 0 ? '+' : ''}${drift.toFixed(1)} points from the ${fmt(setup!.entrySpot)} entry.`
+          : '',
+        mapped === 'TARGET'
+          ? `The +${SNIPER.targetPoints}-point target was reached, so the protocol takes the trade off.`
+          : mapped === 'STOPLOSS'
+            ? `The −${SNIPER.stopPoints}-point stop was breached; the protocol exits without negotiation.`
+            : mapped === 'EOD'
+              ? `The ${SNIPER.hardStop} hard stop applies — the Sniper never holds a position past it.`
+              : 'Closed outside the automatic rules.',
+        pnl != null ? `Booked ${inr(pnl)} on the broker book.` : ''
+      ]
+        .filter(Boolean)
+        .join(' ');
+
       paperTradingEngine
-        .closeExternal(symbol, premium, mapped, latest.current.niftyLtp)
+        .closeExternal(symbol, premium, mapped, spot, exitNote)
         .then(res => {
           if (res.ok) addLog(`📒 Paper ledger updated — ${res.message}`, 'info');
         })
@@ -716,7 +840,7 @@ export const SniperPanel: React.FC<Props> = ({
         const res = await om.placeOrder(symbol, pos.side === 'LONG' ? 'SELL' : 'BUY', Math.abs(pos.quantity), 'MARKET');
         if (res.success) {
           addLog(`🚪 Exit ${symbol} — ${reason} · P&L ${inr(pos.pnl)}`, pos.pnl >= 0 ? 'good' : 'bad');
-          journalExit(symbol, pos.ltp ?? pos.avgPrice, reason);
+          journalExit(symbol, pos.ltp ?? pos.avgPrice, reason, pos.pnl);
           persistDay({
             ...dayRef.current,
             pointsCaptured: setupRef.current
@@ -1045,6 +1169,8 @@ export const SniperPanel: React.FC<Props> = ({
           )}
         </Card>
       </div>
+
+      <AutoTradeHistory strategy="SNIPER" tradingMode={tradingMode} />
 
       <Card title="Sniper log" icon={<Crosshair className="h-4 w-4 text-emerald-400" />}>
         <LogFeed entries={log} emptyHint="Arm the sniper to start the Download." />

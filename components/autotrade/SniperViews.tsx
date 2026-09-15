@@ -259,7 +259,13 @@ export const ThesisBoard: React.FC<{
                 <p className="mt-1.5 text-[11px] leading-snug text-slate-300">
                   <span
                     className={`font-bold ${
-                      verdict.call === 'BLOCK' ? 'text-rose-300' : verdict.call === 'TRIM' ? 'text-amber-300' : 'text-emerald-300'
+                      verdict.call === 'BLOCK'
+                        ? 'text-rose-300'
+                        : verdict.call === 'TRIM'
+                          ? 'text-amber-300'
+                          : verdict.call === 'REFRAME'
+                            ? 'text-sky-300'
+                            : 'text-emerald-300'
                     }`}
                   >
                     {verdict.call}
@@ -267,6 +273,24 @@ export const ThesisBoard: React.FC<{
                   — {verdict.reason}
                 </p>
                 {verdict.read && <p className="mt-1 text-[10.5px] italic leading-snug text-slate-500">{verdict.read}</p>}
+
+                {/* A narrowed day is the most actionable thing this pass can
+                    produce, so it is stated as an instruction, not a nuance. */}
+                {verdict.call === 'REFRAME' && (
+                  <div className="mt-2 rounded-lg border border-sky-500/30 bg-sky-500/[0.07] px-2.5 py-2">
+                    <p className="text-[11px] font-bold text-sky-200">
+                      {verdict.allow === 'LONG_ONLY'
+                        ? `Only the bounce is live — ${SNIPER.itmPoints}-ITM CE at support ${fmt(thesis.support)}.`
+                        : `Only the fade is live — ${SNIPER.itmPoints}-ITM PE at resistance ${fmt(thesis.resistance)}.`}
+                    </p>
+                    <p className="mt-0.5 text-[10.5px] leading-snug text-slate-400">
+                      {verdict.waitFor
+                        ? `Wait for: ${verdict.waitFor}`
+                        : 'The other wall is off the table for today; this one arms normally when price reaches it.'}
+                    </p>
+                  </div>
+                )}
+
                 {verdict.watchFor.length > 0 && (
                   <ul className="mt-1.5 space-y-0.5">
                     {verdict.watchFor.map((w, i) => (
@@ -277,13 +301,14 @@ export const ThesisBoard: React.FC<{
                   </ul>
                 )}
                 <p className="mt-1.5 font-mono text-[9px] text-slate-600">
-                  {verdict.atStr} @ {fmt(verdict.spot)} · can only block or trim, never authorise
+                  {verdict.atStr} @ {fmt(verdict.spot)} · may block, trim or narrow the day to one side — never
+                  authorise
                 </p>
               </>
             ) : (
               <p className="mt-1.5 text-[10.5px] leading-snug text-slate-500">
-                Runs automatically when the range locks at {SNIPER.entryStart}. It can block a trade or shave
-                confidence; it can never create one.
+                Runs from {SNIPER.entryStart} and again whenever its last read stops fitting the tape. It can shave
+                confidence, close one side of the zone, or stand the day down — it can never create a trade.
               </p>
             )}
           </div>

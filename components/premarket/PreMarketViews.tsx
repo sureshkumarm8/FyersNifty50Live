@@ -15,8 +15,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity, AlertCircle, BarChart2, Brain, CheckCircle2, ClipboardCopy, Clock, Copy, Crosshair,
-  ChevronDown, Download, GitCompareArrows, Image as ImageIcon, Loader2, RefreshCw, Shield, Sparkles, Target,
-  Trash2, Upload, X, Zap
+  ChevronDown, Download, FileDown, FileJson, FileUp, GitCompareArrows, Image as ImageIcon, Loader2,
+  RefreshCw, Shield, Sparkles, Target, Trash2, Upload, X, Zap
 } from 'lucide-react';
 import { GapScenario, SNIPER, SniperPlaybook, ZonePlay, istMinutes, phaseLabelOf, resolvePhase } from '../../services/sniperPlaybook';
 import { BASIS_LABEL, BASIS_NOTE, DecisionBasis } from '../../services/premarketSchedule';
@@ -51,6 +51,117 @@ const STATE_TONE: Record<SlotState, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Session transfer — the workspace as a portable JSON file.
+// ---------------------------------------------------------------------------
+
+/**
+ * Export / import, folded into one menu.
+ *
+ * Three actions, not one button: a full export is a restore point (it carries
+ * the base64 screenshots and can be worth megabytes), a data-only export is the
+ * same envelope minus the images for downstream consumers, and import replaces
+ * the workspace outright. Collapsing them into a single control would hide the
+ * size/fidelity trade-off at exactly the moment it matters.
+ */
+const SessionTransfer: React.FC<{
+  hasWorkspace: boolean;
+  onExport: (includeImages: boolean) => void;
+  onImport: (file: File) => void;
+}> = ({ hasWorkspace, onExport, onImport }) => {
+  const [open, setOpen] = useState(false);
+  const wrapRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const pick = (fn: () => void) => {
+    setOpen(false);
+    fn();
+  };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Export or import this session as JSON"
+        className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 p-2 text-slate-300 transition hover:bg-slate-800"
+      >
+        <FileJson size={13} />
+        <ChevronDown size={11} className={open ? 'rotate-180 transition' : 'transition'} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 z-40 mt-1 w-64 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-xl shadow-black/40">
+          <button
+            disabled={!hasWorkspace}
+            onClick={() => pick(() => onExport(true))}
+            className="flex w-full items-start gap-2 px-3 py-2.5 text-left transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            <FileDown size={13} className="mt-0.5 shrink-0 text-emerald-300" />
+            <span>
+              <span className="block text-xs font-semibold text-slate-100">Export full session</span>
+              <span className="block text-[10px] text-slate-500">
+                Screenshots, verdicts and every phase — re-importable anywhere.
+              </span>
+            </span>
+          </button>
+
+          <button
+            disabled={!hasWorkspace}
+            onClick={() => pick(() => onExport(false))}
+            className="flex w-full items-start gap-2 border-t border-slate-800 px-3 py-2.5 text-left transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            <Download size={13} className="mt-0.5 shrink-0 text-sky-300" />
+            <span>
+              <span className="block text-xs font-semibold text-slate-100">Export data only</span>
+              <span className="block text-[10px] text-slate-500">
+                Same JSON without the images — small enough to feed other systems.
+              </span>
+            </span>
+          </button>
+
+          <label className="flex cursor-pointer items-start gap-2 border-t border-slate-800 px-3 py-2.5 transition hover:bg-slate-800">
+            <input
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                setOpen(false);
+                // Import replaces the workspace, so a loaded session is never
+                // silently overwritten by a file dropped on the wrong tab.
+                if (
+                  hasWorkspace &&
+                  !window.confirm('Importing replaces the current charts and plan. Continue?')
+                ) {
+                  return;
+                }
+                onImport(file);
+              }}
+            />
+            <FileUp size={13} className="mt-0.5 shrink-0 text-amber-300" />
+            <span>
+              <span className="block text-xs font-semibold text-slate-100">Import session JSON</span>
+              <span className="block text-[10px] text-slate-500">
+                Restores charts and the plan from an exported file.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Command bar — everything you can *do* on this screen, in one sticky strip.
 // ---------------------------------------------------------------------------
 
@@ -69,16 +180,20 @@ export const CommandBar: React.FC<{
   onGenerate: () => void;
   isGenerating: boolean;
   onCopy: () => void;
+  /** True exports the screenshots too, making the file a restore point. */
+  onExport: (includeImages: boolean) => void;
+  onImport: (file: File) => void;
   onReset: () => void;
   hasDecision: boolean;
   generatedAtStr?: string;
 }> = ({
   visionReady, visionLabel, charts, analyzingSlots, coverage, liveLtp, manualSpot, onManualSpot,
-  onFiles, onAnalyzeRemaining, hasUnanalyzed, onGenerate, isGenerating, onCopy, onReset,
-  hasDecision, generatedAtStr
+  onFiles, onAnalyzeRemaining, hasUnanalyzed, onGenerate, isGenerating, onCopy, onExport, onImport,
+  onReset, hasDecision, generatedAtStr
 }) => {
   const pct = Math.round((coverage / CHART_SLOTS.length) * 100);
   const busy = analyzingSlots.length > 0;
+  const hasWorkspace = hasDecision || CHART_SLOTS.some(s => !!charts[s.id]);
 
   return (
     <div className="sticky top-0 z-30 -mx-4 mb-4 border-b border-slate-800 bg-slate-950/90 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
@@ -194,6 +309,9 @@ export const CommandBar: React.FC<{
               <Copy size={13} />
             </button>
           )}
+
+          <SessionTransfer hasWorkspace={hasWorkspace} onExport={onExport} onImport={onImport} />
+
           <button
             onClick={onReset}
             title="Clear every chart and the saved plan"

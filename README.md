@@ -43,7 +43,7 @@ A high-performance real-time stock tracking and analysis dashboard for **Nifty50
 *   **Sees What You See**: A real Chrome window stays logged in to Zerodha Kite and Sensibull, screenshots the NIFTY 50 price chart and the OI-vs-Strike chart every cycle.
 *   **Read by a Vision Model**: Both images are sent to a local Ollama vision model, which returns a structured verdict — bias, confidence, supports/resistances, OI walls, expected range and risks.
 *   **Automatic Cadence**: Runs on a wall-clock-aligned schedule (1 / 2 / 5 / 10 / 15 minutes), with Capture Now, Pause/Resume and run history in the UI.
-*   **Local Only**: Requires the companion capture engine on your machine — see [Vision Analysis Setup](#-vision-analysis-setup) below.
+*   **Local Only — or Imported**: Live capture requires the companion engine on your machine. Anywhere else (including the deployed build), the screen imports the analysis that engine exported — charts included — straight off disk. See [Vision Analysis Setup](#-vision-analysis-setup) below.
 
 ### 📊 Live Equity Dashboard
 *   **Real-time Quotes**: Fetches live data for all Nifty50 stocks instantly.
@@ -183,6 +183,19 @@ previous session's OI chart will point you at the wrong zone. The daily chart is
 The screen works with no live feed at all — enter the previous close manually, or let the models read
 the last price off the charts.
 
+**Portable sessions.** The JSON menu in the command bar exports the whole workspace — the four
+screenshots, every chart verdict and each phase of the plan — as one self-describing file
+(`premarket_YYYY-MM-DD.json`, `kind: "fyers-nifty50.premarket"`), and imports it back on any machine.
+*Export data only* writes the same envelope without the base64 images, which is the form to hand to
+another system: small, diff-able and enough to reconstruct the levels, the bias and the playbook.
+
+Import replaces the workspace rather than merging into it, so a plan can never be cut from half this
+morning's charts and half a file's. Everything read from disk is re-validated in
+`services/premarketExport.ts` — unknown slots are dropped, verdict fields are coerced back into
+range, and a plan written against a different `DECISION_SCHEMA` is refused with a warning while the
+screenshots are still restored. A file from another trading day imports fine but says so in the log:
+its zones are history, not today's.
+
 ## 🤖 AutoTrade — two strategies, kept apart
 
 `components/UnifiedAutoTrade.tsx` is only a shell. It owns the tab and the PAPER/LIVE switch; each
@@ -215,6 +228,33 @@ planned support/resistance against the live 09:15–09:25 range. Agreement withi
 out as *confluence* — the highest-conviction version of the setup. A wider gap says the chart levels
 are stale and the live range wins.
 
+**The risk officer** (`services/sniperReview.ts`) is the AI second opinion on the live session, and
+it may only ever narrow — it cannot move a level, pick a strike, or authorise a trade the mechanics
+refused. What it *can* do is decide which of the day's two plays survives:
+
+| Call | Effect |
+| --- | --- |
+| `PROCEED` | No objection. Both plays stand. |
+| `TRIM` | Both stand, confidence shaved by 1–15 points. |
+| `REFRAME` | The day lives, but only one wall may be traded — the bounce at support **or** the fade at resistance. |
+| `BLOCK` | Neither play is tradable at any price today. |
+
+`REFRAME` exists because a directional objection is not an objection to trading. Negative breadth
+and call writing against a bullish plan do not kill the session — they kill the bounce and leave the
+fade at resistance standing, and the engine keeps that side armed to fire the moment price reaches
+it. The rule is enforced structurally, not by prompting: a model that answers `BLOCK` while naming a
+side that still works is read as a reframe, and one that answers `REFRAME` with both sides open is
+read as a trim. `BLOCK` is reserved for conditions that poison *both* plays — no room between the
+walls, a range built from too few ticks, price trending through levels rather than respecting them.
+
+No verdict owns the day, either. An opinion is written against a price, so once it ages past
+`VERDICT_TTL_MS` (6 minutes) or price travels a full arm band from where it was judged, the officer is
+asked again — rate-limited to one pass every 90 seconds and 8 answers a day, a budget spent on replies
+rather than attempts so a flaky endpoint can never freeze a blocked session. An aged verdict is *not*
+cancelled by the clock: only another opinion replaces one, because the conditions a `BLOCK` names (no
+room, too few ticks, an untrusted feed) are facts about the day, not about the minute. Before this, a
+single `BLOCK` at 09:26 ended a session that still had nineteen minutes of entry window left.
+
 ### Momentum
 
 A different animal, and it looks like one: blue instead of green, all-session, multi-factor scoring
@@ -227,9 +267,10 @@ The **Vision** screen does not analyse numbers — it analyses *pictures of your
 capture engine drives a real, non-headless Chrome that holds your Zerodha Kite and Sensibull
 sessions, screenshots both charts on a schedule, and asks a local Ollama vision model to read them.
 
-Because it needs Playwright, a visible browser and a persistent login profile, **it can only run on
-your own machine** — it is not available in a deployed (Vercel) build. The screen detects this and
-shows setup instructions instead of an error.
+Because it needs Playwright, a visible browser and a persistent login profile, **live capture can
+only run on your own machine** — it is not available in a deployed (Vercel) build. The screen
+detects this and offers two things instead of an error: setup instructions, and an **importer for
+analysis the engine already saved** (see *Importing saved analysis* below).
 
 1.  **Pull a vision-capable model** (e.g. `ollama pull gemma3:12b` — any model with image support works):
     ```bash
@@ -260,6 +301,33 @@ Notes:
     1 minute are safe.
 *   If a target shows *Login required*, use the monitor button to bring the capture browser on
     screen, log in, then hide it again.
+
+### Importing saved analysis (works on Vercel)
+
+The capture engine mirrors every finished run into a plain folder —
+`liveImageAnalsis/data/exports/` — holding one JSON bundle per trading day plus the screenshots.
+The Vision screen can read that folder **directly off disk in your browser**, so the analysis is
+reviewable anywhere, with no engine, no local server and no upload.
+
+1.  On the machine that ran the engine (optional — the folder is written automatically):
+    ```bash
+    cd ../liveImageAnalsis
+    npm run export             # re-export the whole history
+    npm run export -- --embed  # optional: one self-contained file per day, screenshots inlined
+    ```
+2.  In the dashboard, open **Vision**. When the engine is unreachable the screen shows an
+    **Import saved analysis** panel (it is also reachable from the **Archive** button when the
+    engine *is* running).
+3.  Choose one of:
+    *   **Choose exports folder** — pick `data/exports`. In Chrome/Edge the folder is remembered,
+        so a later **Re-sync** pulls in new days with one click.
+    *   **Choose JSON files** — pick `vision-YYYY-MM-DD.json` bundles (and any PNGs), or a single
+        `vision-YYYY-MM-DD.embedded.json` which already contains its screenshots.
+    *   **Drag and drop** any of those onto the panel.
+
+Imported runs are cached in IndexedDB, so they survive reloads. The archive view is read-only —
+a day selector replaces the capture controls, and the trash button clears only the browser copy;
+the exported files on disk are never touched. Re-importing the same files is idempotent.
 
 ## 🎓 Paper Trading
 
@@ -310,6 +378,7 @@ survives reloads; **Reset Account** in the settings drawer clears it.
 *   `src/components/StockTable.tsx`: Advanced data grid with weighted totals.
 *   `src/services/fyersService.ts`: API interaction.
 *   `src/services/visionService.ts`: Client for the local chart-capture engine.
+*   `src/services/visionArchive.ts`: Client-side importer/cache for exported vision analysis.
 *   `src/services/paperTradingService.ts`: Paper trading engine (fills, charges, brackets, stats).
 *   `src/services/db.ts`: IndexedDB persistence layer.
 *   `server.js`: Local Node.js proxy server.

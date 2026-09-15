@@ -73,6 +73,7 @@ export interface SniperBlock {
     | 'ZONE_BROKEN'
     | 'CONFIDENCE'
     | 'DIRECTION_CONFLICT'
+    | 'SIDE_RESTRICTED'
     | 'NO_ROOM'
     | 'THESIS'
     | 'NO_DATA';
@@ -99,6 +100,8 @@ export interface SniperEvaluation {
   tradedResistance: number | null;
   /** Confidence after the thesis adjustment, so the UI can show the real bar. */
   effectiveConfidence: number;
+  /** The only side still open today, when the day has been narrowed to one. */
+  restrictedTo: 'LONG' | 'SHORT' | null;
 }
 
 // --- time -------------------------------------------------------------------
@@ -161,8 +164,6 @@ export const istDayKey = (ts: number) =>
 
 // --- opening range ----------------------------------------------------------
 
-const floorTo = (v: number, step: number) => Math.floor(v / step) * step;
-const ceilTo = (v: number, step: number) => Math.ceil(v / step) * step;
 
 /**
  * Minutes-since-IST-midnight for a snapshot. Prefers the epoch stamp; falls
@@ -220,19 +221,62 @@ export function buildOpeningRange(
     high,
     low,
     open,
-    support: floorTo(low - 50, SNIPER.strikeStep),
-    resistance: ceilTo(high + 50, SNIPER.strikeStep),
+    ...deriveWalls(high, low),
     openType,
     samples: prices.length,
     lockedAt: now.getTime()
   };
 }
 
+/**
+ * Place the traded walls around the observed opening range.
+ *
+ * The pad is a fraction of the range's own width rather than a flat number, so
+ * the zone reflects what the tape actually did in the first ten minutes. Two
+ * guards bracket it: the zone can never be narrower than a 30-point target can
+ * work in, and never wider than `maxZonePad` allows.
+ *
+ * Deliberately NOT rounded to the 50-point strike step any more. These are spot
+ * levels - the option strike is derived separately from the ATM at entry - so
+ * the rounding bought nothing and pushed both walls outward by up to 49 points
+ * each, on top of an already generous flat 50-point pad. A 16-point opening
+ * range became a 200-point zone that way, and only 30% of a zone is within
+ * `zoneBuffer` of a wall, so price sat mid-range through the entire entry
+ * window and the day was declined mechanically rather than on merit.
+ */
+export function deriveWalls(high: number, low: number): { support: number; resistance: number } {
+  const width = Math.max(0, high - low);
+  const scaled = Math.min(width * SNIPER.zonePadRatio, SNIPER.maxZonePad);
+
+  // Widen symmetrically if the scaled zone cannot house the target.
+  const shortfall = SNIPER.minZoneWidth - (width + scaled * 2);
+  const pad = shortfall > 0 ? scaled + shortfall / 2 : scaled;
+
+  return {
+    support: Math.round(low - pad),
+    resistance: Math.round(high + pad)
+  };
+}
+
 export function classifyZone(spot: number, range: OpeningRange): ZoneState {
   if (spot < range.support - SNIPER.zoneBuffer) return 'BELOW_SUPPORT';
   if (spot > range.resistance + SNIPER.zoneBuffer) return 'ABOVE_RESISTANCE';
-  if (spot <= range.support + SNIPER.zoneBuffer) return 'NEAR_SUPPORT';
-  if (spot >= range.resistance - SNIPER.zoneBuffer) return 'NEAR_RESISTANCE';
+
+  const nearSupport = spot <= range.support + SNIPER.zoneBuffer;
+  const nearResistance = spot >= range.resistance - SNIPER.zoneBuffer;
+
+  /**
+   * On a zone at or near the minimum width the two buffers overlap, so every
+   * price is "at" both walls. Testing support first would then label a coiled
+   * market NEAR_SUPPORT wherever it sat and bias every tight open long. Pick
+   * the wall price is genuinely closer to instead; ties go long, matching the
+   * original order of these tests.
+   */
+  if (nearSupport && nearResistance) {
+    return spot - range.support <= range.resistance - spot ? 'NEAR_SUPPORT' : 'NEAR_RESISTANCE';
+  }
+  if (nearSupport) return 'NEAR_SUPPORT';
+  if (nearResistance) return 'NEAR_RESISTANCE';
   return 'MID_RANGE';
 }
 
@@ -307,6 +351,21 @@ export interface SniperContext {
     confidenceDelta: number;
     veto: string | null;
     state: string;
+    /**
+     * The only side still open today, when something has ruled the other one
+     * out - a risk officer REFRAME, typically.
+     *
+     * This is the difference between "the morning's direction was wrong" and
+     * "there is no trade today". A bearish tape under a bullish plan does not
+     * end the session; it ends the bounce and leaves the fade at resistance
+     * standing. Set to 'SHORT' it blocks entries at support while price is
+     * there, and arms normally the moment price reaches resistance. Null means
+     * both plays stand, which is the default and the behaviour when no opinion
+     * has been given.
+     */
+    allowedDirection?: 'LONG' | 'SHORT' | null;
+    /** Shown on the blocked side, so the restriction explains itself. */
+    allowedReason?: string | null;
   } | null;
 }
 
@@ -359,7 +418,8 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
     mustExit: mins >= HARD_STOP && ctx.hasOpenPosition,
     tradedSupport: range?.support ?? null,
     tradedResistance: range?.resistance ?? null,
-    effectiveConfidence
+    effectiveConfidence,
+    restrictedTo: t?.allowedDirection ?? null
   };
 
   if (base.mustExit) {
@@ -458,6 +518,22 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
     blocks.push({
       code: 'DIRECTION_CONFLICT',
       message: `Price is at ${wantsLong ? 'support' : 'resistance'} but the live signal says ${ctx.signalDirection}. Entry must align with the immediate trend.`
+    });
+  }
+
+  /**
+   * A one-sided day blocks the side that was ruled out, not the day.
+   *
+   * The block is raised only while price is actually at the closed wall - the
+   * whole point of a restriction is that the surviving play stays armed and
+   * fires normally when price gets to it.
+   */
+  const allowed = t?.allowedDirection ?? null;
+  if (allowed && ((wantsLong && allowed === 'SHORT') || (wantsShort && allowed === 'LONG'))) {
+    const survivor = allowed === 'LONG' ? 'the bounce at support' : 'the fade at resistance';
+    blocks.push({
+      code: 'SIDE_RESTRICTED',
+      message: `Today is restricted to ${survivor}${t?.allowedReason ? ` — ${t.allowedReason}` : ''}. Price is at the other wall, so this one is not taken.`
     });
   }
 
