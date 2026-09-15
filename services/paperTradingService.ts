@@ -35,6 +35,13 @@ export type PaperOptionType = 'CE' | 'PE';
 export type PaperTradeSource = 'MANUAL' | 'AUTOTRADE';
 export type PaperExitReason = 'MANUAL' | 'TARGET' | 'STOPLOSS' | 'TRAILING' | 'EOD';
 
+/**
+ * Which engine took the trade. `exitReason` is a coarse bucket shared with
+ * manual trading; this says *who* was responsible, so the Sniper's one trade a
+ * day can be reviewed separately from Momentum's all-session scalping.
+ */
+export type PaperStrategy = 'SNIPER' | 'MOMENTUM';
+
 export interface ChargeBreakdown {
   brokerage: number;
   stt: number;
@@ -70,6 +77,17 @@ export interface PaperPosition {
   notes?: string;
   /** Absent on positions written before sources were tracked - treat as MANUAL. */
   source?: PaperTradeSource;
+  /** Which engine opened it. Only meaningful when `source` is AUTOTRADE. */
+  strategy?: PaperStrategy;
+  /**
+   * Why this trade was taken, in the engine's own words.
+   *
+   * `notes` is a free-form one-liner shown next to the row; this is the full
+   * decision record - the signal, the levels and the confluence that justified
+   * risking money. Without it a closed trade is a number with no lesson in it,
+   * which is exactly what makes a journal useless for improving.
+   */
+  entryReason?: string;
   /** Free-form labels, e.g. ['AUTOTRADE', 'SNIPER', 'CONFLUENCE']. */
   tags?: string[];
   /**
@@ -110,6 +128,18 @@ export interface PaperTrade {
   notes?: string;
   /** Absent on trades written before sources were tracked - treat as MANUAL. */
   source?: PaperTradeSource;
+  /** Which engine took the trade. Only meaningful when `source` is AUTOTRADE. */
+  strategy?: PaperStrategy;
+  /** The full decision record captured at entry. See PaperPosition.entryReason. */
+  entryReason?: string;
+  /**
+   * Why the position was closed, verbatim from the engine.
+   *
+   * `exitReason` collapses every exit into one of five buckets, so "10:15 hard
+   * stop", "stand-down" and "manual click" all arrive as EOD or MANUAL and
+   * become indistinguishable afterwards. This preserves the actual trigger.
+   */
+  exitNote?: string;
   tags?: string[];
 }
 
@@ -481,7 +511,14 @@ class PaperTradingEngine {
       highWaterPremium: price,
       lowWaterPremium: price,
       entryCharges: charges,
-      notes: request.notes
+      notes: request.notes,
+      // A hand-placed trade has no engine reasoning, so record the plan that was
+      // set at entry. It is what the exit will later have to be judged against.
+      entryReason:
+        request.notes?.trim() ||
+        `Manual entry at ₹${price.toFixed(2)}${spot ? ` with Nifty at ${spot.toFixed(2)}` : ''}` +
+          `${target != null ? ` · target ₹${target.toFixed(2)}` : ''}` +
+          `${stopLoss != null ? ` · stop ₹${stopLoss.toFixed(2)}` : ''}`
     };
 
     this.book.positions = [position, ...this.book.positions];
@@ -495,7 +532,7 @@ class PaperTradingEngine {
     };
   }
 
-  public exit(positionId: string, reason: PaperExitReason = 'MANUAL', priceOverride?: number, spot?: number | null): OrderResult {
+  public exit(positionId: string, reason: PaperExitReason = 'MANUAL', priceOverride?: number, spot?: number | null, exitNote?: string): OrderResult {
     const position = this.book.positions.find((p) => p.id === positionId);
     if (!position) return { ok: false, message: 'Position not found.' };
 
@@ -537,6 +574,9 @@ class PaperTradingEngine {
       maxAdverse: position.lowWaterPremium - position.entryPrice,
       notes: position.notes,
       source: position.source ?? 'MANUAL',
+      strategy: position.strategy,
+      entryReason: position.entryReason,
+      exitNote,
       tags: position.tags
     };
 
@@ -580,6 +620,10 @@ class PaperTradingEngine {
     spot: number | null;
     tags?: string[];
     notes?: string;
+    /** Which engine is taking the trade. */
+    strategy?: PaperStrategy;
+    /** The full reasoning behind the entry, preserved for later review. */
+    entryReason?: string;
     /** Defaults to now. Supplied so a restored trade keeps its real entry time. */
     entryTime?: number;
   }): Promise<OrderResult> {
@@ -633,6 +677,8 @@ class PaperTradingEngine {
       entryCharges: charges,
       notes: params.notes,
       source: 'AUTOTRADE',
+      strategy: params.strategy,
+      entryReason: params.entryReason,
       tags: params.tags,
       managed: false
     };
@@ -669,17 +715,19 @@ class PaperTradingEngine {
     symbol: string,
     exitPrice: number,
     reason: PaperExitReason,
-    spot: number | null
+    spot: number | null,
+    /** The engine's own words for why it exited, kept alongside the bucket. */
+    exitNote?: string
   ): Promise<OrderResult> {
     await this.load();
     const position = this.book.positions.find((p) => p.symbol === symbol && p.source === 'AUTOTRADE');
     if (!position) return { ok: false, message: 'No open auto-trade for that contract.' };
-    return this.exit(position.id, reason, Number.isFinite(exitPrice) && exitPrice > 0 ? exitPrice : undefined, spot);
+    return this.exit(position.id, reason, Number.isFinite(exitPrice) && exitPrice > 0 ? exitPrice : undefined, spot, exitNote);
   }
 
-  public exitAll(reason: PaperExitReason = 'MANUAL', spot?: number | null): number {
+  public exitAll(reason: PaperExitReason = 'MANUAL', spot?: number | null, exitNote?: string): number {
     const ids = this.book.positions.map((p) => p.id);
-    ids.forEach((id) => this.exit(id, reason, undefined, spot));
+    ids.forEach((id) => this.exit(id, reason, undefined, spot, exitNote));
     return ids.length;
   }
 
@@ -757,7 +805,20 @@ class PaperTradingEngine {
       }
     }
 
-    triggered.forEach((t) => this.exit(t.position.id, t.reason, t.price, spot));
+    triggered.forEach((t) => {
+      // Spell out the level that fired, so the history row explains itself
+      // rather than showing a bare bucket name.
+      const stop = effectiveStop(t.position);
+      const note =
+        t.reason === 'TARGET'
+          ? `Premium reached the ₹${t.position.target?.toFixed(2)} target (exit ₹${t.price.toFixed(2)}).`
+          : t.reason === 'TRAILING'
+            ? `Trailing stop ₹${stop?.toFixed(2)} hit after the premium peaked at ₹${t.position.highWaterPremium.toFixed(2)}.`
+            : t.reason === 'STOPLOSS'
+              ? `Premium broke the ₹${stop?.toFixed(2)} stop (exit ₹${t.price.toFixed(2)}).`
+              : 'Auto square-off at 15:20 IST — no position is carried overnight.';
+      this.exit(t.position.id, t.reason, t.price, spot, note);
+    });
 
     if (changed && triggered.length === 0) {
       this.book.positions = [...this.book.positions];

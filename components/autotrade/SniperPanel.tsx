@@ -34,6 +34,7 @@ import { isMarketLive, readFlag, writeFlag } from '../../services/marketSession'
 import { estimateOptionPremium } from '../../services/optionPricing';
 import { PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
 import { BlockList, Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
+import AutoTradeHistory from './AutoTradeHistory';
 import { RangeBoard, SetupBoard, ThesisBoard, fmt } from './SniperViews';
 
 const LOTS_KEY = 'sniper_lots';
@@ -437,8 +438,9 @@ export const SniperPanel: React.FC<Props> = ({
     if (!range || rangeLockedRef.current) return;
     if (istMinutesOf(new Date(tick)) < ENTRY_OPEN) return;
     rangeLockedRef.current = true;
+    const width = Math.round(range.resistance - range.support);
     addLog(
-      `🔒 Range locked — high ${fmt(range.high)} / low ${fmt(range.low)} → support ${fmt(range.support)}, resistance ${fmt(range.resistance)} (${range.openType.replace('_', ' ')})`,
+      `🔒 Range locked — high ${fmt(range.high)} / low ${fmt(range.low)} → support ${fmt(range.support)}, resistance ${fmt(range.resistance)} (${width}pt zone, ${range.openType.replace('_', ' ')})`,
       'good'
     );
   }, [range, tick, addLog]);
@@ -731,6 +733,18 @@ export const SniperPanel: React.FC<Props> = ({
         `THESIS-${t.state}`,
         `LEVELS-${t.levelSource}`
       ];
+      // The whole decision, not a truncated one-liner. This is what the trade
+      // will have to be judged against once the outcome is known.
+      const entryReason = [
+        `Sniper took ${setup.direction} via the ${setup.strike} ${setup.optionType} at ₹${premium.toFixed(2)}, ` +
+          `with Nifty at ${fmt(setup.entrySpot)}.`,
+        `Price was ${setup.zone === 'NEAR_SUPPORT' ? 'near support' : 'near resistance'} and the ` +
+          `overnight thesis read ${t.state} off ${t.levelSource} levels.`,
+        `Plan: target ${fmt(setup.targetSpot)} (+${SNIPER.targetPoints}), stop ${fmt(setup.stopSpot)} ` +
+          `(−${SNIPER.stopPoints}), flat by ${SNIPER.hardStop} regardless.`,
+        ...(setup.reasoning?.length ? [`Confluence: ${setup.reasoning.join(' · ')}`] : [])
+      ].join('\n');
+
       paperTradingEngine
         .openExternal({
           symbol: setup.symbol,
@@ -742,6 +756,8 @@ export const SniperPanel: React.FC<Props> = ({
           entryPrice: premium,
           spot: setup.entrySpot,
           tags,
+          strategy: 'SNIPER',
+          entryReason,
           notes: `Sniper ${setup.optionType} at ${fmt(setup.entrySpot)} · target ${fmt(setup.targetSpot)} / stop ${fmt(
             setup.stopSpot
           )} · ${setup.reasoning[0] ?? ''}`
@@ -757,20 +773,52 @@ export const SniperPanel: React.FC<Props> = ({
     [addLog, lots]
   );
 
-  /** Map the protocol's exit labels onto the paper book's reasons. */
+  /**
+   * Map the protocol's exit labels onto the paper book's reasons.
+   *
+   * The bucket is coarse by design — it is shared with manual trading — so the
+   * engine's own wording is carried alongside it. Without that, "10:15 hard
+   * stop" and a hand-clicked exit both land as EOD/MANUAL and the history can
+   * no longer tell you which rule actually ended the trade.
+   */
   const journalExit = useCallback(
-    (symbol: string, premium: number, reason: string) => {
+    (symbol: string, premium: number, reason: string, pnl?: number) => {
       if (tradingModeRef.current !== 'PAPER') return;
       const r = reason.toLowerCase();
       const mapped: PaperExitReason = r.includes('target')
         ? 'TARGET'
-        : r.includes('stop -') || r.includes('stoploss') || r.includes('stop loss')
+        : r.includes('stop -') || r.includes('stop −') || r.includes('stoploss') || r.includes('stop loss')
           ? 'STOPLOSS'
           : r.includes('hard stop')
             ? 'EOD'
             : 'MANUAL';
+
+      const spot = latest.current.niftyLtp;
+      const setup = setupRef.current;
+      const drift =
+        setup && spot != null
+          ? (spot - setup.entrySpot) * (setup.direction === 'LONG' ? 1 : -1)
+          : null;
+
+      const exitNote = [
+        `Exited at ₹${premium.toFixed(2)} — ${reason}.`,
+        drift != null
+          ? `Nifty moved ${drift >= 0 ? '+' : ''}${drift.toFixed(1)} points from the ${fmt(setup!.entrySpot)} entry.`
+          : '',
+        mapped === 'TARGET'
+          ? `The +${SNIPER.targetPoints}-point target was reached, so the protocol takes the trade off.`
+          : mapped === 'STOPLOSS'
+            ? `The −${SNIPER.stopPoints}-point stop was breached; the protocol exits without negotiation.`
+            : mapped === 'EOD'
+              ? `The ${SNIPER.hardStop} hard stop applies — the Sniper never holds a position past it.`
+              : 'Closed outside the automatic rules.',
+        pnl != null ? `Booked ${inr(pnl)} on the broker book.` : ''
+      ]
+        .filter(Boolean)
+        .join(' ');
+
       paperTradingEngine
-        .closeExternal(symbol, premium, mapped, latest.current.niftyLtp)
+        .closeExternal(symbol, premium, mapped, spot, exitNote)
         .then(res => {
           if (res.ok) addLog(`📒 Paper ledger updated — ${res.message}`, 'info');
         })
@@ -792,7 +840,7 @@ export const SniperPanel: React.FC<Props> = ({
         const res = await om.placeOrder(symbol, pos.side === 'LONG' ? 'SELL' : 'BUY', Math.abs(pos.quantity), 'MARKET');
         if (res.success) {
           addLog(`🚪 Exit ${symbol} — ${reason} · P&L ${inr(pos.pnl)}`, pos.pnl >= 0 ? 'good' : 'bad');
-          journalExit(symbol, pos.ltp ?? pos.avgPrice, reason);
+          journalExit(symbol, pos.ltp ?? pos.avgPrice, reason, pos.pnl);
           persistDay({
             ...dayRef.current,
             pointsCaptured: setupRef.current
@@ -1121,6 +1169,8 @@ export const SniperPanel: React.FC<Props> = ({
           )}
         </Card>
       </div>
+
+      <AutoTradeHistory strategy="SNIPER" tradingMode={tradingMode} />
 
       <Card title="Sniper log" icon={<Crosshair className="h-4 w-4 text-emerald-400" />}>
         <LogFeed entries={log} emptyHint="Arm the sniper to start the Download." />

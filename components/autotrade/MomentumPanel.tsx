@@ -20,7 +20,9 @@ import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
 import { isMarketLive } from '../../services/marketSession';
 import { estimateOptionPremium } from '../../services/optionPricing';
 import { istDayKey } from '../../services/sniperEngine';
+import { PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
 import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
+import AutoTradeHistory from './AutoTradeHistory';
 
 const LOT_SIZE = 75;
 const SETTINGS_KEY = 'momentum_settings';
@@ -91,12 +93,31 @@ function loadSettings(): MomentumSettings {
  * wiped the running flag, the log, the day's statistics and — worse — the entry
  * metadata that drives every open position's target and stop.
  */
+/**
+ * What the engine knew when it opened a position.
+ *
+ * `entry` and `direction` drive the running P&L mark. The rest exists so the
+ * exit can explain itself against the thesis that opened the trade — a closed
+ * row that says only "stop −15%" tells you nothing about whether the setup was
+ * wrong or merely early.
+ */
+interface MomentumEntry {
+  entry: number;
+  direction: 'LONG' | 'SHORT';
+  strike?: number;
+  optionType?: 'CE' | 'PE';
+  confidence?: number;
+  strength?: string;
+  fill?: number;
+  at?: number;
+}
+
 interface MomentumSession {
   day: string;
   running: boolean;
   stats: { trades: number; wins: number; pnl: number };
   log: LogEntry[];
-  entries: Record<string, { entry: number; direction: 'LONG' | 'SHORT' }>;
+  entries: Record<string, MomentumEntry>;
 }
 
 const EMPTY_SESSION: MomentumSession = {
@@ -183,7 +204,7 @@ export const MomentumPanel: React.FC<Props> = ({
   const exitingRef = useRef<Set<string>>(new Set());
   /** Guards the entry path against the auto-execute effect firing twice. */
   const enteringRef = useRef(false);
-  const entryRef = useRef<Record<string, { entry: number; direction: 'LONG' | 'SHORT' }>>(restored.entries);
+  const entryRef = useRef<Record<string, MomentumEntry>>(restored.entries);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const signalRef = useRef(signal);
@@ -355,6 +376,133 @@ export const MomentumPanel: React.FC<Props> = ({
     return () => window.clearInterval(id);
   }, [running, analyse]);
 
+  // --- paper ledger mirror --------------------------------------------------
+
+  /**
+   * Momentum fills are written into the Paper Trading book, tagged MOMENTUM.
+   *
+   * The Sniper has mirrored its trades for a while; this engine did not, so
+   * every momentum trade was invisible in the ledger. The equity curve, the win
+   * rate and the expectancy on the Paper screen therefore described the Sniper
+   * and hand-placed trades only, while silently omitting the engine that takes
+   * the most trades of the three.
+   *
+   * Only PAPER-mode fills are mirrored. The book runs on simulated capital, so
+   * posting a real fill into it would draw down money it never held.
+   */
+  const tradingModeRef = useRef(tradingMode);
+  tradingModeRef.current = tradingMode;
+
+  const journalEntry = useCallback(
+    (
+      symbol: string,
+      strike: number,
+      optionType: 'CE' | 'PE',
+      fill: number,
+      spot: number,
+      s: EnhancedSignal
+    ) => {
+      if (tradingModeRef.current !== 'PAPER') {
+        addLog('📒 Live fill — not written to the paper ledger (it tracks simulated capital only).', 'info');
+        return;
+      }
+      const { targetPct, stopPct, minConfidence, lots } = settingsRef.current;
+      const tags = [
+        'AUTOTRADE',
+        'MOMENTUM',
+        s.direction,
+        `CONF-${s.confidence.toFixed(0)}`,
+        s.metrics.signalStrength
+      ];
+      const entryReason = [
+        `Momentum took ${s.direction} via the ${strike} ${optionType} at ₹${fill.toFixed(2)}, ` +
+          `with Nifty at ${fmt(spot)}.`,
+        `The multi-factor signal read ${s.confidence.toFixed(0)}% confidence (${s.metrics.signalStrength}), ` +
+          `clearing the ${minConfidence}% threshold, at a risk:reward of ${s.riskRewardRatio.toFixed(2)}.`,
+        `Signal levels: entry ${fmt(s.suggestedEntry)}, target ${fmt(s.suggestedTarget)}, ` +
+          `stop ${fmt(s.suggestedStopLoss)}.`,
+        `Plan: exit on premium +${targetPct}% or −${stopPct}%.`,
+        ...(s.reasons?.length ? [`Factors: ${s.reasons.slice(0, 6).join(' · ')}`] : [])
+      ].join('\n');
+
+      paperTradingEngine
+        .openExternal({
+          symbol,
+          displayName: `NIFTY ${strike} ${optionType}`,
+          strike,
+          optionType,
+          lots,
+          entryPrice: fill,
+          spot,
+          tags,
+          strategy: 'MOMENTUM',
+          entryReason,
+          notes: `Momentum ${s.direction} ${optionType} at ${fmt(spot)} · ${s.confidence.toFixed(0)}% · ${
+            s.reasons?.[0] ?? ''
+          }`
+        })
+        .then(r =>
+          addLog(
+            r.ok ? `📒 Logged to Paper Trading — tagged ${tags.join(', ')}` : `📒 Paper log skipped — ${r.message}`,
+            r.ok ? 'info' : 'warn'
+          )
+        )
+        .catch(() => addLog('📒 Could not write this trade to the paper ledger.', 'warn'));
+    },
+    [addLog]
+  );
+
+  /**
+   * Close the mirrored position, preserving the engine's own wording.
+   *
+   * The paper book's five exit buckets are shared with manual trading, so the
+   * precise trigger has to travel alongside the bucket or it is lost.
+   */
+  const journalExit = useCallback(
+    (symbol: string, premium: number, reason: string, pnl: number, pnlPercent: number) => {
+      if (tradingModeRef.current !== 'PAPER') return;
+      const r = reason.toLowerCase();
+      const mapped: PaperExitReason = r.includes('target')
+        ? 'TARGET'
+        : r.includes('stop')
+          ? 'STOPLOSS'
+          : r.includes('market close') || r.includes('eod')
+            ? 'EOD'
+            : 'MANUAL';
+
+      const meta = entryRef.current[symbol];
+      const spot = inputsRef.current.niftyLtp;
+      const drift =
+        meta && spot != null ? (spot - meta.entry) * (meta.direction === 'LONG' ? 1 : -1) : null;
+      const { targetPct, stopPct } = settingsRef.current;
+
+      const exitNote = [
+        `Exited at ₹${premium.toFixed(2)} — ${reason} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(1)}% on premium).`,
+        drift != null
+          ? `Nifty moved ${drift >= 0 ? '+' : ''}${drift.toFixed(1)} points from the ${fmt(meta!.entry)} entry.`
+          : '',
+        mapped === 'TARGET'
+          ? `The +${targetPct}% premium target was reached, so the engine banked it.`
+          : mapped === 'STOPLOSS'
+            ? `The −${stopPct}% premium stop was breached; the engine cuts without waiting for a recovery.`
+            : mapped === 'EOD'
+              ? 'Closed at the end of the session — nothing is carried overnight.'
+              : 'Closed by hand from the Momentum panel.',
+        `Booked ${inr(pnl)} on the broker book.`
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+      paperTradingEngine
+        .closeExternal(symbol, premium, mapped, spot, exitNote)
+        .then(res => {
+          if (res.ok) addLog(`📒 Paper ledger updated — ${res.message}`, 'info');
+        })
+        .catch(() => addLog('📒 Could not close this trade in the paper ledger.', 'warn'));
+    },
+    [addLog]
+  );
+
   // --- execution ------------------------------------------------------------
   const execute = useCallback(async () => {
     const om = orderRef.current;
@@ -369,10 +517,20 @@ export const MomentumPanel: React.FC<Props> = ({
       const fill = estimateOptionPremium(niftyLtp, proposal.strike, proposal.optionType);
       const res = await om.placeOrder(proposal.symbol, 'BUY', proposal.qty, 'MARKET', undefined, undefined, fill);
       if (res.success) {
-        entryRef.current[proposal.symbol] = { entry: niftyLtp, direction: s.direction as 'LONG' | 'SHORT' };
+        entryRef.current[proposal.symbol] = {
+          entry: niftyLtp,
+          direction: s.direction as 'LONG' | 'SHORT',
+          strike: proposal.strike,
+          optionType: proposal.optionType,
+          confidence: s.confidence,
+          strength: s.metrics.signalStrength,
+          fill,
+          at: Date.now()
+        };
         setPositions(om.getPositions());
         setStats(p => ({ ...p, trades: p.trades + 1 }));
         addLog(`✅ Bought ${proposal.symbol} × ${proposal.qty} at spot ${fmt(niftyLtp)}`, 'good');
+        journalEntry(proposal.symbol, proposal.strike, proposal.optionType, fill, niftyLtp, s);
       } else {
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }
@@ -380,7 +538,7 @@ export const MomentumPanel: React.FC<Props> = ({
       enteringRef.current = false;
       setBusy(false);
     }
-  }, [proposal, niftyLtp, addLog]);
+  }, [proposal, niftyLtp, addLog, journalEntry]);
 
   const closeSymbol = useCallback(
     async (symbol: string, reason: string) => {
@@ -395,6 +553,8 @@ export const MomentumPanel: React.FC<Props> = ({
         if (res.success) {
           addLog(`🚪 Closed ${symbol} — ${reason} · ${inr(pos.pnl)}`, pos.pnl >= 0 ? 'good' : 'bad');
           setStats(p => ({ ...p, wins: p.wins + (pos.pnl > 0 ? 1 : 0), pnl: p.pnl + pos.pnl }));
+          // Journal before the metadata is dropped — the exit note is built from it.
+          journalExit(symbol, pos.ltp ?? pos.avgPrice, reason, pos.pnl, pos.pnlPercent);
           delete entryRef.current[symbol];
         } else {
           addLog(`❌ Exit rejected: ${res.message ?? 'unknown error'}`, 'bad');
@@ -405,7 +565,7 @@ export const MomentumPanel: React.FC<Props> = ({
         setBusy(false);
       }
     },
-    [addLog]
+    [addLog, journalExit]
   );
 
   // --- position monitoring --------------------------------------------------
@@ -423,7 +583,12 @@ export const MomentumPanel: React.FC<Props> = ({
         const meta = entryRef.current[p.symbol];
         if (!meta) return;
         const drift = (niftyLtp - meta.entry) * (meta.direction === 'LONG' ? 1 : -1);
-        om.updatePositionPnL(p.symbol, Math.max(1, p.avgPrice + drift * 0.5));
+        const premium = Math.max(1, p.avgPrice + drift * 0.5);
+        om.updatePositionPnL(p.symbol, premium);
+        // Keep the ledger's unrealised P&L and its high/low-water marks in step,
+        // so the MFE/MAE on the closed row reflects the whole trade rather than
+        // just the entry and exit prices. The engine never exits on these marks.
+        if (tradingModeRef.current === 'PAPER') paperTradingEngine.markExternal(p.symbol, premium);
       });
       const refreshed = om.getPositions();
       const { targetPct, stopPct } = settingsRef.current;
@@ -693,6 +858,8 @@ export const MomentumPanel: React.FC<Props> = ({
       <Card title="Momentum positions" icon={<Activity className="h-4 w-4 text-sky-400" />}>
         <PositionsTable positions={positions} onClose={s => closeSymbol(s, 'manual exit')} busy={busy} />
       </Card>
+
+      <AutoTradeHistory strategy="MOMENTUM" tradingMode={tradingMode} />
 
       <Card title="Momentum log" icon={<Waves className="h-4 w-4 text-sky-400" />}>
         <LogFeed entries={log} emptyHint="Start the engine to begin scanning." />

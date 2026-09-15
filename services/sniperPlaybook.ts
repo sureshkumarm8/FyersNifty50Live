@@ -48,6 +48,23 @@ export const SNIPER = {
   /** Below this the day is technically tradable but uncomfortably tight. */
   comfortableZoneWidth: 90,
   /**
+   * How far outside the opening range each wall sits, as a fraction of that
+   * range's own width.
+   *
+   * This replaced a flat 50-point pad that was rounded out to the nearest 50.
+   * On a quiet open that was catastrophic: a 16-point range became a 200-point
+   * zone, only 30% of which is within `zoneBuffer` of a wall, so price sat
+   * mid-range for the whole entry window and the day was declined mechanically
+   * rather than on merit. Scaling the pad to what the tape actually did keeps a
+   * coiled open tradable and still gives a violent open real room.
+   */
+  zonePadRatio: 0.35,
+  /**
+   * Ceiling on the scaled pad. A gap-and-run open can print a huge 10-minute
+   * range; without this the zone would widen past anything intraday-relevant.
+   */
+  maxZonePad: 50,
+  /**
    * Chart levels further apart than this are positional, not intraday - the
    * real zones will come from the 09:15-09:25 five-minute range instead.
    */
