@@ -5,8 +5,13 @@ import { VisionRun, VisionShot } from '../types';
  *
  * The capture engine (Playwright + Ollama) can only ever run on the machine with the
  * broker logins, so a deployed dashboard can never call it. The engine therefore also
- * writes a plain folder — `liveImageAnalsis/data/exports/` — containing one JSON bundle
- * per trading day plus the screenshots.
+ * writes a plain folder — `liveImageAnalsis/data/exports/` — laid out as:
+ *
+ *   index.json                       manifest; each day carries `runs` and `runFiles`
+ *   vision-<date>.json               the day's runs, rewritten after every capture
+ *   vision-<date>.embedded.json      optional self-contained copy, screenshots inlined
+ *   runs/<date>/run-*.json           immutable per-run files, for incremental syncing
+ *   shots/<date>/*.png               the screenshots those runs point at
  *
  * This module lets the browser read that folder *directly off disk*:
  *
@@ -243,7 +248,7 @@ export async function importFiles(
   files: File[] | FileList,
   onProgress?: (done: number, total: number) => void
 ): Promise<VisionArchiveImport> {
-  const list = Array.from(files as any as File[]);
+  const list = Array.from(files as any as File[]).filter((f) => !(f.name.split('/').pop() || '').startsWith('.'));
   const out = emptyImport();
   if (!list.length) return out;
 
@@ -286,11 +291,12 @@ interface ScanContext {
   images: Set<string>;
   /** name -> lastModified of every JSON already parsed, so untouched files are skipped. */
   seen: Record<string, number>;
-  /** Dates that publish immutable per-run files under runs/<date>/. */
+  /** Dates whose runs/<date>/ folder provably holds the whole day. */
   runDays: Set<string>;
 }
 
 const DAY_BUNDLE_RE = /^vision-(\d{4}-\d{2}-\d{2})\.json$/i;
+const RUN_FILE_RE = /^run-.*\.json$/i;
 
 async function walkDirectory(
   dir: any,
@@ -300,6 +306,9 @@ async function walkDirectory(
   prefix = ''
 ): Promise<void> {
   for await (const [name, handle] of dir.entries()) {
+    // .DS_Store and AppleDouble "._shot.png" stubs: Finder litter that isn't archive data
+    // and would otherwise be parsed as bundles or cached as corrupt screenshots.
+    if (name.startsWith('.')) continue;
     const rel = prefix ? `${prefix}/${name}` : name;
     if (handle.kind === 'directory') {
       await walkDirectory(handle, out, ctx, onProgress, rel);
@@ -335,18 +344,45 @@ async function walkDirectory(
   }
 }
 
-/** Dates covered by runs/<date>/ per-run files, so their day bundle can be ignored. */
-async function listRunDays(dir: any): Promise<Set<string>> {
-  const days = new Set<string>();
+/**
+ * Dates whose runs/<date>/ folder can safely stand in for the day bundle.
+ *
+ * The folder existing is not enough: the engine only writes a per-run file for runs it
+ * captured itself, so a day it joined late (or that was exported by an older build) leaves
+ * a partial mirror. Skipping the day bundle for such a date silently pins the dashboard to
+ * whatever runs happened to be mirrored — the archive looks hours out of date even though
+ * the bundle beside it is current. The manifest publishes both counts, so the bundle is
+ * only skipped when the per-run mirror demonstrably covers the whole day.
+ */
+async function completeRunDays(dir: any, manifest: any): Promise<Set<string>> {
+  const complete = new Set<string>();
+  let runsDir: any;
   try {
-    const runs = await dir.getDirectoryHandle('runs');
-    for await (const [name, handle] of runs.entries()) {
-      if (handle.kind === 'directory' && /^\d{4}-\d{2}-\d{2}$/.test(name)) days.add(name);
-    }
+    runsDir = await dir.getDirectoryHandle('runs');
   } catch {
-    /* no runs/ folder - the day bundles are the only source */
+    return complete; // no runs/ folder - the day bundles are the only source
   }
-  return days;
+
+  const expected = new Map<string, number>();
+  for (const day of manifest?.days || []) {
+    if (day?.date && Number.isFinite(Number(day.runs))) expected.set(day.date, Number(day.runs));
+  }
+
+  for await (const [name, handle] of runsDir.entries()) {
+    if (handle.kind !== 'directory' || !/^\d{4}-\d{2}-\d{2}$/.test(name)) continue;
+    const want = expected.get(name);
+    if (want === 0) continue;
+
+    let count = 0;
+    for await (const [file, entry] of handle.entries()) {
+      if (entry.kind === 'file' && RUN_FILE_RE.test(file)) count += 1;
+    }
+    if (!count) continue;
+    // `runFiles` is written before the bundle, so a capture landing mid-scan can push the
+    // folder one ahead of the manifest; >= keeps that from looking incomplete.
+    if (want === undefined || count >= want) complete.add(name);
+  }
+  return complete;
 }
 
 /**
@@ -380,7 +416,7 @@ async function readFromDirectory(
   const [images, seen, runDays] = await Promise.all([
     tx(IMAGES, 'readonly', (t) => wrap<IDBValidKey[]>(t.objectStore(IMAGES).getAllKeys())).then((k) => k.map(String)),
     metaGet<Record<string, number>>('seenFiles'),
-    listRunDays(handle),
+    completeRunDays(handle, manifest),
   ]);
 
   const ctx: ScanContext = {
@@ -519,8 +555,10 @@ export async function clear(): Promise<void> {
   });
 }
 
-export const visionArchive = {
-  supported: archiveSupported,
+/** Internals exercised directly by ml/visionArchive.test.ts — not part of the public API. */
+export const __testing = { completeRunDays, dropRedundantEmbedded, imageKey };
+
+export const visionArchive = {  supported: archiveSupported,
   directoryPickerSupported,
   importFiles,
   pickDirectory,
