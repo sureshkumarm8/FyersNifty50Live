@@ -757,6 +757,7 @@ export const SniperPanel: React.FC<Props> = ({
           spot: setup.entrySpot,
           tags,
           strategy: 'SNIPER',
+          lotSize: LOT_SIZE,
           entryReason,
           notes: `Sniper ${setup.optionType} at ${fmt(setup.entrySpot)} · target ${fmt(setup.targetSpot)} / stop ${fmt(
             setup.stopSpot

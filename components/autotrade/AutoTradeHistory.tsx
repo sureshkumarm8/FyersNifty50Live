@@ -17,6 +17,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { History, Trophy } from 'lucide-react';
 import {
+  belongsToStrategy,
   paperTradingEngine,
   PaperBook,
   PaperStrategy,
@@ -67,11 +68,11 @@ export const AutoTradeHistory: React.FC<AutoTradeHistoryProps> = ({ strategy, tr
 
   const trades = useMemo<PaperTrade[]>(() => {
     const today = istDayKey(Date.now());
+    // Ownership is read through the helper, not off `t.strategy`: trades taken
+    // before that field existed only carry their engine in `tags`, and matching
+    // the field alone made an entire day of real trades read as "none taken".
     return book.trades.filter(
-      (t) =>
-        t.source === 'AUTOTRADE' &&
-        t.strategy === strategy &&
-        (scope === 'all' || istDayKey(t.entryTime) === today)
+      (t) => belongsToStrategy(t, strategy) && (scope === 'all' || istDayKey(t.entryTime) === today)
     );
   }, [book.trades, strategy, scope]);
 

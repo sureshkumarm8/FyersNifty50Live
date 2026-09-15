@@ -14,7 +14,7 @@ import {
   Activity, BarChart3, Gauge, Pause, Play, Settings2, TrendingDown, TrendingUp, Waves, Zap
 } from 'lucide-react';
 import { FyersCredentials, MarketSnapshot, PivotPoints } from '../../types';
-import { OrderManager, Position } from '../../services/orderManager';
+import { Order, OrderManager, Position } from '../../services/orderManager';
 import { EnhancedSignal, EnhancedSignalGenerator } from '../../services/enhancedSignalGenerator';
 import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
 import { isMarketLive } from '../../services/marketSession';
@@ -147,6 +147,54 @@ function loadSession(): MomentumSession {
   }
 }
 
+/** One completed buy-then-sell cycle, rebuilt from the order book. */
+export interface RoundTrip {
+  symbol: string;
+  entry: number;
+  exit: number;
+  qty: number;
+  at: number;
+  closedAt: number;
+}
+
+/**
+ * Rebuilds a day's completed round trips from filled orders.
+ *
+ * An unmatched BUY is a position that is still open — the normal exit path
+ * journals that one when it closes, so it is deliberately left out here.
+ */
+export function pairRoundTrips(
+  orders: Pick<Order, 'symbol' | 'side' | 'status' | 'filledQty' | 'avgPrice' | 'timestamp'>[],
+  day: string
+): RoundTrip[] {
+  const filled = orders
+    .filter(o => o.status === 'FILLED' && istDayKey(o.timestamp) === day)
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  const open = new Map<string, { price: number; qty: number; at: number }>();
+  const pairs: RoundTrip[] = [];
+  for (const o of filled) {
+    if (o.side === 'BUY') {
+      // A second BUY without a SELL between means the first leg was never
+      // closed on this book; the newer fill is the one still live.
+      open.set(o.symbol, { price: o.avgPrice, qty: o.filledQty, at: o.timestamp });
+    } else {
+      const entry = open.get(o.symbol);
+      if (!entry) continue;
+      open.delete(o.symbol);
+      pairs.push({
+        symbol: o.symbol,
+        entry: entry.price,
+        exit: o.avgPrice,
+        qty: entry.qty || o.filledQty,
+        at: entry.at,
+        closedAt: o.timestamp
+      });
+    }
+  }
+  return pairs;
+}
+
 interface Props {
   credentials: FyersCredentials;
   niftyLtp: number | null;
@@ -204,6 +252,8 @@ export const MomentumPanel: React.FC<Props> = ({
   const exitingRef = useRef<Set<string>>(new Set());
   /** Guards the entry path against the auto-execute effect firing twice. */
   const enteringRef = useRef(false);
+  /** One ledger reconciliation per mounted order book. */
+  const reconciledRef = useRef(false);
   const entryRef = useRef<Record<string, MomentumEntry>>(restored.entries);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -243,6 +293,7 @@ export const MomentumPanel: React.FC<Props> = ({
   useEffect(() => {
     orderRef.current?.updateCredentials(credentials);
   }, [credentials]);
+
 
   // Mirror everything a reload would otherwise destroy.
   useEffect(() => {
@@ -393,6 +444,88 @@ export const MomentumPanel: React.FC<Props> = ({
   const tradingModeRef = useRef(tradingMode);
   tradingModeRef.current = tradingMode;
 
+  /**
+   * Replay today's completed round trips from the order book into the ledger.
+   *
+   * This engine only started mirroring its fills recently, and a trade taken
+   * before that — or while the ledger write failed — is gone from the history
+   * view even though the order book still holds both legs of it. The panel then
+   * reports six trades in its own session total and one in its history, which
+   * reads as a broken screen and makes the win rate a lie.
+   *
+   * The order book is the record of what was actually filled, so it is the
+   * right source to reconcile against. Only pairs the ledger has never seen are
+   * written, which makes this safe to run on every mount.
+   */
+  const reconcileLedger = useCallback(async () => {
+    if (tradingModeRef.current !== 'PAPER') return;
+    const om = orderRef.current;
+    if (!om || reconciledRef.current) return;
+    reconciledRef.current = true;
+
+    const pairs = pairRoundTrips(om.getOrderHistory(), istDayKey(Date.now()));
+    if (pairs.length === 0) return;
+
+    const book = await paperTradingEngine.load();
+    // Matched on the entry timestamp rather than the symbol: this engine re-enters
+    // the same strike repeatedly, so a symbol match would hide every re-entry.
+    const known = new Set(book.trades.map(t => `${t.symbol}@${t.entryTime}`));
+    const missing = pairs.filter(p => !known.has(`${p.symbol}@${p.at}`));
+    if (missing.length === 0) return;
+
+    let recovered = 0;
+    for (const p of missing) {
+      const parsed = /^NIFTY\d{6}(\d+)(CE|PE)$/.exec(p.symbol);
+      if (!parsed || !(p.entry > 0) || !(p.exit > 0)) continue;
+      const strike = Number(parsed[1]);
+      const optionType = parsed[2] as 'CE' | 'PE';
+      const lots = Math.max(1, Math.round(p.qty / LOT_SIZE));
+      const opened = await paperTradingEngine.openExternal({
+        symbol: p.symbol,
+        displayName: `NIFTY ${strike} ${optionType}`,
+        strike,
+        optionType,
+        lots,
+        lotSize: LOT_SIZE,
+        entryPrice: p.entry,
+        entryTime: p.at,
+        spot: null,
+        strategy: 'MOMENTUM',
+        tags: ['AUTOTRADE', 'MOMENTUM', 'RECOVERED'],
+        // Said plainly, because the signal behind it was never recorded and
+        // inventing one would corrupt the journal this screen exists to be.
+        entryReason:
+          `Recovered from the Momentum order book — this fill was placed at ` +
+          `${new Date(p.at).toLocaleTimeString('en-IN')} but never reached the ledger, ` +
+          `so the reasoning behind it was not captured.`,
+        notes: 'Recovered from the order book'
+      });
+      if (!opened.ok) continue;
+      const closed = await paperTradingEngine.closeExternal(
+        p.symbol,
+        p.exit,
+        'MANUAL',
+        null,
+        `Recovered exit — the order book shows this closed at ${new Date(p.closedAt).toLocaleTimeString('en-IN')}. ` +
+          'The trigger was not recorded.',
+        p.closedAt
+      );
+      if (closed.ok) recovered += 1;
+    }
+
+    if (recovered > 0) {
+      addLog(
+        `📒 Recovered ${recovered} earlier trade${recovered === 1 ? '' : 's'} from the order book into the paper ledger.`,
+        'info'
+      );
+    }
+  }, [addLog]);
+
+  useEffect(() => {
+    reconciledRef.current = false;
+    reconcileLedger().catch(() => addLog('📒 Could not reconcile the paper ledger.', 'warn'));
+  }, [tradingMode, reconcileLedger, addLog]);
+
   const journalEntry = useCallback(
     (
       symbol: string,
@@ -436,6 +569,7 @@ export const MomentumPanel: React.FC<Props> = ({
           spot,
           tags,
           strategy: 'MOMENTUM',
+          lotSize: LOT_SIZE,
           entryReason,
           notes: `Momentum ${s.direction} ${optionType} at ${fmt(spot)} · ${s.confidence.toFixed(0)}% · ${
             s.reasons?.[0] ?? ''

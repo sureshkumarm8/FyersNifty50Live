@@ -340,6 +340,65 @@ function emptyBook(): PaperBook {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Ownership (which engine took a trade)
+// ---------------------------------------------------------------------------
+
+/**
+ * `source` and `strategy` are younger than the `tags` both engines have always
+ * written, so trades journaled before those fields existed carry their owner in
+ * the tag list only. Reading ownership through these helpers — rather than off
+ * the field — keeps those trades visible instead of silently dropping them from
+ * every per-strategy view.
+ */
+const hasTag = (record: { tags?: string[] }, tag: string): boolean =>
+  Array.isArray(record.tags) && record.tags.some((t) => String(t).toUpperCase() === tag);
+
+/** Which engine owns this record, falling back to its tags. */
+export function ownerStrategy(record: {
+  strategy?: PaperStrategy;
+  tags?: string[];
+}): PaperStrategy | undefined {
+  if (record.strategy) return record.strategy;
+  if (hasTag(record, 'SNIPER')) return 'SNIPER';
+  if (hasTag(record, 'MOMENTUM')) return 'MOMENTUM';
+  return undefined;
+}
+
+/** True when an engine — not a hand-placed order — put this on the book. */
+export function isAutoTrade(record: { source?: PaperTradeSource; tags?: string[] }): boolean {
+  return record.source === 'AUTOTRADE' || hasTag(record, 'AUTOTRADE');
+}
+
+/** True when this record belongs to the given engine. */
+export const belongsToStrategy = (
+  record: { source?: PaperTradeSource; strategy?: PaperStrategy; tags?: string[] },
+  strategy: PaperStrategy
+): boolean => isAutoTrade(record) && ownerStrategy(record) === strategy;
+
+/**
+ * Writes the derived owner back onto records that predate the fields, so the
+ * rest of the app (and any future query) can trust `source`/`strategy`.
+ * Returns true when anything changed and the book is worth re-saving.
+ */
+function backfillOwnership(records: Array<{ source?: PaperTradeSource; strategy?: PaperStrategy; tags?: string[] }>): boolean {
+  let changed = false;
+  for (const record of records) {
+    if (!record.source && isAutoTrade(record)) {
+      record.source = 'AUTOTRADE';
+      changed = true;
+    }
+    if (!record.strategy && record.source === 'AUTOTRADE') {
+      const owner = ownerStrategy(record);
+      if (owner) {
+        record.strategy = owner;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 function istTimeValue(): number {
   const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   return ist.getHours() * 100 + ist.getMinutes();
@@ -377,6 +436,8 @@ class PaperTradingEngine {
       console.warn('[Paper] Could not load saved book, starting fresh:', e);
     }
     this.loaded = true;
+    // Heal records written before `source`/`strategy` existed, once, on the way in.
+    if (backfillOwnership([...this.book.positions, ...this.book.trades])) this.persist();
     this.emit();
     return this.book;
   }
@@ -532,7 +593,15 @@ class PaperTradingEngine {
     };
   }
 
-  public exit(positionId: string, reason: PaperExitReason = 'MANUAL', priceOverride?: number, spot?: number | null, exitNote?: string): OrderResult {
+  public exit(
+    positionId: string,
+    reason: PaperExitReason = 'MANUAL',
+    priceOverride?: number,
+    spot?: number | null,
+    exitNote?: string,
+    /** Defaults to now. Supplied when replaying an exit that already happened. */
+    exitTime?: number
+  ): OrderResult {
     const position = this.book.positions.find((p) => p.id === positionId);
     if (!position) return { ok: false, message: 'Position not found.' };
 
@@ -545,7 +614,7 @@ class PaperTradingEngine {
     const grossPnl = (exitPrice - position.entryPrice) * position.quantity;
     const charges = position.entryCharges.total + exitCharges.total;
     const netPnl = grossPnl - charges;
-    const now = Date.now();
+    const now = exitTime ?? Date.now();
     const deployed = position.entryPrice * position.quantity;
 
     const trade: PaperTrade = {
@@ -573,8 +642,8 @@ class PaperTradingEngine {
       maxFavourable: position.highWaterPremium - position.entryPrice,
       maxAdverse: position.lowWaterPremium - position.entryPrice,
       notes: position.notes,
-      source: position.source ?? 'MANUAL',
-      strategy: position.strategy,
+      source: isAutoTrade(position) ? 'AUTOTRADE' : position.source ?? 'MANUAL',
+      strategy: ownerStrategy(position),
       entryReason: position.entryReason,
       exitNote,
       tags: position.tags
@@ -622,6 +691,15 @@ class PaperTradingEngine {
     notes?: string;
     /** Which engine is taking the trade. */
     strategy?: PaperStrategy;
+    /**
+     * The contract's lot size, as the engine that placed the order used it.
+     *
+     * The book's own `settings.lotSize` is a manual-trading preference and can
+     * be stale (it survives an exchange lot-size change). Recomputing quantity
+     * from it booked a different size than the order actually filled, so the
+     * logged P&L silently disagreed with the trade that was taken.
+     */
+    lotSize?: number;
     /** The full reasoning behind the entry, preserved for later review. */
     entryReason?: string;
     /** Defaults to now. Supplied so a restored trade keeps its real entry time. */
@@ -643,11 +721,11 @@ class PaperTradingEngine {
     }
     // Recording the same fill twice would corrupt realized P&L, and the entry
     // effect can re-run on a re-render.
-    if (this.book.positions.some((p) => p.symbol === symbol && p.source === 'AUTOTRADE')) {
+    if (this.book.positions.some((p) => p.symbol === symbol && isAutoTrade(p))) {
       return { ok: false, message: 'That auto-trade is already on the book.' };
     }
 
-    const lotSize = this.book.settings.lotSize;
+    const lotSize = params.lotSize && params.lotSize > 0 ? params.lotSize : this.book.settings.lotSize;
     const quantity = lots * lotSize;
     const charges = computeCharges(entryPrice, quantity, 'BUY', this.book.settings.brokeragePerOrder);
     const now = params.entryTime ?? Date.now();
@@ -699,7 +777,7 @@ class PaperTradingEngine {
    */
   public markExternal(symbol: string, premium: number) {
     if (!this.loaded) return;
-    const position = this.book.positions.find((p) => p.symbol === symbol && p.source === 'AUTOTRADE');
+    const position = this.book.positions.find((p) => p.symbol === symbol && isAutoTrade(p));
     if (!position || !Number.isFinite(premium) || premium <= 0) return;
     if (premium === position.ltp) return;
     position.ltp = premium;
@@ -717,12 +795,21 @@ class PaperTradingEngine {
     reason: PaperExitReason,
     spot: number | null,
     /** The engine's own words for why it exited, kept alongside the bucket. */
-    exitNote?: string
+    exitNote?: string,
+    /** Defaults to now. Supplied when replaying an exit that already happened. */
+    exitTime?: number
   ): Promise<OrderResult> {
     await this.load();
-    const position = this.book.positions.find((p) => p.symbol === symbol && p.source === 'AUTOTRADE');
+    const position = this.book.positions.find((p) => p.symbol === symbol && isAutoTrade(p));
     if (!position) return { ok: false, message: 'No open auto-trade for that contract.' };
-    return this.exit(position.id, reason, Number.isFinite(exitPrice) && exitPrice > 0 ? exitPrice : undefined, spot, exitNote);
+    return this.exit(
+      position.id,
+      reason,
+      Number.isFinite(exitPrice) && exitPrice > 0 ? exitPrice : undefined,
+      spot,
+      exitNote,
+      exitTime
+    );
   }
 
   public exitAll(reason: PaperExitReason = 'MANUAL', spot?: number | null, exitNote?: string): number {
