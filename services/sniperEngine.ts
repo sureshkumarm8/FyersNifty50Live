@@ -73,6 +73,7 @@ export interface SniperBlock {
     | 'ZONE_BROKEN'
     | 'CONFIDENCE'
     | 'DIRECTION_CONFLICT'
+    | 'SIDE_RESTRICTED'
     | 'NO_ROOM'
     | 'THESIS'
     | 'NO_DATA';
@@ -99,6 +100,8 @@ export interface SniperEvaluation {
   tradedResistance: number | null;
   /** Confidence after the thesis adjustment, so the UI can show the real bar. */
   effectiveConfidence: number;
+  /** The only side still open today, when the day has been narrowed to one. */
+  restrictedTo: 'LONG' | 'SHORT' | null;
 }
 
 // --- time -------------------------------------------------------------------
@@ -307,6 +310,21 @@ export interface SniperContext {
     confidenceDelta: number;
     veto: string | null;
     state: string;
+    /**
+     * The only side still open today, when something has ruled the other one
+     * out - a risk officer REFRAME, typically.
+     *
+     * This is the difference between "the morning's direction was wrong" and
+     * "there is no trade today". A bearish tape under a bullish plan does not
+     * end the session; it ends the bounce and leaves the fade at resistance
+     * standing. Set to 'SHORT' it blocks entries at support while price is
+     * there, and arms normally the moment price reaches resistance. Null means
+     * both plays stand, which is the default and the behaviour when no opinion
+     * has been given.
+     */
+    allowedDirection?: 'LONG' | 'SHORT' | null;
+    /** Shown on the blocked side, so the restriction explains itself. */
+    allowedReason?: string | null;
   } | null;
 }
 
@@ -359,7 +377,8 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
     mustExit: mins >= HARD_STOP && ctx.hasOpenPosition,
     tradedSupport: range?.support ?? null,
     tradedResistance: range?.resistance ?? null,
-    effectiveConfidence
+    effectiveConfidence,
+    restrictedTo: t?.allowedDirection ?? null
   };
 
   if (base.mustExit) {
@@ -458,6 +477,22 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
     blocks.push({
       code: 'DIRECTION_CONFLICT',
       message: `Price is at ${wantsLong ? 'support' : 'resistance'} but the live signal says ${ctx.signalDirection}. Entry must align with the immediate trend.`
+    });
+  }
+
+  /**
+   * A one-sided day blocks the side that was ruled out, not the day.
+   *
+   * The block is raised only while price is actually at the closed wall - the
+   * whole point of a restriction is that the surviving play stays armed and
+   * fires normally when price gets to it.
+   */
+  const allowed = t?.allowedDirection ?? null;
+  if (allowed && ((wantsLong && allowed === 'SHORT') || (wantsShort && allowed === 'LONG'))) {
+    const survivor = allowed === 'LONG' ? 'the bounce at support' : 'the fade at resistance';
+    blocks.push({
+      code: 'SIDE_RESTRICTED',
+      message: `Today is restricted to ${survivor}${t?.allowedReason ? ` — ${t.allowedReason}` : ''}. Price is at the other wall, so this one is not taken.`
     });
   }
 

@@ -528,6 +528,7 @@ export interface VisionShot {
   shotUrl?: string;              // sidecar-relative, e.g. /shots/<file>.png
   bytes?: number;
   error?: string;
+  image?: string;                // data URL, only in a self-contained archive bundle
 }
 
 export interface VisionAnalysis {
@@ -548,6 +549,20 @@ export interface VisionRun {
   durationMs: number;
   shots: VisionShot[];
   analysis: VisionAnalysis;
+  day?: string;                  // YYYY-MM-DD, set when the run came from an archive
+}
+
+/**
+ * A day of runs exported by the capture engine to liveImageAnalsis/data/exports/.
+ * Imported client-side so the Vision screen works in a deployed build with no engine.
+ */
+export interface VisionArchiveBundle {
+  schema: string;                // 'vision-archive/v1'
+  date: string;                  // YYYY-MM-DD
+  images: 'external' | 'embedded';
+  exportedAt: string;
+  source?: { app?: string; model?: string; intervalSeconds?: number; market?: string };
+  runs: VisionRun[];
 }
 
 export interface VisionTargetStatus {
