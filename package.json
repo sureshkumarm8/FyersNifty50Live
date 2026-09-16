@@ -11,7 +11,7 @@
     "generate:paytm": "node scripts/generatePaytmMappings.cjs",
     "model:train": "node ml/export.mjs",
     "model:validate": "node ml/train.mjs && node ml/calibrate.mjs",
-    "model:test": "npx --yes tsx ml/parity.test.mjs && npx --yes tsx ml/e2e.test.mjs && npx --yes tsx ml/multiday.test.mjs && npx --yes tsx ml/warmup.test.mjs && npx --yes tsx ml/memory.test.mjs && npx --yes tsx ml/regime.test.mjs && npx --yes tsx ml/scorecard.test.mjs && npx --yes tsx ml/premarketExport.test.ts && npx --yes tsx ml/sniperReframe.test.ts && npx --yes tsx ml/panels.test.tsx && npx --yes tsx ml/autoTradeOwnership.test.tsx && npx --yes tsx ml/ledgerFidelity.test.ts && npx --yes tsx ml/visionArchive.test.ts"
+    "model:test": "npx --yes tsx ml/parity.test.mjs && npx --yes tsx ml/e2e.test.mjs && npx --yes tsx ml/multiday.test.mjs && npx --yes tsx ml/warmup.test.mjs && npx --yes tsx ml/memory.test.mjs && npx --yes tsx ml/regime.test.mjs && npx --yes tsx ml/scorecard.test.mjs && npx --yes tsx ml/premarketExport.test.ts && npx --yes tsx ml/sniperReframe.test.ts && npx --yes tsx ml/panels.test.tsx && npx --yes tsx ml/autoTradeOwnership.test.tsx && npx --yes tsx ml/ledgerFidelity.test.ts && npx --yes tsx ml/momentumEntryGuard.test.ts && npx --yes tsx ml/visionArchive.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.33.0",

@@ -14,6 +14,7 @@
 import { paperTradingEngine } from '../services/paperTradingService';
 import { pairRoundTrips } from '../components/autotrade/MomentumPanel';
 import { istDayKey } from '../services/sniperEngine';
+import { OrderManager } from '../services/orderManager';
 
 let passed = 0;
 let failed = 0;
@@ -157,6 +158,42 @@ async function run() {
     'an orphan exit with no entry is skipped',
     pairRoundTrips([order('NIFTYE', 'SELL', 90, 3)], today).length === 0
   );
+
+  // Exercise the exact paper fill reference used by Momentum, then restore the book.
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const saved = new Map<string, string>();
+  const storage: Storage = {
+    get length() { return saved.size; },
+    clear: () => saved.clear(),
+    getItem: key => saved.get(key) ?? null,
+    key: index => [...saved.keys()][index] ?? null,
+    removeItem: key => { saved.delete(key); },
+    setItem: (key, value) => { saved.set(key, value); }
+  };
+  const originalRandom = Math.random;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  Math.random = () => 0.5;
+  try {
+    const credentials = { appId: '', accessToken: '' };
+    const manager = new OrderManager(credentials, true, 'test_momentum_paper');
+    const buy = await manager.placeOrder('NIFTY_TEST_CE', 'BUY', 75, 'MARKET', undefined, undefined, 80);
+    check('Momentum-style paper entry fills at the supplied premium', buy.success);
+    manager.updatePositionPnL('NIFTY_TEST_CE', 100);
+    const position = manager.getPositions()[0];
+    const sell = await manager.placeOrder(
+      position.symbol, 'SELL', position.quantity, 'MARKET', undefined, undefined, position.ltp
+    );
+    check('Momentum-style paper exit closes the position', sell.success && manager.getPositions().length === 0);
+    const restored = new OrderManager(credentials, true, 'test_momentum_paper');
+    const restoredTrips = pairRoundTrips(restored.getOrders(), today);
+    check('reload preserves a priced exit, not a zero-price fill',
+      restoredTrips.length === 1 && restoredTrips[0].entry === 80 && restoredTrips[0].exit === 100);
+    check('the restored round trip keeps the cooldown timestamp', restoredTrips[0]?.closedAt > 0);
+  } finally {
+    Math.random = originalRandom;
+    if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

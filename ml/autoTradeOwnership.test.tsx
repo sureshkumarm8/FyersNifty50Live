@@ -18,6 +18,7 @@ import {
 } from '../services/paperTradingService';
 import { AutoTag } from '../components/ui/TradeHistoryTable';
 import AutoTradeHistory from '../components/autotrade/AutoTradeHistory';
+import MomentumPanel from '../components/autotrade/MomentumPanel';
 
 let passed = 0;
 let failed = 0;
@@ -112,6 +113,43 @@ async function run() {
     'a Momentum trade never leaks into the Sniper panel',
     sniperHtml.includes('No Sniper trades closed today')
   );
+
+  for (const tradingMode of ['PAPER', 'LIVE'] as const) {
+    const panel = renderToString(React.createElement(MomentumPanel, {
+      credentials: { appId: '', accessToken: '' },
+      niftyLtp: 23500, historyLog: [], pivots: null, tradingMode
+    }));
+    check(`${tradingMode}: Momentum renders its entry waiting reason`,
+      panel.includes('Engine stopped; entry confirmation reset.'));
+    check(`${tradingMode}: Momentum discloses simulated pricing and disabled live entries`,
+      panel.includes('LIVE entries are blocked until quote and fill verification exists.'));
+    check(`${tradingMode}: Momentum shows confirmation and daily loss safeguards`,
+      panel.includes('3 fresh observations / 2m minimum') && panel.includes('2 consecutive net losses'));
+  }
+
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  try {
+    for (const [savedLimit, expected] of [
+      [8, 8], [1, 1], [undefined, 4], [null, 4], [0, 4], [-1, 4], [1.5, 4], ['8', 4]
+    ] as const) {
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: {
+          getItem: (key: string) => key === 'momentum_settings'
+            ? JSON.stringify({ maxDailyTrades: savedLimit }) : null
+        }
+      });
+      const panel = renderToString(React.createElement(MomentumPanel, {
+        credentials: { appId: '', accessToken: '' },
+        niftyLtp: 23500, historyLog: [], pivots: null, tradingMode: 'PAPER'
+      })).replace(/<!--.*?-->/g, '');
+      check(`saved daily limit ${String(savedLimit)} renders as ${expected}`,
+        panel.includes(`maximum ${expected} entries/day`));
+    }
+  } finally {
+    if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

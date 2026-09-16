@@ -63,7 +63,7 @@ export const visionService = {
 
   getHistory: (limit = 30) => request<VisionRun[]>(`/history?limit=${limit}`),
 
-  getLatest: () => request<VisionRun | null>('/latest'),
+  getLatest: (signal?: AbortSignal) => request<VisionRun | null>('/latest', { signal }),
 
   runNow: () => request<VisionRun>('/run-now', { method: 'POST' }),
 
