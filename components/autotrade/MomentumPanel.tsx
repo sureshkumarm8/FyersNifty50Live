@@ -13,16 +13,21 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity, BarChart3, Gauge, Pause, Play, Settings2, TrendingDown, TrendingUp, Waves, Zap
 } from 'lucide-react';
-import { FyersCredentials, MarketSnapshot, PivotPoints } from '../../types';
-import { Order, OrderManager, Position } from '../../services/orderManager';
+import { FyersCredentials, MarketSnapshot, PivotPoints, VisionRun } from '../../types';
+import { OrderManager, Position } from '../../services/orderManager';
 import { EnhancedSignal, EnhancedSignalGenerator } from '../../services/enhancedSignalGenerator';
 import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
 import { isMarketLive } from '../../services/marketSession';
 import { estimateOptionPremium } from '../../services/optionPricing';
-import { istDayKey } from '../../services/sniperEngine';
-import { PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
+import { istDayKey, istMinutesOf } from '../../services/sniperEngine';
+import { computeCharges, PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
+import { evaluateMomentumEntry, MOMENTUM_POLICY, MomentumCandidate, pairRoundTrips } from '../../services/momentumEntryGuard';
+import { visionService } from '../../services/visionService';
 import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
 import AutoTradeHistory from './AutoTradeHistory';
+
+export { pairRoundTrips } from '../../services/momentumEntryGuard';
+export type { RoundTrip } from '../../services/momentumEntryGuard';
 
 const LOT_SIZE = 75;
 const SETTINGS_KEY = 'momentum_settings';
@@ -34,6 +39,7 @@ const SCAN_MS = 30_000;
 
 interface MomentumSettings {
   minConfidence: number;
+  maxDailyTrades: number;
   lots: number;
   /** Auto-execute with real money. Deliberately separate from the paper flag. */
   autoExecute: boolean;
@@ -45,17 +51,20 @@ interface MomentumSettings {
   /** Exit once the option premium gains this %. */
   targetPct: number;
   stopPct: number;
+  requireVision: boolean;
 }
 
 const DEFAULT_SETTINGS: MomentumSettings = {
-  minConfidence: 70,
+  minConfidence: MOMENTUM_POLICY.minConfidence,
+  maxDailyTrades: MOMENTUM_POLICY.maxDailyTrades,
   lots: 1,
   autoExecute: false,
   autoPaperExecute: true,
   autoStart: true,
   itmOffset: 0,
   targetPct: 25,
-  stopPct: 15
+  stopPct: 15,
+  requireVision: false
 };
 
 function loadSettings(): MomentumSettings {
@@ -72,14 +81,17 @@ function loadSettings(): MomentumSettings {
     // `=== true` would leave every existing user with a silent engine.
     const bool = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback);
     return {
-      minConfidence: num(parsed.minConfidence, DEFAULT_SETTINGS.minConfidence, 50, 95),
-      lots: num(parsed.lots, DEFAULT_SETTINGS.lots, 1, 20),
-      itmOffset: num(parsed.itmOffset, DEFAULT_SETTINGS.itmOffset, 0, 500),
+      minConfidence: num(parsed.minConfidence, DEFAULT_SETTINGS.minConfidence, MOMENTUM_POLICY.minConfidence, 95),
+      maxDailyTrades: Number.isSafeInteger(parsed.maxDailyTrades) && parsed.maxDailyTrades > 0
+        ? parsed.maxDailyTrades : DEFAULT_SETTINGS.maxDailyTrades,
+      lots: Math.floor(num(parsed.lots, DEFAULT_SETTINGS.lots, 1, 20)),
+      itmOffset: Math.round(num(parsed.itmOffset, DEFAULT_SETTINGS.itmOffset, 0, 500) / 50) * 50,
       targetPct: num(parsed.targetPct, DEFAULT_SETTINGS.targetPct, 5, 100),
       stopPct: num(parsed.stopPct, DEFAULT_SETTINGS.stopPct, 5, 60),
       autoExecute: parsed.autoExecute === true,
       autoPaperExecute: bool(parsed.autoPaperExecute, true),
-      autoStart: bool(parsed.autoStart, true)
+      autoStart: bool(parsed.autoStart, true),
+      requireVision: bool(parsed.requireVision, false)
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -110,6 +122,8 @@ interface MomentumEntry {
   strength?: string;
   fill?: number;
   at?: number;
+  targetPct?: number;
+  stopPct?: number;
 }
 
 interface MomentumSession {
@@ -147,54 +161,6 @@ function loadSession(): MomentumSession {
   }
 }
 
-/** One completed buy-then-sell cycle, rebuilt from the order book. */
-export interface RoundTrip {
-  symbol: string;
-  entry: number;
-  exit: number;
-  qty: number;
-  at: number;
-  closedAt: number;
-}
-
-/**
- * Rebuilds a day's completed round trips from filled orders.
- *
- * An unmatched BUY is a position that is still open — the normal exit path
- * journals that one when it closes, so it is deliberately left out here.
- */
-export function pairRoundTrips(
-  orders: Pick<Order, 'symbol' | 'side' | 'status' | 'filledQty' | 'avgPrice' | 'timestamp'>[],
-  day: string
-): RoundTrip[] {
-  const filled = orders
-    .filter(o => o.status === 'FILLED' && istDayKey(o.timestamp) === day)
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  const open = new Map<string, { price: number; qty: number; at: number }>();
-  const pairs: RoundTrip[] = [];
-  for (const o of filled) {
-    if (o.side === 'BUY') {
-      // A second BUY without a SELL between means the first leg was never
-      // closed on this book; the newer fill is the one still live.
-      open.set(o.symbol, { price: o.avgPrice, qty: o.filledQty, at: o.timestamp });
-    } else {
-      const entry = open.get(o.symbol);
-      if (!entry) continue;
-      open.delete(o.symbol);
-      pairs.push({
-        symbol: o.symbol,
-        entry: entry.price,
-        exit: o.avgPrice,
-        qty: entry.qty || o.filledQty,
-        at: entry.at,
-        closedAt: o.timestamp
-      });
-    }
-  }
-  return pairs;
-}
-
 interface Props {
   credentials: FyersCredentials;
   niftyLtp: number | null;
@@ -209,6 +175,19 @@ const fmt = (n: number | null | undefined) =>
   n == null || !isFinite(n) ? '—' : Math.round(n).toLocaleString('en-IN');
 
 const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(0)}`;
+
+function makeProposal(s: EnhancedSignal | null, spot: number | null, settings: MomentumSettings, expiry: string) {
+  if (!s || s.direction === 'NEUTRAL' || !spot || !expiry) return null;
+  const isLong = s.direction === 'LONG';
+  const atm = Math.round(spot / 50) * 50;
+  const strike = isLong ? atm - settings.itmOffset : atm + settings.itmOffset;
+  return {
+    strike,
+    optionType: isLong ? ('CE' as const) : ('PE' as const),
+    symbol: `NIFTY${expiry}${strike}${isLong ? 'CE' : 'PE'}`,
+    qty: settings.lots * LOT_SIZE
+  };
+}
 
 /** A signed −100…+100 factor rendered as a centred bar. */
 const FactorBar: React.FC<{ label: string; value: number; hint?: string }> = ({ label, value, hint }) => {
@@ -246,6 +225,15 @@ export const MomentumPanel: React.FC<Props> = ({
   const [positions, setPositions] = useState<Position[]>([]);
   const [busy, setBusy] = useState(false);
   const [stats, setStats] = useState(restored.stats);
+  const [vision, setVision] = useState<VisionRun | null>(null);
+  const [visionError, setVisionError] = useState<string | null>(null);
+  const visionRef = useRef({ run: vision, error: visionError });
+  visionRef.current = { run: vision, error: visionError };
+  const candidateRef = useRef<MomentumCandidate | null>(null);
+  const signalAtRef = useRef(0);
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const gateLogRef = useRef('');
 
   const orderRef = useRef<OrderManager | null>(null);
   /** Symbols with an exit order already in flight - the monitor ticks every 3s. */
@@ -285,6 +273,8 @@ export const MomentumPanel: React.FC<Props> = ({
     const om = new OrderManager(credentials, tradingMode === 'PAPER', `${OM_KEY}_${tradingMode}`);
     orderRef.current = om;
     exitingRef.current = new Set();
+    candidateRef.current = null;
+    signalAtRef.current = 0;
     setPositions(om.getPositions());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradingMode]);
@@ -294,6 +284,43 @@ export const MomentumPanel: React.FC<Props> = ({
     orderRef.current?.updateCredentials(credentials);
   }, [credentials]);
 
+  useEffect(() => {
+    if (!settings.requireVision) return;
+    let cancelled = false;
+    let request: AbortController | null = null;
+    const refresh = async () => {
+      if (request) return;
+      const controller = new AbortController();
+      request = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 10_000);
+      try {
+        const run = await visionService.getLatest(controller.signal);
+        if (!cancelled) {
+          setVision(run);
+          setVisionError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setVision(null);
+          setVisionError(error instanceof Error ? error.message : 'Vision request failed.');
+        }
+      } finally {
+        window.clearTimeout(timeout);
+        request = null;
+      }
+    };
+    void refresh();
+    const id = window.setInterval(refresh, SCAN_MS);
+    return () => {
+      cancelled = true;
+      request?.abort();
+      window.clearInterval(id);
+    };
+  }, [settings.requireVision]);
+
+  useEffect(() => {
+    candidateRef.current = null;
+  }, [running, settings]);
 
   // Mirror everything a reload would otherwise destroy.
   useEffect(() => {
@@ -366,27 +393,51 @@ export const MomentumPanel: React.FC<Props> = ({
     return `${d.getFullYear().toString().slice(2)}${(d.getMonth() + 1).toString().padStart(2, '0')}${d.getDate().toString().padStart(2, '0')}`;
   }, []);
 
-  const proposal = useMemo(() => {
-    if (!signal || signal.direction === 'NEUTRAL' || !niftyLtp) return null;
-    const isLong = signal.direction === 'LONG';
-    const atm = Math.round(niftyLtp / 50) * 50;
-    const strike = isLong ? atm - settings.itmOffset : atm + settings.itmOffset;
-    return {
-      strike,
-      optionType: isLong ? ('CE' as const) : ('PE' as const),
-      symbol: `NIFTY${expiry}${strike}${isLong ? 'CE' : 'PE'}`,
-      qty: settings.lots * LOT_SIZE
-    };
-  }, [signal, niftyLtp, settings.itmOffset, settings.lots, expiry]);
+  const proposal = useMemo(() => makeProposal(signal, niftyLtp, settings, expiry),
+    [signal, niftyLtp, settings, expiry]);
+
+  const assessEntry = useCallback((s = signalRef.current, signalAt = signalAtRef.current) => {
+    const inputs = inputsRef.current;
+    const config = settingsRef.current;
+    const proposed = makeProposal(s, inputs.niftyLtp, config, expiry);
+    return evaluateMomentumEntry({
+      now: Date.now(),
+      running: runningRef.current,
+      tradingMode: tradingModeRef.current,
+      signal: s,
+      signalAt,
+      history: inputs.historyLog,
+      spot: inputs.niftyLtp,
+      orders: orderRef.current?.getOrders() ?? [],
+      openPositions: orderRef.current?.getPositions().length ?? 0,
+      premium: proposed && inputs.niftyLtp
+        ? estimateOptionPremium(inputs.niftyLtp, proposed.strike, proposed.optionType) : 0,
+      quantity: proposed?.qty ?? 0,
+      targetPct: config.targetPct,
+      stopPct: config.stopPct,
+      minConfidence: config.minConfidence,
+      maxDailyTrades: config.maxDailyTrades,
+      brokerage: paperTradingEngine.getBook().settings.brokeragePerOrder,
+      requireVision: config.requireVision,
+      vision: visionRef.current.run,
+      visionError: visionRef.current.error
+    }, candidateRef.current);
+  }, [expiry]);
 
   // --- analysis loop --------------------------------------------------------
   const analyse = useCallback(() => {
     const { niftyLtp: ltp, historyLog: history, pivots: piv } = inputsRef.current;
     if (!ltp) {
+      candidateRef.current = null;
+      signalRef.current = null;
+      setSignal(null);
       addLog('No Nifty price yet.', 'warn');
       return;
     }
     if (history.length < MIN_HISTORY) {
+      candidateRef.current = null;
+      signalRef.current = null;
+      setSignal(null);
       // Say *why* it is stuck. A count that never moves means snapshots are not
       // arriving, which is a data problem, not a warm-up problem.
       const newest = history[0]?.timestamp ?? 0;
@@ -411,14 +462,16 @@ export const MomentumPanel: React.FC<Props> = ({
       piv?.r1 ?? ltp + 50,
       ltp
     );
+    signalRef.current = s;
+    signalAtRef.current = history[0]?.timestamp ?? 0;
+    const gate = assessEntry(s, signalAtRef.current);
+    candidateRef.current = gate.candidate;
     setSignal(s);
-    if (s.direction !== 'NEUTRAL' && s.confidence >= settingsRef.current.minConfidence) {
-      addLog(
-        `${s.direction === 'LONG' ? '📈' : '📉'} ${s.direction} · ${s.confidence.toFixed(0)}% · ${s.metrics.signalStrength} · R:R ${s.riskRewardRatio.toFixed(2)}`,
-        'good'
-      );
+    if (gateLogRef.current !== gate.reason) {
+      gateLogRef.current = gate.reason;
+      addLog(gate.reason, gate.ready ? 'good' : 'warn');
     }
-  }, [addLog]);
+  }, [addLog, assessEntry]);
 
   useEffect(() => {
     if (!running) return;
@@ -550,8 +603,14 @@ export const MomentumPanel: React.FC<Props> = ({
       const entryReason = [
         `Momentum took ${s.direction} via the ${strike} ${optionType} at ₹${fill.toFixed(2)}, ` +
           `with Nifty at ${fmt(spot)}.`,
-        `The multi-factor signal read ${s.confidence.toFixed(0)}% confidence (${s.metrics.signalStrength}), ` +
-          `clearing the ${minConfidence}% threshold, at a risk:reward of ${s.riskRewardRatio.toFixed(2)}.`,
+        `The multi-factor signal scored ${s.confidence.toFixed(0)}/100 (${s.metrics.signalStrength}), ` +
+          `clearing the ${minConfidence} threshold. This is not a win probability.`,
+        'Entry passed 1m/5m/15m alignment, breadth and options confluence, anti-chase checks, ' +
+          'three fresh observations over at least two minutes, cooldown and daily risk limits.',
+        `Planned premium reward/risk cleared ${MOMENTUM_POLICY.minNetRiskReward} after estimated charges and slippage.`,
+        settingsRef.current.requireVision
+          ? `Vision confirmation: ${visionRef.current.run?.analysis.parsed?.bias}, captured ${visionRef.current.run?.startedAt}.`
+          : 'Vision confirmation disabled; no AI agreement is claimed.',
         `Signal levels: entry ${fmt(s.suggestedEntry)}, target ${fmt(s.suggestedTarget)}, ` +
           `stop ${fmt(s.suggestedStopLoss)}.`,
         `Plan: exit on premium +${targetPct}% or −${stopPct}%.`,
@@ -608,7 +667,8 @@ export const MomentumPanel: React.FC<Props> = ({
       const spot = inputsRef.current.niftyLtp;
       const drift =
         meta && spot != null ? (spot - meta.entry) * (meta.direction === 'LONG' ? 1 : -1) : null;
-      const { targetPct, stopPct } = settingsRef.current;
+      const targetPct = meta?.targetPct ?? settingsRef.current.targetPct;
+      const stopPct = meta?.stopPct ?? settingsRef.current.stopPct;
 
       const exitNote = [
         `Exited at ₹${premium.toFixed(2)} — ${reason} (${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(1)}% on premium).`,
@@ -641,38 +701,54 @@ export const MomentumPanel: React.FC<Props> = ({
   const execute = useCallback(async () => {
     const om = orderRef.current;
     const s = signalRef.current;
-    if (!om || !s || !proposal || !niftyLtp) return;
+    const spot = inputsRef.current.niftyLtp;
+    const proposed = makeProposal(s, spot, settingsRef.current, expiry);
     // `busy` is React state and lands a render later; the auto-execute effect can
     // re-fire before it does, so only a ref reliably prevents a duplicate order.
     if (enteringRef.current) return;
+    const gate = assessEntry();
+    if (!om || !s || s.direction === 'NEUTRAL' || !proposed || !spot || !gate.ready) {
+      addLog(`Entry blocked: ${gate.reason}`, 'warn');
+      return;
+    }
     enteringRef.current = true;
+    candidateRef.current = null;
     setBusy(true);
     try {
-      const fill = estimateOptionPremium(niftyLtp, proposal.strike, proposal.optionType);
-      const res = await om.placeOrder(proposal.symbol, 'BUY', proposal.qty, 'MARKET', undefined, undefined, fill);
+      const plan = { targetPct: settingsRef.current.targetPct, stopPct: settingsRef.current.stopPct };
+      const fill = estimateOptionPremium(spot, proposed.strike, proposed.optionType);
+      const res = await om.placeOrder(proposed.symbol, 'BUY', proposed.qty, 'MARKET', undefined, undefined, fill);
       if (res.success) {
-        entryRef.current[proposal.symbol] = {
-          entry: niftyLtp,
-          direction: s.direction as 'LONG' | 'SHORT',
-          strike: proposal.strike,
-          optionType: proposal.optionType,
+        const order = om.getOrders().find(o => o.id === res.orderId);
+        if (order?.status !== 'FILLED') {
+          addLog('Broker acknowledged the order; fill is unconfirmed. Further entries are blocked pending reconciliation.', 'warn');
+          return;
+        }
+        entryRef.current[proposed.symbol] = {
+          entry: spot,
+          direction: s.direction,
+          strike: proposed.strike,
+          optionType: proposed.optionType,
           confidence: s.confidence,
           strength: s.metrics.signalStrength,
           fill,
-          at: Date.now()
+          at: Date.now(),
+          ...plan
         };
         setPositions(om.getPositions());
         setStats(p => ({ ...p, trades: p.trades + 1 }));
-        addLog(`✅ Bought ${proposal.symbol} × ${proposal.qty} at spot ${fmt(niftyLtp)}`, 'good');
-        journalEntry(proposal.symbol, proposal.strike, proposal.optionType, fill, niftyLtp, s);
+        addLog(`✅ Bought ${proposed.symbol} × ${proposed.qty} at spot ${fmt(spot)}`, 'good');
+        journalEntry(proposed.symbol, proposed.strike, proposed.optionType, fill, spot, s);
       } else {
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }
+    } catch (error) {
+      addLog(`Entry failed: ${error instanceof Error ? error.message : String(error)}`, 'bad');
     } finally {
       enteringRef.current = false;
       setBusy(false);
     }
-  }, [proposal, niftyLtp, addLog, journalEntry]);
+  }, [expiry, assessEntry, addLog, journalEntry]);
 
   const closeSymbol = useCallback(
     async (symbol: string, reason: string) => {
@@ -680,20 +756,43 @@ export const MomentumPanel: React.FC<Props> = ({
       if (!om) return;
       const pos = om.getPositions().find(p => p.symbol === symbol);
       if (!pos || exitingRef.current.has(symbol)) return;
+      const exitSide = pos.side === 'LONG' ? 'SELL' : 'BUY';
+      if (om.getOrders().some(o => o.symbol === symbol && o.side === exitSide &&
+          ['PENDING', 'PLACED', 'PARTIAL'].includes(o.status))) {
+        addLog('Exit is already awaiting a broker fill; no duplicate exit will be sent.', 'warn');
+        return;
+      }
       exitingRef.current.add(symbol);
       setBusy(true);
       try {
-        const res = await om.placeOrder(symbol, pos.side === 'LONG' ? 'SELL' : 'BUY', Math.abs(pos.quantity), 'MARKET');
+        const res = await om.placeOrder(
+          symbol, exitSide, Math.abs(pos.quantity),
+          'MARKET', undefined, undefined, pos.ltp
+        );
         if (res.success) {
-          addLog(`🚪 Closed ${symbol} — ${reason} · ${inr(pos.pnl)}`, pos.pnl >= 0 ? 'good' : 'bad');
-          setStats(p => ({ ...p, wins: p.wins + (pos.pnl > 0 ? 1 : 0), pnl: p.pnl + pos.pnl }));
+          const order = om.getOrders().find(o => o.id === res.orderId);
+          if (order?.status !== 'FILLED') {
+            addLog('Exit acknowledged but not filled; position remains open pending broker reconciliation.', 'warn');
+            return;
+          }
+          candidateRef.current = null;
+          const grossPnl = (order.avgPrice - pos.avgPrice) * pos.quantity;
+          const pnlPercent = (order.avgPrice / pos.avgPrice - 1) * 100;
+          const brokerage = paperTradingEngine.getBook().settings.brokeragePerOrder;
+          const netPnl = grossPnl
+            - computeCharges(pos.avgPrice, Math.abs(pos.quantity), 'BUY', brokerage).total
+            - computeCharges(order.avgPrice, Math.abs(pos.quantity), 'SELL', brokerage).total;
+          addLog(`🚪 Closed ${symbol} — ${reason} · net ${inr(netPnl)}`, netPnl > 0 ? 'good' : 'bad');
+          setStats(p => ({ ...p, wins: p.wins + (grossPnl > 0 ? 1 : 0), pnl: p.pnl + grossPnl }));
           // Journal before the metadata is dropped — the exit note is built from it.
-          journalExit(symbol, pos.ltp ?? pos.avgPrice, reason, pos.pnl, pos.pnlPercent);
+          journalExit(symbol, order.avgPrice, reason, grossPnl, pnlPercent);
           delete entryRef.current[symbol];
         } else {
           addLog(`❌ Exit rejected: ${res.message ?? 'unknown error'}`, 'bad');
         }
         setPositions(om.getPositions());
+      } catch (error) {
+        addLog(`Exit failed: ${error instanceof Error ? error.message : String(error)}`, 'bad');
       } finally {
         exitingRef.current.delete(symbol);
         setBusy(false);
@@ -704,10 +803,10 @@ export const MomentumPanel: React.FC<Props> = ({
 
   // --- position monitoring --------------------------------------------------
   useEffect(() => {
-    if (!running || !niftyLtp) return;
     const id = window.setInterval(() => {
       const om = orderRef.current;
-      if (!om) return;
+      const { niftyLtp: spot } = inputsRef.current;
+      if (!om || !spot) return;
       const open = om.getPositions();
       if (open.length === 0) {
         setPositions(prev => (prev.length ? [] : prev));
@@ -716,7 +815,7 @@ export const MomentumPanel: React.FC<Props> = ({
       open.forEach(p => {
         const meta = entryRef.current[p.symbol];
         if (!meta) return;
-        const drift = (niftyLtp - meta.entry) * (meta.direction === 'LONG' ? 1 : -1);
+        const drift = (spot - meta.entry) * (meta.direction === 'LONG' ? 1 : -1);
         const premium = Math.max(1, p.avgPrice + drift * 0.5);
         om.updatePositionPnL(p.symbol, premium);
         // Keep the ledger's unrealised P&L and its high/low-water marks in step,
@@ -725,33 +824,35 @@ export const MomentumPanel: React.FC<Props> = ({
         if (tradingModeRef.current === 'PAPER') paperTradingEngine.markExternal(p.symbol, premium);
       });
       const refreshed = om.getPositions();
-      const { targetPct, stopPct } = settingsRef.current;
       refreshed.forEach(p => {
-        if (p.pnlPercent >= targetPct) closeSymbol(p.symbol, `target +${targetPct}%`);
+        const meta = entryRef.current[p.symbol];
+        const targetPct = meta?.targetPct ?? settingsRef.current.targetPct;
+        const stopPct = meta?.stopPct ?? settingsRef.current.stopPct;
+        if (istMinutesOf(new Date()) >= 15 * 60 + 15) closeSymbol(p.symbol, 'EOD market close');
+        else if (p.pnlPercent >= targetPct) closeSymbol(p.symbol, `target +${targetPct}%`);
         else if (p.pnlPercent <= -stopPct) closeSymbol(p.symbol, `stop −${stopPct}%`);
       });
       setPositions(om.getPositions());
     }, 3000);
     return () => window.clearInterval(id);
-  }, [running, niftyLtp, closeSymbol]);
+  }, [closeSymbol]);
 
   // --- auto execute ---------------------------------------------------------
   // Paper and live have separate switches: enabling hands-off paper trading must
   // never quietly authorise the same engine to spend real money.
-  const autoExecuteOn = tradingMode === 'PAPER' ? settings.autoPaperExecute : settings.autoExecute;
+  const autoExecuteOn = tradingMode === 'PAPER' && settings.autoPaperExecute;
+  const entryGate = assessEntry();
   useEffect(() => {
     if (!running || !autoExecuteOn || busy || enteringRef.current) return;
-    if (!signal || signal.direction === 'NEUTRAL') return;
-    if (signal.confidence < settings.minConfidence) return;
-    if (positions.length > 0) return;
-    addLog(`🤖 Auto-execute (${tradingMode}) — the signal qualifies.`, 'warn');
-    execute();
+    if (!entryGate.ready) return;
+    addLog(`🤖 Auto-execute (${tradingMode}) — confirmed entry gates passed.`, 'warn');
+    void execute();
   }, [
-    running, autoExecuteOn, settings.minConfidence, signal, positions.length, busy,
+    running, autoExecuteOn, entryGate.ready, signal, positions.length, busy,
     tradingMode, execute, addLog
   ]);
 
-  const qualifies = !!signal && signal.direction !== 'NEUTRAL' && signal.confidence >= settings.minConfidence;
+  const qualifies = entryGate.ready;
   const m = signal?.metrics;
 
   return (
@@ -773,14 +874,14 @@ export const MomentumPanel: React.FC<Props> = ({
               )}
             </h2>
             <p className="mt-1 max-w-xl text-xs text-slate-400">
-              Runs all session on 15-minute trend, breadth, option flow, momentum and volatility. Independent of the
-              Sniper — separate orders, separate P&amp;L.
+              Selective entries from 09:35–14:45 IST after fresh 1m/5m/15m alignment and sustained confirmation.
+              Independent of Sniper. Fewer trades are intentional; profitable outcomes are not guaranteed.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <Pill tone={settings.autoStart ? 'good' : 'muted'}>
                 {settings.autoStart ? 'Auto-start ON' : 'Auto-start OFF'}
               </Pill>
-              <Pill tone={autoExecuteOn ? (tradingMode === 'LIVE' ? 'bad' : 'good') : 'muted'}>
+              <Pill tone={autoExecuteOn ? 'good' : 'muted'}>
                 {autoExecuteOn ? `Auto-execute ON · ${tradingMode}` : `Auto-execute OFF · ${tradingMode}`}
               </Pill>
               <Pill tone={historyLog.length >= MIN_HISTORY ? 'good' : 'warn'}>
@@ -816,11 +917,11 @@ export const MomentumPanel: React.FC<Props> = ({
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Stat label="Confidence" value={signal ? `${signal.confidence.toFixed(0)}%` : '—'} sub={signal?.metrics.signalStrength} />
-          <Stat label="Risk : reward" value={signal ? signal.riskRewardRatio.toFixed(2) : '—'} />
+          <Stat label="Signal score" value={signal ? `${signal.confidence.toFixed(0)}/100` : '—'} sub="Not a win probability" />
+          <Stat label="Net reward / risk" value={entryGate.netRiskReward?.toFixed(2) ?? '—'} sub="Estimated fees + slippage" />
           <Stat label="Open" value={positions.length} sub={`${settings.lots} lot${settings.lots > 1 ? 's' : ''} per entry`} />
           <Stat
-            label="Session P&L"
+            label="Session gross P&L"
             value={inr(stats.pnl)}
             tone={stats.pnl >= 0 ? 'good' : 'bad'}
             sub={`${stats.trades} trades · ${stats.trades ? Math.round((stats.wins / stats.trades) * 100) : 0}% win`}
@@ -828,12 +929,26 @@ export const MomentumPanel: React.FC<Props> = ({
         </div>
       </div>
 
+      <div className="rounded-xl border border-sky-500/20 bg-slate-900 px-4 py-3 text-xs text-slate-300">
+        <p className="font-semibold">{entryGate.ready ? 'Ready: ' : 'Waiting: '}{entryGate.reason}</p>
+        <p className="mt-1 text-slate-500">
+          3 fresh observations / 2m minimum · 5m after profit / 15m after loss · maximum {settings.maxDailyTrades} entries/day ·
+          stop after 2 consecutive net losses or ₹2,000 net loss.
+          {settings.requireVision ? ' Fresh Vision agreement required.' : ' Vision agreement is OFF (enable in settings).'}
+        </p>
+        <p className="mt-1 text-amber-400/80">
+          PAPER entries only: premiums and P&amp;L marks are estimates, not executable option quotes.
+          LIVE entries are blocked until quote and fill verification exists. Stop pauses entries, not position protection.
+        </p>
+      </div>
+
       {showSettings && (
         <Card title="Momentum settings" icon={<Settings2 className="h-4 w-4 text-sky-400" />}>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {(
               [
-                ['minConfidence', 'Minimum confidence %', 50, 95],
+                ['minConfidence', 'Minimum signal score (not win %)', MOMENTUM_POLICY.minConfidence, 95],
+                ['maxDailyTrades', 'Maximum entries per day', 1, Number.MAX_SAFE_INTEGER],
                 ['lots', 'Lots per entry', 1, 20],
                 ['itmOffset', 'ITM offset (points)', 0, 500],
                 ['targetPct', 'Target (premium %)', 5, 100],
@@ -846,9 +961,13 @@ export const MomentumPanel: React.FC<Props> = ({
                   type="number"
                   min={min}
                   max={max}
+                  step={key === 'itmOffset' ? 50 : 1}
                   value={settings[key]}
                   onChange={e =>
-                    setSettings(s => ({ ...s, [key]: Math.max(min, Math.min(max, Number(e.target.value) || min)) }))
+                    setSettings(s => {
+                      const value = Math.max(min, Math.min(max, Number(e.target.value) || min));
+                      return { ...s, [key]: key === 'itmOffset' ? Math.round(value / 50) * 50 : Math.floor(value) };
+                    })
                   }
                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200"
                 />
@@ -857,6 +976,10 @@ export const MomentumPanel: React.FC<Props> = ({
           </div>
 
           <div className="mt-4 space-y-2 border-t border-slate-800 pt-4">
+            <p className="text-xs text-slate-400">
+              The daily entry limit is saved automatically and applies to today's existing trade count.
+              Raising it does not bypass cooldowns, confirmation or loss protections.
+            </p>
             <Toggle
               label="Auto-start at market open"
               hint="Begins the 30s scan loop at 09:15 IST without anyone pressing Start."
@@ -865,23 +988,26 @@ export const MomentumPanel: React.FC<Props> = ({
             />
             <Toggle
               label="Auto-execute on PAPER"
-              hint="Buys automatically whenever a signal clears the confidence threshold."
+              hint="Buys only after confirmation, freshness, cooldown and risk gates all pass."
               checked={settings.autoPaperExecute}
               onChange={v => setSettings(s => ({ ...s, autoPaperExecute: v }))}
             />
             <Toggle
-              label="Auto-execute on LIVE"
-              hint="Real money, placed with no confirmation. Off unless you say otherwise."
-              checked={settings.autoExecute}
-              onChange={v => setSettings(s => ({ ...s, autoExecute: v }))}
-              danger
+              label="Require fresh Vision AI agreement"
+              hint="Uses the local sidecar's latest capture. Missing, stale, unreadable or conflicting analysis blocks entry; never overrides risk gates."
+              checked={settings.requireVision}
+              onChange={v => setSettings(s => ({ ...s, requireVision: v }))}
             />
+            <p className="text-xs text-amber-400">
+              LIVE Momentum entries are disabled; the saved live preference cannot bypass this safeguard.
+              Existing-position exits remain available.
+            </p>
             <p className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-400">
               Currently in <span className="font-semibold text-slate-200">{tradingMode}</span> mode — auto-execute is{' '}
               <span className={autoExecuteOn ? 'font-semibold text-emerald-300' : 'font-semibold text-slate-300'}>
                 {autoExecuteOn ? 'ON' : 'OFF'}
               </span>
-              . Entries still need ≥ {settings.minConfidence}% confidence and no open position.
+              . Manual and automatic entries share every gate. Settings changes restart confirmation; new trade targets/stops stay fixed at entry.
             </p>
           </div>
         </Card>
@@ -895,7 +1021,7 @@ export const MomentumPanel: React.FC<Props> = ({
           ) : (
             <div className="space-y-3">
               <FactorBar
-                label={`15-min trend · ${m.trend15m}`}
+                label={`Short-term trend score · ${m.trend15m}`}
                 value={m.trendStrength * (m.trend15m === 'BEARISH' ? -1 : m.trend15m === 'NEUTRAL' ? 0 : 1)}
               />
               <FactorBar label="Market breadth" value={m.broadSentiment} />
@@ -950,10 +1076,10 @@ export const MomentumPanel: React.FC<Props> = ({
               <div>
                 <div className="mb-1 flex items-center justify-between text-[11px]">
                   <span className="flex items-center gap-1 text-slate-400">
-                    <Gauge className="h-3 w-3" /> Confidence vs threshold ({settings.minConfidence}%)
+                    <Gauge className="h-3 w-3" /> Signal score vs threshold ({settings.minConfidence})
                   </span>
                   <span className={qualifies ? 'text-emerald-300' : 'text-amber-300'}>
-                    {signal.confidence.toFixed(0)}%
+                    {signal.confidence.toFixed(0)}/100
                   </span>
                 </div>
                 <Meter value={signal.confidence} tone={qualifies ? 'bg-emerald-400' : 'bg-amber-400'} height="h-2" />
@@ -981,7 +1107,7 @@ export const MomentumPanel: React.FC<Props> = ({
                   : positions.length > 0
                     ? 'Position already open'
                     : !qualifies
-                      ? `Below the ${settings.minConfidence}% threshold`
+                      ? 'Waiting for all entry gates'
                       : `Execute — exit at +${settings.targetPct}% / −${settings.stopPct}% premium`}
               </button>
             </div>

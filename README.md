@@ -257,9 +257,45 @@ single `BLOCK` at 09:26 ended a session that still had nineteen minutes of entry
 
 ### Momentum
 
-A different animal, and it looks like one: blue instead of green, all-session, multi-factor scoring
-(15-minute trend, breadth, option flow, momentum, volatility) with a confidence threshold, premium-%
-target/stop and an optional auto-execute. It exists for the days the protocol stands aside.
+Momentum prioritises fewer, confirmed **paper trades**, not continuous re-entry. The same
+`services/momentumEntryGuard.ts` decision protects automatic and manual entries; the panel shows
+why it is waiting. Its signal score is a heuristic, **not a calibrated win probability**, and
+neither these filters nor AI can guarantee profitable trades.
+
+| Entry safeguard | Policy |
+| --- | --- |
+| Trading window | 09:35-14:45 IST; existing positions continue to be managed |
+| Evidence | Score at least 80/100 (older lower preferences migrate to 80); aligned breadth, option flow and momentum |
+| Price confirmation | Actual timestamped 1m/5m/15m direction; continuous current-session history, directional efficiency at least 55%, no chasing sudden extensions |
+| Patience | Three distinct qualifying snapshots spanning at least two minutes; repeated scans of the same snapshot do not count |
+| Freshness | Latest snapshot at most 90 seconds old; new data requires a new signal scan |
+| Re-entry | Five-minute cooldown after net profit, fifteen after net loss/breakeven, then a completely fresh confirmation sequence |
+| Daily limits | User-configurable **Maximum entries per day** in Momentum settings (positive whole number, default 4, saved automatically); stop after two consecutive net losses or Rs 2,000 realised net loss; proposed stop risk must fit remaining loss budget |
+| Costs | Premium target/stop reward-to-risk at least 1.3 after the paper ledger's charges and a 0.5%-per-leg slippage allowance |
+
+Cooldowns and daily limits are rebuilt from the strategy's mode-specific order book, so a reload
+does not bypass them. Confirmation deliberately starts over after a reload, settings change or
+pause. Rejected entries consume their setup too. An unpriced historical fill blocks new entries
+until the book is reconciled rather than inventing realised results.
+Changing the daily entry limit applies to today's existing filled-entry count without resetting it;
+increasing the limit leaves cooldowns, confirmation and loss protections in place.
+
+**Require fresh Vision AI agreement** is optional and off by default because the local capture
+sidecar is not available in every deployment. Enabling it requires a successful readable capture
+less than five minutes old, readability confidence at least 70, and matching bullish/bearish bias.
+Missing, failed, unreadable, stale, neutral, choppy or opposing analysis blocks entries; there is
+no fallback to archived screenshots or an AI override of risk limits. Start the sidecar described
+below and use a capture cadence shorter than five minutes.
+
+Targets/stops for new positions are fixed at entry. Stopping the scanner pauses entries, not
+position protection; the monitor attempts to flatten at 15:15 IST. Paper exits now store their
+simulated fill price in the order book, keeping reconstruction and loss controls meaningful.
+
+**New LIVE Momentum entries are disabled** until actual option quotes and broker fill
+reconciliation are integrated. Existing-position exits remain available; an acknowledged order
+is not treated as a confirmed fill. Current premiums and marks are simulated approximations,
+not executable prices, and these safeguards have not established a live trading edge. The
+browser must stay open for monitoring; this is not a broker-hosted protective stop.
 
 ## 👁️ Vision Analysis Setup
 
