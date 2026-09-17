@@ -63,10 +63,10 @@ const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     try {
       const saved = localStorage.getItem('fyers_creds');
-      const parsed = saved ? JSON.parse(saved) : { 
-        appId: '', 
-        accessToken: '', 
-        refreshInterval: REFRESH_OPTIONS[3].value,
+      const parsed = saved ? JSON.parse(saved) : {
+        appId: '',
+        accessToken: '',
+        refreshInterval: REFRESH_OPTIONS[2].value, // 30s — keeps snapshots inside the momentum guard's freshness window and enables live PayTM data
         dataProvider: 'paytm'
       };
       if (parsed.aiEnabled === undefined) parsed.aiEnabled = true;
@@ -77,10 +77,10 @@ const App: React.FC = () => {
       if (parsed.aiHistoryEnabled === undefined) parsed.aiHistoryEnabled = true;
       return parsed;
     } catch (e) {
-      return { 
-        appId: '', 
-        accessToken: '', 
-        refreshInterval: REFRESH_OPTIONS[3].value, 
+      return {
+        appId: '',
+        accessToken: '',
+        refreshInterval: REFRESH_OPTIONS[2].value, // 30s (see above)
         aiEnabled: true,
         dataProvider: 'paytm',
         aiAutoTradeEnabled: true,
@@ -1377,8 +1377,11 @@ const App: React.FC = () => {
                   callsOI,
                   putsOI
               };
-              // Add new snapshot at the beginning (newest first)
-              setHistoryLog(prev => [snapshot, ...prev]);
+              // Merge (dedupe-by-minute + re-sort by timestamp) instead of a raw
+              // prepend: the client-stamped live snapshot must not interleave with
+              // server-stamped (cron) snapshots, or the momentum guard sees
+              // duplicate/out-of-order timestamps and refuses to trade.
+              setHistoryLog(prev => mergeSnapshots([snapshot], prev));
           }
       }
 
