@@ -7,7 +7,7 @@ import { isMarketLive } from './marketSession';
 
 const MINUTE = 60_000;
 export const MOMENTUM_POLICY = {
-  minConfidence: 80,
+  minConfidence: 68,
   cooldownMinutes: 5,
   lossCooldownMinutes: 15,
   maxDailyTrades: 4,

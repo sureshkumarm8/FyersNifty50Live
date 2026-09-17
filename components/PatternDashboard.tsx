@@ -101,29 +101,31 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
   }, [activeTab]);
 
   const exportDayCSV = (archive: DailyArchive) => {
-    const csvData = archive.snapshots.map((snapshot, index) => ({
-      timestamp: new Date(snapshot.timestamp).toISOString(),
-      time: new Date(snapshot.timestamp).toLocaleTimeString('en-IN', { hour12: false }),
-      niftyLTP: snapshot.niftyLtp,
-      change: snapshot.niftyChange || 0,
-      changePercent: snapshot.niftyChangePercent || 0,
-      sentiment: snapshot.overallSent || 0,
-      pcr: snapshot.pcr || 0,
-      callOI: snapshot.callOI || 0,
-      putOI: snapshot.putOI || 0,
-      vix: snapshot.vix || 0,
-      bullishStocks: snapshot.bullishCount || 0,
-      bearishStocks: snapshot.bearishCount || 0,
-      advanceDecline: (snapshot.bullishCount || 0) - (snapshot.bearishCount || 0),
-      momentum: index > 0 ? snapshot.niftyLtp - archive.snapshots[index - 1].niftyLtp : 0,
-      cumulativeMomentum: archive.snapshots.slice(0, index + 1).reduce((sum, s, i) => {
-        if (i === 0) return 0;
-        return sum + (s.niftyLtp - archive.snapshots[i - 1].niftyLtp);
-      }, 0)
+    // Full market_history_log (MarketSnapshot) schema — the same data the
+    // momentum engine consumes — so exported archives stay backtestable.
+    const csvData = archive.snapshots.map((s) => ({
+      time: s.time,
+      timestamp: s.timestamp,
+      niftyLtp: s.niftyLtp,
+      ptsChg: s.ptsChg,
+      overallSent: s.overallSent,
+      adv: s.adv,
+      dec: s.dec,
+      stockSent: s.stockSent,
+      callSent: s.callSent,
+      putSent: s.putSent,
+      pcr: s.pcr,
+      optionsSent: s.optionsSent,
+      callsBuyQty: s.callsBuyQty,
+      callsSellQty: s.callsSellQty,
+      putsBuyQty: s.putsBuyQty,
+      putsSellQty: s.putsSellQty,
+      callsOI: s.callsOI,
+      putsOI: s.putsOI,
     }));
 
     const dateStr = new Date(archive.date).toISOString().slice(0, 10);
-    downloadCSV(csvData, `nifty_sentiment_momentum_${dateStr}`);
+    downloadCSV(csvData, `market_history_log_${dateStr}`);
   };
 
   const handleDeleteArchive = async (archive: DailyArchive, e: React.MouseEvent) => {
@@ -301,20 +303,29 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
             timestamp = Date.now() + (idx * 60000);
           }
           
+          // Map into the full MarketSnapshot schema. New full-schema archives
+          // (market_history_log_*) carry every field; older nifty_sentiment_*
+          // files only have niftyLTP/sentiment/pcr, so the options fields
+          // default to 0 (and stay unusable for options-flow backtests).
           return {
+            time: String(row.time || new Date(timestamp).toLocaleTimeString('en-IN', { hour12: false })),
             timestamp,
-            niftyLtp: Number(row.niftyLTP || row.niftyLtp || 0),
-            niftyChange: Number(row.change || row.niftyChange || 0),
-            niftyChangePercent: Number(row.changePercent || row.niftyChangePercent || 0),
-            overallSent: Number(row.sentiment || row.overallSent || 0),
+            niftyLtp: Number(row.niftyLtp || row.niftyLTP || 0),
+            ptsChg: Number(row.ptsChg || row.change || 0),
+            overallSent: Number(row.overallSent || row.sentiment || 0),
+            adv: Number(row.adv || 0),
+            dec: Number(row.dec || 0),
+            stockSent: Number(row.stockSent || 0),
+            callSent: Number(row.callSent || 0),
+            putSent: Number(row.putSent || 0),
             pcr: Number(row.pcr || 0),
-            callOI: Number(row.callOI || 0),
-            putOI: Number(row.putOI || 0),
-            vix: Number(row.vix || 0),
-            bullishCount: Number(row.bullishStocks || row.bullishCount || 0),
-            bearishCount: Number(row.bearishStocks || row.bearishCount || 0),
-            stockSent: Number(row.momentum || row.stockSent || 0),
-            ptsChg: Number(row.change || row.ptsChg || 0)
+            optionsSent: Number(row.optionsSent || 0),
+            callsBuyQty: Number(row.callsBuyQty || 0),
+            callsSellQty: Number(row.callsSellQty || 0),
+            putsBuyQty: Number(row.putsBuyQty || 0),
+            putsSellQty: Number(row.putsSellQty || 0),
+            callsOI: Number(row.callsOI || row.callOI || 0),
+            putsOI: Number(row.putsOI || row.putOI || 0),
           };
         });
 
