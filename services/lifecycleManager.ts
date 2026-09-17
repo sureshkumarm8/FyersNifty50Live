@@ -228,14 +228,14 @@ export class DataLifecycleManager {
     
     return {
       totalTrades: todayTrades.length,
-      pnl: stats?.totalPnL || 0,
+      pnl: stats?.totalPnl || 0,
       winRate: stats?.winRate || 0,
       patterns: [] // Will be filled by PatternMiner
     };
   }
 
   /**
-   * Setup auto-archive at market close (3:45 PM IST)
+   * Setup auto-archive at market close (3:35 PM IST)
    */
   setupAutoArchive(): void {
     // Check every minute if it's time to archive
@@ -245,9 +245,9 @@ export class DataLifecycleManager {
       const hour = istTime.getHours();
       const min = istTime.getMinutes();
       
-      // 3:45 PM IST (15:45)
-      if (hour === 15 && min === 45) {
-        console.log('🕐 Auto-archive triggered at 3:45 PM');
+      // 3:35 PM IST (15:35)
+      if (hour === 15 && min === 35) {
+        console.log('🕐 Auto-archive triggered at 3:35 PM');
         try {
           await this.endOfDayCleanup();
         } catch (error) {
@@ -256,7 +256,7 @@ export class DataLifecycleManager {
       }
     }, 60000); // Check every minute
     
-    console.log('⏰ Auto-archive scheduled for 3:45 PM IST');
+    console.log('⏰ Auto-archive scheduled for 3:35 PM IST');
   }
 
   /**
@@ -293,35 +293,39 @@ export class DataLifecycleManager {
    */
   private autoSaveDailyCSV(date: string, snapshots: MarketSnapshot[]): void {
     try {
-      // Prepare CSV data with sentiment and momentum
-      const csvData = snapshots.map((snapshot, index) => ({
-        timestamp: new Date(snapshot.timestamp).toISOString(),
-        time: new Date(snapshot.timestamp).toLocaleTimeString('en-IN', { hour12: false }),
-        niftyLTP: snapshot.niftyLtp,
-        change: snapshot.niftyChange || 0,
-        changePercent: snapshot.niftyChangePercent || 0,
-        sentiment: snapshot.overallSent || 0,
-        pcr: snapshot.pcr || 0,
-        callOI: snapshot.callOI || 0,
-        putOI: snapshot.putOI || 0,
-        vix: snapshot.vix || 0,
-        bullishStocks: snapshot.bullishCount || 0,
-        bearishStocks: snapshot.bearishCount || 0,
-        advanceDecline: (snapshot.bullishCount || 0) - (snapshot.bearishCount || 0),
-        momentum: index > 0 ? snapshot.niftyLtp - snapshots[index - 1].niftyLtp : 0,
-        cumulativeMomentum: snapshots.slice(0, index + 1).reduce((sum, s, i) => {
-          if (i === 0) return 0;
-          return sum + (s.niftyLtp - snapshots[i - 1].niftyLtp);
-        }, 0)
+      // Emit the full market_history_log (MarketSnapshot) schema — the same
+      // data the momentum engine actually consumes — so the daily archive is
+      // backtestable. The previous export dropped optionsSent, stock sentiment
+      // and the call/put buy-sell flows, and logged callOI/putOI/vix/breadth as
+      // 0 because it referenced fields that don't exist on MarketSnapshot.
+      const csvData = snapshots.map((s) => ({
+        time: s.time,
+        timestamp: s.timestamp,
+        niftyLtp: s.niftyLtp,
+        ptsChg: s.ptsChg,
+        overallSent: s.overallSent,
+        adv: s.adv,
+        dec: s.dec,
+        stockSent: s.stockSent,
+        callSent: s.callSent,
+        putSent: s.putSent,
+        pcr: s.pcr,
+        optionsSent: s.optionsSent,
+        callsBuyQty: s.callsBuyQty,
+        callsSellQty: s.callsSellQty,
+        putsBuyQty: s.putsBuyQty,
+        putsSellQty: s.putsSellQty,
+        callsOI: s.callsOI,
+        putsOI: s.putsOI,
       }));
 
       // Format date for filename
       const dateObj = new Date(date);
       const dateStr = dateObj.toISOString().slice(0, 10);
-      
-      // Auto-download CSV
-      downloadCSV(csvData, `nifty_sentiment_momentum_${dateStr}`);
-      
+
+      // Auto-download CSV with the market_history_log schema
+      downloadCSV(csvData, `market_history_log_${dateStr}`);
+
       console.log(`✅ CSV auto-saved: ${csvData.length} records for ${date}`);
     } catch (error) {
       console.error('Failed to auto-save CSV:', error);

@@ -426,24 +426,31 @@ export default async function handler(req, res) {
     };
     
     try {
-      // Save current snapshot with timestamp as key
-      await redis.set(`snapshot:${snapshot.timestamp}`, JSON.stringify(snapshot), {
-        ex: 86400 // Expire after 24 hours
-      });
-      
-      // Add to sorted set for easy retrieval (score = timestamp)
-      await redis.zadd('snapshots:index', {
-        score: snapshot.timestamp,
-        member: snapshot.timestamp.toString()
-      });
-      
-      // Keep only last 500 snapshots in index (~ 8 hours of data)
-      await redis.zremrangebyrank('snapshots:index', 0, -501);
-      
-      // Save latest snapshot for quick access
-      await redis.set('snapshot:latest', JSON.stringify(snapshot));
-      
-      console.log(`[Cron] 💾 Saved to Redis - Key: snapshot:${snapshot.timestamp}`);
+      // Respect the short-lived clear lock set by clear-history so a full clear
+      // isn't immediately repopulated by the cron writer.
+      const clearLock = await redis.get('clear_lock');
+      if (clearLock) {
+        console.log('[Cron] ⏸️ Skipping Redis save: history was just cleared');
+      } else {
+        // Save current snapshot with timestamp as key
+        await redis.set(`snapshot:${snapshot.timestamp}`, JSON.stringify(snapshot), {
+          ex: 86400 // Expire after 24 hours
+        });
+
+        // Add to sorted set for easy retrieval (score = timestamp)
+        await redis.zadd('snapshots:index', {
+          score: snapshot.timestamp,
+          member: snapshot.timestamp.toString()
+        });
+
+        // Keep only last 500 snapshots in index (~ 8 hours of data)
+        await redis.zremrangebyrank('snapshots:index', 0, -501);
+
+        // Save latest snapshot for quick access
+        await redis.set('snapshot:latest', JSON.stringify(snapshot));
+
+        console.log(`[Cron] 💾 Saved to Redis - Key: snapshot:${snapshot.timestamp}`);
+      }
     } catch (redisError) {
       console.error('[Cron] ⚠️ Redis save failed:', redisError.message);
       // Continue even if Redis fails

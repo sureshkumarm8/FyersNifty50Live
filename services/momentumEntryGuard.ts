@@ -7,7 +7,7 @@ import { isMarketLive } from './marketSession';
 
 const MINUTE = 60_000;
 export const MOMENTUM_POLICY = {
-  minConfidence: 80,
+  minConfidence: 68,
   cooldownMinutes: 5,
   lossCooldownMinutes: 15,
   maxDailyTrades: 4,
@@ -108,8 +108,8 @@ export function evaluateMomentumEntry(
     return deny('Invalid daily entry limit; enter a positive whole number.');
   }
   const minutes = istMinutesOf(new Date(now));
-  if (!isMarketLive(new Date(now)) || minutes < 9 * 60 + 35 || minutes >= 14 * 60 + 45) {
-    return deny('Entry window: 09:35-14:45 IST; wait outside the opening noise.');
+  if (!isMarketLive(new Date(now)) || minutes < 9 * 60 + 30 || minutes >= 15 * 60) {
+    return deny('Entry window: 09:30-15:00 IST; wait outside the opening noise.');
   }
   if (input.openPositions > 0 || input.orders.some(o =>
     ['PENDING', 'PLACED', 'PARTIAL'].includes(o.status))) {

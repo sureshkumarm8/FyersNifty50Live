@@ -3,7 +3,7 @@ import type { MarketSnapshot, VisionRun, VisionVerdict } from '../types';
 import { EnhancedSignalGenerator, type EnhancedSignal } from '../services/enhancedSignalGenerator';
 import type { Order } from '../services/orderManager';
 import {
-  evaluateMomentumEntry, pairRoundTrips,
+  evaluateMomentumEntry, pairRoundTrips, MOMENTUM_POLICY,
   type MomentumCandidate, type MomentumGateInput
 } from '../services/momentumEntryGuard';
 import { computeCharges } from '../services/paperTradingService';
@@ -256,10 +256,10 @@ test('reversal, out-of-order evidence and long confirmation gaps start over', ()
 
 test('weekday entry window excludes opening noise, cutoff and weekends', () => {
   for (const date of [
-    '2026-09-16T09:34:59+05:30', '2026-09-16T14:45:00+05:30',
+    '2026-09-16T09:29:59+05:30', '2026-09-16T15:00:00+05:30',
     '2026-09-19T11:00:00+05:30', '2026-09-20T11:00:00+05:30'
   ]) blocked(input(Date.parse(date)), /Entry window/);
-  for (const date of ['2026-09-16T09:35:00+05:30', '2026-09-16T14:44:59+05:30']) {
+  for (const date of ['2026-09-16T09:30:00+05:30', '2026-09-16T14:59:59+05:30']) {
     const now = Date.parse(date);
     assert.equal(evaluateMomentumEntry(input(now), confirmed(now)).ready, true);
   }
@@ -465,7 +465,7 @@ test('choppy paths and contradictory breadth, momentum or option flow are blocke
 });
 
 test('confidence has a policy floor and honors a stricter configured threshold', () => {
-  for (const confidence of [79.99, NaN, Infinity]) {
+  for (const confidence of [MOMENTUM_POLICY.minConfidence - 0.01, NaN, Infinity]) {
     blocked({ ...input(), minConfidence: 10, signal: { ...signal(), confidence } }, /Signal score/);
   }
   blocked({ ...input(), minConfidence: 95 }, /below 95/);

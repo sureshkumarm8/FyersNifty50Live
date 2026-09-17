@@ -63,10 +63,10 @@ const App: React.FC = () => {
   const [credentials, setCredentials] = useState<FyersCredentials>(() => {
     try {
       const saved = localStorage.getItem('fyers_creds');
-      const parsed = saved ? JSON.parse(saved) : { 
-        appId: '', 
-        accessToken: '', 
-        refreshInterval: REFRESH_OPTIONS[3].value,
+      const parsed = saved ? JSON.parse(saved) : {
+        appId: '',
+        accessToken: '',
+        refreshInterval: REFRESH_OPTIONS[2].value, // 30s — keeps snapshots inside the momentum guard's freshness window and enables live PayTM data
         dataProvider: 'paytm'
       };
       if (parsed.aiEnabled === undefined) parsed.aiEnabled = true;
@@ -77,10 +77,10 @@ const App: React.FC = () => {
       if (parsed.aiHistoryEnabled === undefined) parsed.aiHistoryEnabled = true;
       return parsed;
     } catch (e) {
-      return { 
-        appId: '', 
-        accessToken: '', 
-        refreshInterval: REFRESH_OPTIONS[3].value, 
+      return {
+        appId: '',
+        accessToken: '',
+        refreshInterval: REFRESH_OPTIONS[2].value, // 30s (see above)
         aiEnabled: true,
         dataProvider: 'paytm',
         aiAutoTradeEnabled: true,
@@ -145,6 +145,14 @@ const App: React.FC = () => {
   
   const prevNiftyLtpRef = useRef<number | null>(null);
   const didFetchPivots = useRef(false);
+
+  // Session baseline persistence: the initial buy/sell quantities per symbol are
+  // the reference point every sentiment delta is measured against. They are
+  // seeded once (market open / first fetch) and must survive a browser refresh,
+  // or the deltas re-baseline at the refresh moment and read 0 for a beat.
+  const baselineRestoredRef = useRef(false); // restore attempted once per mount
+  const baselineReadyRef = useRef(false);    // gates fetching until restore done
+  const baselineSavedDateRef = useRef<number>(0); // day the baseline was persisted
 
   // --- Live-refresh watchdog bookkeeping ------------------------------------
   // A single hung fetch used to wedge the loop for the rest of the session: the
@@ -392,29 +400,35 @@ const App: React.FC = () => {
                     
                     console.log(`🔧 Initializing refs from oldest snapshot with ${oldestStocks.length} stocks and ${oldestOptions.length} options`);
                     
-                    // Data is now always in FyersQuote format - directly initialize refs
-                    oldestStocks.forEach((stock: any) => {
-                      if (stock.symbol) {
-                        initialStocksRef.current[stock.symbol] = {
-                          symbol: stock.symbol,
-                          lp: stock.lp || 0,
-                          total_buy_qty: stock.total_buy_qty || 0,
-                          total_sell_qty: stock.total_sell_qty || 0,
-                        } as FyersQuote;
-                      }
-                    });
-                    
-                    // Data is now always in FyersQuote format - directly initialize refs
-                    oldestOptions.forEach((option: any) => {
-                      if (option.symbol) {
-                        initialOptionsRef.current[option.symbol] = {
-                          symbol: option.symbol,
-                          lp: option.lp || 0,
-                          total_buy_qty: option.total_buy_qty || 0,
-                          total_sell_qty: option.total_sell_qty || 0,
-                        } as FyersQuote;
-                      }
-                    });
+                    // Only seed when refs are still empty: a persisted baseline
+                    // restored for today (see baseline restore effect) is
+                    // authoritative and must not be clobbered by the oldest
+                    // Redis snapshot.
+                    if (Object.keys(initialStocksRef.current).length === 0) {
+                      oldestStocks.forEach((stock: any) => {
+                        if (stock.symbol) {
+                          initialStocksRef.current[stock.symbol] = {
+                            symbol: stock.symbol,
+                            lp: stock.lp || 0,
+                            total_buy_qty: stock.total_buy_qty || 0,
+                            total_sell_qty: stock.total_sell_qty || 0,
+                          } as FyersQuote;
+                        }
+                      });
+                    }
+
+                    if (Object.keys(initialOptionsRef.current).length === 0) {
+                      oldestOptions.forEach((option: any) => {
+                        if (option.symbol) {
+                          initialOptionsRef.current[option.symbol] = {
+                            symbol: option.symbol,
+                            lp: option.lp || 0,
+                            total_buy_qty: option.total_buy_qty || 0,
+                            total_sell_qty: option.total_sell_qty || 0,
+                          } as FyersQuote;
+                        }
+                      });
+                    }
                     
                     console.log(`✅ Initialized ${Object.keys(initialStocksRef.current).length} stock refs and ${Object.keys(initialOptionsRef.current).length} option refs`);
                     if (Object.keys(initialStocksRef.current).length > 0) {
@@ -678,6 +692,36 @@ const App: React.FC = () => {
         console.log(`💾 Restored ${today.length} snapshot(s) for today from IndexedDB`);
       } catch (e) {
         console.warn('[History] Local snapshot restore failed:', e);
+      }
+    })();
+  }, [isDbLoaded]);
+
+  // --- 1c. Restore the session baseline (initial buy/sell qty per symbol) -----
+  // Runs before the fetch loop is allowed to start (refreshData waits on
+  // baselineReadyRef). If today's baseline is found, the seeding guards
+  // (`length === 0`) are already satisfied, so deltas continue from the SAME
+  // reference instead of re-seeding at the refresh moment. finally always marks
+  // the attempt done so a genuine first launch (no stored baseline) still fetches.
+  useEffect(() => {
+    if (!isDbLoaded || baselineRestoredRef.current) return;
+    baselineRestoredRef.current = true;
+    (async () => {
+      try {
+        const base = await dbService.getMeta('session_baseline');
+        if (base && isTodayIST(base.savedAt) && base.stocks && Object.keys(base.stocks).length > 0) {
+          initialStocksRef.current = base.stocks;
+          prevStocksRef.current = { ...base.stocks };
+          if (base.options && Object.keys(base.options).length > 0) {
+            initialOptionsRef.current = base.options;
+            prevOptionsRef.current = { ...base.options };
+          }
+          baselineSavedDateRef.current = base.savedAt; // already persisted for today
+          console.log(`♻️ Restored session baseline: ${Object.keys(base.stocks).length} stocks, ${Object.keys(base.options || {}).length} options`);
+        }
+      } catch (e) {
+        console.warn('[Baseline] restore failed:', e);
+      } finally {
+        baselineReadyRef.current = true;
       }
     })();
   }, [isDbLoaded]);
@@ -957,6 +1001,14 @@ const App: React.FC = () => {
       
     if (!hasValidCredentials || !isDbLoaded) return;
 
+    // Wait until the persisted session baseline has been restored, so the first
+    // post-refresh fetch computes deltas against the same reference instead of
+    // re-seeding a fresh (zero) baseline. Becomes ready within ms of isDbLoaded.
+    if (!baselineReadyRef.current) {
+      console.log('⏳ [App] Waiting for session baseline restore...');
+      return;
+    }
+
     // Re-entry guard. Without it a slow cycle stacks on the next tick and the
     // two races each other; with a stale-lock release, a cycle that never
     // settles can no longer own the lock forever.
@@ -1227,7 +1279,12 @@ const App: React.FC = () => {
         niftyLtpVal = indexQuote.length > 0 ? indexQuote[0].lp : 0;
       }
       
-      setNiftyLtp(niftyLtpVal);
+      // Never overwrite a good price with 0: a single failed/partial fetch beat
+      // returns niftyLtpVal = 0, and blanking the shared spot makes AutoTrade log
+      // "No Nifty price yet" even though the History view still shows continuous
+      // data. Keep the last good price and let the momentum guard's snapshot
+      // freshness check (90s) govern staleness instead.
+      if (niftyLtpVal > 0) setNiftyLtp(niftyLtpVal);
 
       const enrichedStocks = enrichData(stockData, prevStocksRef, initialStocksRef, true);
       console.log(`📊 [Mobile Debug] Enriched ${enrichedStocks.length} stocks, setting state...`);
@@ -1297,7 +1354,20 @@ const App: React.FC = () => {
           console.log(`[App] Enriched ${enrichedOptions.length} options, setting to state`);
           setOptionQuotes(enrichedOptions);
           updateSessionHistory(enrichedOptions);
-          
+
+          // Persist the session baseline once per day so a refresh can restore it
+          // and continue the same deltas. The initial refs are stable after
+          // seeding, so this writes a single time per session (and again the next
+          // trading day, when isTodayIST(savedAt) turns false).
+          if (Object.keys(initialStocksRef.current).length > 0 && !isTodayIST(baselineSavedDateRef.current)) {
+            baselineSavedDateRef.current = Date.now();
+            dbService.setMeta('session_baseline', {
+              savedAt: Date.now(),
+              stocks: initialStocksRef.current,
+              options: initialOptionsRef.current,
+            }).catch(e => console.warn('[Baseline] persist failed:', e));
+          }
+
           // --- Market Snapshot ---
           const now = new Date();
           const timeStr = now.toLocaleTimeString('en-IN', { hour12: false });
@@ -1353,10 +1423,20 @@ const App: React.FC = () => {
 
           // Check if we need to add a new snapshot (newest first, so check [0])
           const lastLogTime = historyLog.length > 0 ? historyLog[0].time : '';
-          const currentMin = timeStr.substring(0, 5); 
+          const currentMin = timeStr.substring(0, 5);
           const lastLogMin = lastLogTime.substring(0, 5);
 
-          if (currentMin !== lastLogMin) {
+          // On refresh / first launch the baseline refs (initial_* quantities)
+          // are freshly seeded, so every delta-based metric is 0 for one beat —
+          // adv/dec = 0/0, overallSent = 0, all *Sent = 0. Don't pollute history
+          // (and the momentum guard) with that all-zero row; skip it and let the
+          // next beat, which carries real breadth/flow deltas, continue the
+          // series from the previous real values. Live market data always has
+          // some advancing/declining stocks, so adv===0 && dec===0 reliably
+          // marks the zero-baseline beat.
+          const isZeroBaseline = adv === 0 && dec === 0;
+
+          if (currentMin !== lastLogMin && !isZeroBaseline) {
               const snapshot: MarketSnapshot = {
                   time: timeStr,
                   timestamp: Date.now(),
@@ -1377,8 +1457,11 @@ const App: React.FC = () => {
                   callsOI,
                   putsOI
               };
-              // Add new snapshot at the beginning (newest first)
-              setHistoryLog(prev => [snapshot, ...prev]);
+              // Merge (dedupe-by-minute + re-sort by timestamp) instead of a raw
+              // prepend: the client-stamped live snapshot must not interleave with
+              // server-stamped (cron) snapshots, or the momentum guard sees
+              // duplicate/out-of-order timestamps and refuses to trade.
+              setHistoryLog(prev => mergeSnapshots([snapshot], prev));
           }
       }
 
