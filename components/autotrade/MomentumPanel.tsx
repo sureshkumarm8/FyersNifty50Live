@@ -874,7 +874,7 @@ export const MomentumPanel: React.FC<Props> = ({
               )}
             </h2>
             <p className="mt-1 max-w-xl text-xs text-slate-400">
-              Selective entries from 09:35–14:45 IST after fresh 1m/5m/15m alignment and sustained confirmation.
+              Selective entries from 09:30–15:00 IST after fresh 1m/5m/15m alignment and sustained confirmation.
               Independent of Sniper. Fewer trades are intentional; profitable outcomes are not guaranteed.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
