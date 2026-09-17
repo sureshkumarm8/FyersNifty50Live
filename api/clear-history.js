@@ -6,6 +6,10 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN,
 });
 
+// After a full clear, pause the live writer for this many seconds so the data
+// browser can be verified empty before snapshots start flowing again.
+const CLEAR_LOCK_TTL_SECONDS = 15;
+
 export default async function handler(req, res) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -37,31 +41,37 @@ export default async function handler(req, res) {
     let message = '';
 
     switch (action) {
-      case 'all':
-        // Clear all snapshots
-        const timestamps = await redis.zrange('snapshots:index', 0, -1);
-        
-        if (timestamps && timestamps.length > 0) {
-          const pipeline = redis.pipeline();
-          
-          // Delete all snapshot data
-          timestamps.forEach(ts => {
-            pipeline.del(`snapshot:${ts}`);
-          });
-          
-          // Delete the index
-          pipeline.del('snapshots:index');
-          
-          // Delete latest snapshot
-          pipeline.del('snapshot:latest');
-          
-          await pipeline.exec();
-          deletedCount = timestamps.length;
-        }
-        
-        message = `Cleared all ${deletedCount} snapshots from Redis`;
+      case 'all': {
+        // Enumerate every snapshot key directly via SCAN so we catch orphaned
+        // keys that are no longer members of snapshots:index (e.g. index was
+        // trimmed to the last 500 but data keys still exist). This matches
+        // `snapshot:latest` and every `snapshot:<ts>` key. Note it does NOT
+        // match `snapshots:index` (different prefix), which we delete below.
+        const snapshotKeys = [];
+        let cursor = '0';
+        do {
+          const [next, keys] = await redis.scan(cursor, { match: 'snapshot:*', count: 200 });
+          cursor = String(next);
+          if (keys && keys.length > 0) snapshotKeys.push(...keys);
+        } while (cursor !== '0');
+
+        const pipeline = redis.pipeline();
+        snapshotKeys.forEach(key => pipeline.del(key));
+        // The index and the transient frontend heartbeat are not caught by the
+        // scan above, so remove them explicitly.
+        pipeline.del('snapshots:index');
+        pipeline.del('frontend_active');
+        // Hold a short-lived lock so the live writer (save-redis-data) does not
+        // immediately repopulate snapshots before the operator can verify the
+        // console is empty.
+        pipeline.set('clear_lock', Date.now(), { ex: CLEAR_LOCK_TTL_SECONDS });
+        await pipeline.exec();
+
+        deletedCount = snapshotKeys.length;
+        message = `Cleared all ${deletedCount} snapshot keys from Redis (writes paused ${CLEAR_LOCK_TTL_SECONDS}s)`;
         console.log(`[Clear History] ${message}`);
         break;
+      }
 
       case 'today':
         // Clear only today's snapshots (last 8 hours)

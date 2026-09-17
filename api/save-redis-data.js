@@ -28,6 +28,17 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid stocks data' });
     }
 
+    // If an admin just cleared all history, a short-lived lock is set. Skip
+    // saving while it is active so the cleared data isn't instantly rewritten.
+    const clearLock = await redis.get('clear_lock');
+    if (clearLock) {
+      return res.status(200).json({
+        success: true,
+        skipped: true,
+        message: 'Save skipped: history was just cleared'
+      });
+    }
+
     const snapshot = {
       timestamp: Date.now(),
       istTime: new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
