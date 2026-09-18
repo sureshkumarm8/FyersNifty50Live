@@ -149,6 +149,9 @@ export function buildDecision(params: {
   charts: ChartEntry[];
   spot: number;
   spotSource: 'LIVE' | 'MANUAL' | 'CHARTS';
+  /** Today's measured session high/low, used by the Entry-window re-cut to anchor the zone. */
+  rangeHigh?: number;
+  rangeLow?: number;
   historyLog?: MarketSnapshot[];
   stocks?: EnrichedFyersQuote[];
   now?: number;
@@ -293,8 +296,25 @@ export function buildDecision(params: {
     ) * 10
   );
 
-  const expectedSupport = Math.round(nearestReachable(supports) ?? spot - fallbackRange);
-  const expectedResistance = Math.round(nearestReachable(resistances) ?? spot + fallbackRange);
+  let expectedSupport = Math.round(nearestReachable(supports) ?? spot - fallbackRange);
+  let expectedResistance = Math.round(nearestReachable(resistances) ?? spot + fallbackRange);
+
+  // Entry window: anchor the zone to today's measured range when it is supplied.
+  // The session low is a real, tested support and the high a real resistance, so
+  // on each side the wall that matters is the nearer of {chart level, range
+  // extreme}: max(chart support, low) below price, min(chart resistance, high)
+  // above it. rangePosition then says where price sits inside [low, high].
+  const rangeHigh = params.rangeHigh;
+  const rangeLow = params.rangeLow;
+  const hasRange =
+    typeof rangeHigh === 'number' && typeof rangeLow === 'number' &&
+    isFinite(rangeHigh) && isFinite(rangeLow) && rangeHigh > rangeLow;
+  let rangePosition: number | undefined;
+  if (hasRange) {
+    if (rangeLow! <= spot) expectedSupport = Math.round(Math.min(spot, Math.max(expectedSupport, rangeLow!)));
+    if (rangeHigh! >= spot) expectedResistance = Math.round(Math.max(spot, Math.min(expectedResistance, rangeHigh!)));
+    rangePosition = clamp(Math.round(((spot - rangeLow!) / (rangeHigh! - rangeLow!)) * 100), 0, 100);
+  }
   const expectedRange = Math.max(1, expectedResistance - expectedSupport);
 
   // 4. Opening scenarios ------------------------------------------------------
@@ -445,6 +465,9 @@ export function buildDecision(params: {
     resistances: resistances.slice(0, 4).map(Math.round),
     expectedResistance,
     expectedSupport,
+    rangeHigh: hasRange ? rangeHigh : undefined,
+    rangeLow: hasRange ? rangeLow : undefined,
+    rangePosition,
     primaryBias,
     biasStrength: Math.abs(combined),
     riskLevel,
@@ -914,7 +937,7 @@ export const PreMarketAnalyzer: React.FC<{
    * and the headline is left alone.
    */
   const runPhase = useCallback(
-    (basis: DecisionBasis, overrideSpot?: number) => {
+    (basis: DecisionBasis, overrideSpot?: number, rangeHigh?: number, rangeLow?: number) => {
       if (!preMarketDecision || coverage === 0) {
         addLog('❌ Generate a decision before recomputing a phase');
         return;
@@ -935,6 +958,9 @@ export const PreMarketAnalyzer: React.FC<{
           charts: analyzedCharts,
           spot: resolved.spot,
           spotSource: resolved.source,
+          // High/Low only anchor the live Entry-window zone; ignore them elsewhere.
+          rangeHigh: basis === 'INTRADAY' && typeof rangeHigh === 'number' && rangeHigh > 0 ? rangeHigh : undefined,
+          rangeLow: basis === 'INTRADAY' && typeof rangeLow === 'number' && rangeLow > 0 ? rangeLow : undefined,
           historyLog,
           stocks,
           basis,
@@ -1161,7 +1187,7 @@ export const PreMarketAnalyzer: React.FC<{
    * so there is something genuinely new to think about at each cut - which is
    * the whole reason the checkpoints exist.
    */
-  const AUTO_REVIEW: DecisionBasis[] = ['PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+  const AUTO_REVIEW: DecisionBasis[] = ['PREOPEN', 'INTRADAY'];
   const reviewedCutRef = useRef<string | null>(null);
   useEffect(() => {
     const decision = preMarketDecision;
@@ -1307,7 +1333,7 @@ export const PreMarketAnalyzer: React.FC<{
   const hasDecision = !!preMarketDecision;
   const hasUnanalyzed = CHART_SLOTS.some(s => charts[s.id] && !charts[s.id]?.verdict);
 
-  const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+  const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'INTRADAY'];
   const newestPhase = useMemo(() => {
     const cut = ORDER.filter(b => preMarketDecision?.phases?.[b]);
     return cut[cut.length - 1] ?? preMarketDecision?.basis ?? 'CHARTS_ONLY';
@@ -1385,7 +1411,7 @@ export const PreMarketAnalyzer: React.FC<{
                 <p className="flex items-start gap-2 rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 text-[11px] text-slate-400">
                   <AlertCircle size={14} className="mt-px shrink-0" />
                   <span>
-                    Step {activeBasis === 'PREOPEN' ? '2' : activeBasis === 'LIVE_OPEN' ? '3' : '4'} has not been run
+                    Step {activeBasis === 'PREOPEN' ? '2' : activeBasis === 'CHARTS_ONLY' ? '1' : '3'} has not been run
                     yet. Enter its price above and press Run, or{' '}
                     <button onClick={() => setPinnedPhase(null)} className="font-bold underline hover:text-white">
                       go back to {BASIS_LABEL[newestPhase]}

@@ -13,7 +13,7 @@
  */
 import { istMinutes } from './sniperPlaybook';
 
-export type DecisionBasis = 'CHARTS_ONLY' | 'PREOPEN' | 'LIVE_OPEN' | 'INTRADAY';
+export type DecisionBasis = 'CHARTS_ONLY' | 'PREOPEN' | 'INTRADAY';
 
 /** Pre-open call auction is well underway and indicative prices are meaningful. */
 export const PREOPEN_MINS = 9 * 60 + 10;
@@ -25,7 +25,7 @@ export const INTRADAY_MINS = 9 * 60 + 20;
 /** A re-cut is only worth it once price has moved far enough to change the zone. */
 export const SPOT_DRIFT_TRIGGER = 40;
 
-const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'INTRADAY'];
 const rank = (b: DecisionBasis): number => Math.max(0, ORDER.indexOf(b));
 
 /**
@@ -37,7 +37,6 @@ export const basisRank = (b: DecisionBasis | undefined): number => rank(b ?? 'CH
 export const BASIS_LABEL: Record<DecisionBasis, string> = {
   CHARTS_ONLY: 'Charts only · pre-open',
   PREOPEN: 'Pre-open auction · 09:10',
-  LIVE_OPEN: 'Live open · 09:15',
   INTRADAY: 'Live market'
 };
 
@@ -46,8 +45,7 @@ export const BASIS_NOTE: Record<DecisionBasis, string> = {
     'Built from last session\'s charts. Levels are not yet anchored to today\'s open — this verdict is provisional and will be re-cut at 09:10 and 09:15.',
   PREOPEN:
     'Re-cut against the pre-open auction price. Still provisional: the auction indicates the open, it does not set the day\'s range.',
-  LIVE_OPEN: 'Re-cut on the real opening price. Levels are now anchored to today.',
-  INTRADAY: 'Re-anchored to live price.'
+  INTRADAY: 'Re-anchored to the live price and today\'s measured high/low.'
 };
 
 /** The best basis obtainable at this moment. */
@@ -55,7 +53,7 @@ export function basisFor(now: Date = new Date()): DecisionBasis {
   const m = istMinutes(now);
   if (m < PREOPEN_MINS) return 'CHARTS_ONLY';
   if (m < OPEN_MINS) return 'PREOPEN';
-  if (m < INTRADAY_MINS) return 'LIVE_OPEN';
+  // From the opening bell onward the plan runs on live, measured levels.
   return 'INTRADAY';
 }
 
@@ -79,7 +77,7 @@ export function dueRevalidation(
   const have: DecisionBasis = current ?? 'CHARTS_ONLY';
   // Past 09:20 the clock stops driving re-cuts; price drift takes over. But a
   // decision that never saw the open still owes us one live re-cut.
-  if (want === 'INTRADAY') return rank(have) < rank('LIVE_OPEN') ? 'INTRADAY' : null;
+  if (want === 'INTRADAY') return rank(have) < rank('INTRADAY') ? 'INTRADAY' : null;
   return rank(want) > rank(have) ? want : null;
 }
 

@@ -12,8 +12,8 @@
  *
  *   CHARTS_ONLY  nothing from today exists yet. Enumerate, do not commit.
  *   PREOPEN      the auction has indicated the open. Commit to a zone.
- *   LIVE_OPEN    the market is open. These are the real walls. Give the plan.
- *   INTRADAY     price has moved. Re-anchor and say what is left of the window.
+ *   INTRADAY     the market is open. Real price and measured high/low — give the
+ *                plan against the real walls and say what is left of the window.
  *
  * The model is deliberately handed the protocol's hard constraints (the 09:25
  * entry window, the 10:15 hard stop, the fixed 30-point target) because an
@@ -109,7 +109,7 @@ export interface ReviewInput {
  * price that never existed.
  */
 const PHASE_BRIEF: Record<DecisionBasis, string> = {
-  CHARTS_ONLY: `CHECKPOINT 1 of 4 — CHARTS ONLY, BEFORE THE PRE-OPEN AUCTION.
+  CHARTS_ONLY: `CHECKPOINT 1 of 3 — CHARTS ONLY, BEFORE THE PRE-OPEN AUCTION.
 Nothing from today exists yet. The price you are given is last session's close, and every level
 you have was drawn on last session's chart. You therefore CANNOT know where the day opens.
 Your job is to ENUMERATE, NOT COMMIT: describe what each kind of open would mean, name the
@@ -117,7 +117,7 @@ levels that would come into play in each case, and state clearly that no trade c
 until a price from today exists. Any confident directional call here is a mistake — say so.
 Your "stance" must be WAIT or STAND_ASIDE. Never ACT.`,
 
-  PREOPEN: `CHECKPOINT 2 of 4 — PRE-OPEN CALL AUCTION (09:08-09:14).
+  PREOPEN: `CHECKPOINT 2 of 3 — PRE-OPEN CALL AUCTION (09:08-09:14).
 The price you are given is the auction's indicative open. This is real information from today:
 it tells you the gap, and therefore which of the chart levels are actually in play and which are
 now irrelevant scenery. The auction indicates the open — it does not set the day's range, and
@@ -128,23 +128,18 @@ the specific actions to prepare. Be concrete about levels; stay honest that the 
 Your "stance" may be WAIT or STAND_ASIDE, and ACT only if the gap lands price directly on a
 major chart level with room to the opposite wall.`,
 
-  LIVE_OPEN: `CHECKPOINT 3 of 4 — THE MARKET IS OPEN. THIS IS THE REAL READ.
-The price you are given is a real traded price from today. There is no more guessing about the
-open. Every level from the four charts can now be measured against a price that exists, so the
-walls that matter are knowable exactly.
+  INTRADAY: `CHECKPOINT 3 of 3 — LIVE MARKET, THE REAL READ.
+The price you are given is a real traded price from today, together with today's measured HIGH and
+LOW. There is no more guessing about the open: every level from the four charts can be measured
+against a price that exists, and the day's range (low to high) gives real, tested support and
+resistance. Levels already tested and held are stronger than untested ones; levels that broke are
+now the opposite kind of level.
 This is the checkpoint the whole morning was built for. Give the definitive read: the exact zone
-price is trading in, the distance to each wall, which wall gets tested first and why, what the
-four charts collectively expect from here, and the precise plan for the ${SNIPER.entryStart}-${SNIPER.reviewBy}
-entry window. Do not hedge — if there is a trade, name it; if there is not, say why not in one
-sharp sentence. Take a real position on "stance".`,
-
-  INTRADAY: `CHECKPOINT 4 of 4 — LIVE MARKET, INSIDE THE SESSION.
-Price has moved since the open and the levels must be re-anchored to where it is now. The chart
-evidence is unchanged; its relevance is not. Levels that have already been tested and held are
-stronger than untested ones; levels that broke are now the opposite kind of level.
-Re-cut the read against this price, say what is left of the trading window before the
-${SNIPER.hardStop} hard stop, and be explicit about whether the earlier plan is still alive,
-already invalidated, or already played out. Take a real position on "stance".`
+price is trading in, where price sits within today's range, the distance to each wall, which wall
+gets tested first and why, and the precise plan for the ${SNIPER.entryStart}-${SNIPER.reviewBy} entry
+window — including what is left of it before the ${SNIPER.hardStop} hard stop. Do not hedge — if
+there is a trade, name it; if there is not, say why not in one sharp sentence. Take a real position
+on "stance".`
 };
 
 const SYSTEM = `You are the senior analyst for a single-trade-a-day NIFTY 50 options desk. You are terse,
@@ -286,7 +281,6 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 const ALLOWED_STANCE: Record<DecisionBasis, PhaseReview['stance'][]> = {
   CHARTS_ONLY: ['WAIT', 'STAND_ASIDE'],
   PREOPEN: ['ACT', 'WAIT', 'STAND_ASIDE'],
-  LIVE_OPEN: ['ACT', 'WAIT', 'STAND_ASIDE'],
   INTRADAY: ['ACT', 'WAIT', 'STAND_ASIDE']
 };
 

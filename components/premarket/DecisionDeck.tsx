@@ -31,7 +31,7 @@ import { PhaseSnapshot, PreMarketDecision } from './model';
 const num = (n: number | null | undefined) =>
   n == null || !isFinite(n) ? '—' : Math.round(n).toLocaleString('en-IN');
 
-const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'INTRADAY'];
 
 const toMin = (hhmm: string) => {
   const [h, m] = hhmm.split(':').map(Number);
@@ -65,21 +65,13 @@ const STEP: Record<DecisionBasis, { n: string; when: string; title: string; owe:
     input: 'Pre-open indicative price',
     hint: 'Blank uses the live feed, which may not carry the auction print.'
   },
-  LIVE_OPEN: {
-    n: '3',
-    when: '09:15',
-    title: 'Live open',
-    owe: 'The opening print. This is the real show — zones are measured, not modelled.',
-    input: 'Opening price',
-    hint: 'The first traded price of the session. Blank uses the live feed.'
-  },
   INTRADAY: {
-    n: '4',
-    when: '09:25+',
+    n: '3',
+    when: '09:15+',
     title: 'Entry window',
-    owe: 'Nothing — this re-reads the same charts against the live price to confirm the call still holds.',
+    owe: 'Price plus today\'s measured high and low — the zones are anchored to the real range, not modelled.',
     input: 'Price to test',
-    hint: 'Blank uses the live feed. Type a price to see the zones at a level price has not reached yet.'
+    hint: 'Blank uses the live feed. Add today\'s high and low so support/resistance sit on the real range.'
   }
 };
 
@@ -87,21 +79,34 @@ export const StepRail: React.FC<{
   decision: PreMarketDecision;
   active: DecisionBasis;
   onSelect: (basis: DecisionBasis) => void;
-  onRunPhase: (basis: DecisionBasis, overrideSpot?: number) => void;
+  onRunPhase: (basis: DecisionBasis, overrideSpot?: number, rangeHigh?: number, rangeLow?: number) => void;
   running: boolean;
 }> = ({ decision, active, onSelect, onRunPhase, running }) => {
   const [spotInput, setSpotInput] = useState('');
+  const [highInput, setHighInput] = useState('');
+  const [lowInput, setLowInput] = useState('');
   const step = STEP[active];
   const cut = decision.phases?.[active];
+  // Today's high/low only anchor the live Entry-window zone.
+  const wantsRange = active === 'INTRADAY';
 
-  // A fresh price belongs to the step it was typed under, so the box empties
+  // A fresh price belongs to the step it was typed under, so the boxes empty
   // whenever the user moves to a different checkpoint.
-  useEffect(() => { setSpotInput(''); }, [active]);
+  useEffect(() => { setSpotInput(''); setHighInput(''); setLowInput(''); }, [active]);
+
+  const parsePrice = (raw: string) => {
+    const n = parseFloat(raw.replace(/[,\s]/g, ''));
+    return isFinite(n) && n > 0 ? n : undefined;
+  };
 
   const submit = () => {
-    const typed = parseFloat(spotInput.replace(/[,\s]/g, ''));
-    onRunPhase(active, isFinite(typed) && typed > 0 ? typed : undefined);
-    setSpotInput('');
+    onRunPhase(
+      active,
+      parsePrice(spotInput),
+      wantsRange ? parsePrice(highInput) : undefined,
+      wantsRange ? parsePrice(lowInput) : undefined
+    );
+    setSpotInput(''); setHighInput(''); setLowInput('');
   };
 
   return (
@@ -162,6 +167,34 @@ export const StepRail: React.FC<{
             className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-2 font-mono text-sm text-slate-100 outline-none transition placeholder:font-sans placeholder:text-[11px] placeholder:text-slate-600 focus:border-violet-500/60"
           />
         </label>
+        {wantsRange && (
+          <>
+            <label className="w-28">
+              <span className="mb-1 block text-[9.5px] font-bold uppercase tracking-wider text-slate-500">Day high</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={highInput}
+                onChange={e => setHighInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+                placeholder={cut?.rangeHigh ? num(cut.rangeHigh) : 'high'}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-2 font-mono text-sm text-slate-100 outline-none transition placeholder:font-sans placeholder:text-[11px] placeholder:text-slate-600 focus:border-violet-500/60"
+              />
+            </label>
+            <label className="w-28">
+              <span className="mb-1 block text-[9.5px] font-bold uppercase tracking-wider text-slate-500">Day low</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={lowInput}
+                onChange={e => setLowInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+                placeholder={cut?.rangeLow ? num(cut.rangeLow) : 'low'}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-2 font-mono text-sm text-slate-100 outline-none transition placeholder:font-sans placeholder:text-[11px] placeholder:text-slate-600 focus:border-violet-500/60"
+              />
+            </label>
+          </>
+        )}
         <button
           onClick={submit}
           disabled={running}

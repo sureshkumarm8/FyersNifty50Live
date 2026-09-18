@@ -584,14 +584,13 @@ const ScenarioCard: React.FC<{ scenario: GapScenario; closePrice: number; open: 
 /**
  * The forward look, matched to what the checkpoint actually knows.
  *
- * One board, four different questions:
+ * One board, three different questions:
  *
  *   1. CHARTS_ONLY  "where might it open?"   — five hypothetical branches
  *   2. PREOPEN      "the gap is X, so what?" — which walls the gap activates
- *   3. LIVE_OPEN    "it opened here."        — the real zone, exactly measured
- *   4. INTRADAY     "it has moved."          — the zone re-anchored, clock running
+ *   3. INTRADAY     "it opened, it moved."   — the real zone on today's range
  *
- * Showing branch 1 at checkpoint 3 is the failure this replaces: five modelled
+ * Showing branch 1 at the live checkpoint is the failure this replaces: five modelled
  * opens sitting next to a real price, four of them describing a market that
  * never happened, is an invitation to trade the wrong row.
  */
@@ -797,7 +796,7 @@ const LiveZoneBoard: React.FC<{
 
   return (
     <Card
-      title={basis === 'LIVE_OPEN' ? 'The open · real levels, measured' : 'Live zone · re-anchored'}
+      title={'Live zone · real levels on today\'s range'}
       icon={<Crosshair size={15} className="text-emerald-400" />}
       right={
         drift !== null && Math.abs(drift) >= 5 ? (
@@ -809,9 +808,8 @@ const LiveZoneBoard: React.FC<{
       }
     >
       <p className="-mt-1 mb-3 text-[11px] text-slate-500">
-        {basis === 'LIVE_OPEN'
-          ? 'The market is open. Every level below is measured against a price that actually traded — no modelled offsets, no branches.'
-          : 'Price has moved since the open, so the walls are re-measured from where it is now.'}
+        The market is open. Every level below is measured against the live price and today&apos;s
+        high/low — no modelled offsets, no branches.
       </p>
 
       {/* ---- position in the zone ---- */}
@@ -1119,15 +1117,10 @@ const PHASE_INPUT: Record<DecisionBasis, { label: string; placeholder: string; h
     placeholder: 'from the 09:08 auction',
     hint: 'The call-auction print at 09:08-09:14. Blank uses the live feed, which may not carry it.'
   },
-  LIVE_OPEN: {
-    label: 'Opening price',
-    placeholder: 'the 09:15 open',
-    hint: 'The first traded price of the session. Blank uses the live feed.'
-  },
   INTRADAY: {
     label: 'Price to test',
     placeholder: 'live price',
-    hint: 'Blank uses the live feed. Type a price to see the zones at a level price has not reached yet.'
+    hint: 'Blank uses the live feed. Add today\'s high and low so the zones sit on the real range.'
   }
 };
 
@@ -1144,15 +1137,22 @@ export const PhaseBoard: React.FC<{
   active: DecisionBasis;
   onSelect: (basis: DecisionBasis) => void;
   /** Recompute a phase now, ignoring its normal window. */
-  onRunPhase?: (basis: DecisionBasis, overrideSpot?: number) => void;
+  onRunPhase?: (basis: DecisionBasis, overrideSpot?: number, rangeHigh?: number, rangeLow?: number) => void;
   /** Re-run the analyst pass for a phase. Absent when no text AI is configured. */
   onRunReview?: (basis: DecisionBasis) => void;
   reviewingPhase?: DecisionBasis | null;
   aiLabel?: string;
 }> = ({ decision, active, onSelect, onRunPhase, onRunReview, reviewingPhase, aiLabel }) => {
-  const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'LIVE_OPEN', 'INTRADAY'];
+  const ORDER: DecisionBasis[] = ['CHARTS_ONLY', 'PREOPEN', 'INTRADAY'];
   const captured = ORDER.filter(b => decision.phases?.[b]);
   const [spotInput, setSpotInput] = useState('');
+  const [highInput, setHighInput] = useState('');
+  const [lowInput, setLowInput] = useState('');
+  const clearInputs = () => { setSpotInput(''); setHighInput(''); setLowInput(''); };
+  const parsePrice = (raw: string) => {
+    const n = parseFloat(raw.replace(/[,\s]/g, ''));
+    return isFinite(n) && n > 0 ? n : undefined;
+  };
 
   const current = active;
   if (!captured.length && !onRunPhase) return null;
@@ -1199,7 +1199,7 @@ export const PhaseBoard: React.FC<{
                 // A price typed for the pre-open must never be carried into
                 // another phase by an accidental tab switch.
                 onSelect(b);
-                setSpotInput('');
+                clearInputs();
               }}
               title={BASIS_NOTE[b]}
               className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition ${
@@ -1251,11 +1251,41 @@ export const PhaseBoard: React.FC<{
                 className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none transition placeholder:font-sans placeholder:text-[11px] placeholder:text-slate-600 focus:border-violet-500/60"
               />
             </label>
+            {current === 'INTRADAY' && (
+              <>
+                <label className="w-24">
+                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-violet-300/80">Day high</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={highInput}
+                    onChange={e => setHighInput(e.target.value)}
+                    placeholder={phase?.rangeHigh ? num(phase.rangeHigh) : 'high'}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none transition placeholder:font-sans placeholder:text-[11px] placeholder:text-slate-600 focus:border-violet-500/60"
+                  />
+                </label>
+                <label className="w-24">
+                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-violet-300/80">Day low</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={lowInput}
+                    onChange={e => setLowInput(e.target.value)}
+                    placeholder={phase?.rangeLow ? num(phase.rangeLow) : 'low'}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none transition placeholder:font-sans placeholder:text-[11px] placeholder:text-slate-600 focus:border-violet-500/60"
+                  />
+                </label>
+              </>
+            )}
             <button
               onClick={() => {
-                const typed = parseFloat(spotInput.replace(/[,\s]/g, ''));
-                onRunPhase(current, isFinite(typed) && typed > 0 ? typed : undefined);
-                setSpotInput('');
+                onRunPhase(
+                  current,
+                  parsePrice(spotInput),
+                  current === 'INTRADAY' ? parsePrice(highInput) : undefined,
+                  current === 'INTRADAY' ? parsePrice(lowInput) : undefined
+                );
+                clearInputs();
               }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-violet-500/15 px-3 py-1.5 text-[11px] font-semibold text-violet-200 transition hover:bg-violet-500/25"
             >
