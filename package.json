@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server.js",
+    "pilot:test": "npx --yes tsx ml/openingPilot.test.ts && npx --yes tsx ml/openingPilotPanels.test.tsx && npx --yes tsx ml/openingPilotSources.test.ts && npx --yes tsx ml/openingPilotReuse.test.tsx",
     "generate:paytm": "node scripts/generatePaytmMappings.cjs",
     "model:train": "node ml/export.mjs",
     "model:validate": "node ml/train.mjs && node ml/calibrate.mjs",

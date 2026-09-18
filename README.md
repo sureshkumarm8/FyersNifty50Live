@@ -7,6 +7,72 @@ A high-performance real-time stock tracking and analysis dashboard for **Nifty50
 
 ## 🚀 Features
 
+### Opening Pilot (isolated experiment)
+
+The **Opening Pilot** tab follows an 08:55 plan / 09:10 observation / 09:15 watch /
+09:25 entry workflow without changing PreMkt, AutoTrade, or the existing Paper book.
+It automatically reuses the saved **PreMkt phases and five scenarios**, the same
+**Day Sentiment & Momentum History** feed, and **Vision's Nifty/Sensibull analysis**.
+There is no duplicate chart upload, analysis form, or separate Vision capture.
+The pilot retains its own versioned evidence, replay, and paper journal.
+
+Open PreMkt and analyse your charts as usual. Switching to Opening Pilot before
+09:25 keeps that same PreMkt component and its existing checkpoint scheduler active
+in the background, using fresh shared history. At 09:25 the pilot freezes the
+available premarket context; subsequent entry evidence comes from minute history
+and fresh Vision. Existing PreMkt AI preferences still govern its own analyst passes.
+The pilot reads shared results every 15 seconds and does not call a second model.
+
+The previous-close reference comes from the original charts-only checkpoint, not
+a later live-price anchor. Default gap bands are +/-25 (flat), up to
+75 (~50), and up to 150 (~100) points; anything larger is outside the plan. The
+five scenarios reuse market context, not Sniper's different strike/exit rules.
+Scenario prose is context, not machine-executed instructions.
+Readiness uses explicit price, momentum, continuity and wall checks, not a claimed
+win probability. Vision's highest put/call OI strikes supply the walls; price action,
+OI commentary, directional bias, risks and repeated wall levels are displayed together.
+Reversals require an actual price rejection, not merely being near a wall.
+An unchanged strike across two reads does not mean unchanged OI quantity.
+
+The live Vision sidecar and already-imported archive are both read automatically.
+When Vision's configured export folder remains authorised, its existing auto-sync
+preference is reused while the Vision screen is not active. Capture timestamps
+never become fresh merely because the pilot polls/imports them again. Stale,
+unreadable, failed or contradictory Vision reads cannot confirm an entry.
+Manual forms are collapsed, optional fallbacks only. Existing sources currently
+have no structured GIFT field: the screen says so and does not invent confirmation
+or force another manual form.
+
+Paper entries are manually confirmed, buy-only CE/PE approximately 200 points ITM,
+on a selected listed expiry. A missing contract within 25 points of the intended
+strike is not replaced with ATM or a synthetic quote. Confirm the contract's lot
+size in the ticket. The actual sampled entry premium sets a fixed **-10% stop**
+and **+10% target**, rounded to two decimals. The first observed crossing exits at
+the sampled price; 10-20 minutes is an expected hold, **not a forced time exit**.
+Aligned entries automatically record the source-based reasoning; a personal note
+is optional. A reasoned manual disagreement with the pilot is journalled as an override;
+market hours, data freshness, expiry and sizing restrictions remain mandatory.
+
+Recording starts when the tab is first opened and captures at most one immutable
+frame per received market minute. Replay reveals only frames and plan revisions
+known at that point; it cannot place trades or fabricate earlier observations.
+Paper exits remain monitored across in-app navigation and when evidence recording
+is paused. They cannot run while the browser is closed/suspended or the shared
+feed is paused. Quotes older than 90 seconds are not usable for fills. Provider
+timestamps may be approximations: this is a sampled-price experiment, not verified
+execution or tick-accurate backtesting. Gaps can miss both stop and target; a 10%
+stop is not a guaranteed loss cap. An unresolved position can be explicitly
+reconciled with a reported exit price/time, labelled separately from sampled results.
+Charges reuse the existing app estimates, not a guarantee of current broker rates.
+
+The journal is stored in this browser's IndexedDB under `opening_pilot_book_v1`.
+Export JSON for a durable external copy. Storage failures are surfaced and do
+not create successful-looking fills. A Web Locks writer lease prevents two app
+tabs from trading the same pilot book; another tab is read-only until reloaded
+after the owning tab closes. Existing trading books, settings, and strategy rules
+are not written by the pilot. PreMkt remains responsible for its own saved phases,
+and Vision's existing folder importer remains responsible for its archive cache.
+
 ### 🧠 AI Quant Deck (Advanced)
 *   **Auto-Scan Engine**: Runs automatically every 5 minutes during market hours (09:15 - 15:30) to analyze market structure.
 *   **Probability Scoring**: Generates a confidence score (0-100%) for Long/Short trends based on weighted sentiment and option flow.

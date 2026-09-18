@@ -11,6 +11,7 @@ interface SentimentHistoryProps {
   history: MarketSnapshot[];
   credentials: FyersCredentials;
   aiEnabled?: boolean;
+  readOnly?: boolean;
 }
 
 const formatNumber = (num: number, decimals = 2) => num.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -78,13 +79,14 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
 };
 
 
-export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, credentials, aiEnabled }) => {
+export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, credentials, aiEnabled, readOnly = false }) => {
   const [isAiOpen, setIsAiOpen] = useState(false);
   
   // Persistence for History Chat
   const todayKey = `history_chat_${new Date().toDateString()}`;
   
   const [messages, setMessages] = useState<{role: 'user'|'model', text: string}[]>(() => {
+      if (readOnly) return [];
       try {
           const saved = localStorage.getItem(todayKey);
           return saved ? JSON.parse(saved) : [{ role: 'model', text: 'I am ready to analyze this history log. I know exactly how these metrics are calculated. What would you like to know?' }];
@@ -99,8 +101,8 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
 
   // Auto-save chat
   useEffect(() => {
-      localStorage.setItem(todayKey, JSON.stringify(messages));
-  }, [messages, todayKey]);
+      if (!readOnly) localStorage.setItem(todayKey, JSON.stringify(messages));
+  }, [messages, todayKey, readOnly]);
 
   useEffect(() => {
     if (isAiOpen) {
@@ -177,8 +179,8 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
               </h2>
               <div className="flex items-center gap-1 sm:gap-3">
                   <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 bg-slate-900/50 px-3 py-1 rounded-full border border-white/5">
-                     <Activity size={14} className="animate-pulse text-green-500" />
-                     Live Feed (1 min)
+                     <Activity size={14} className={readOnly ? 'text-cyan-400' : 'animate-pulse text-green-500'} />
+                     {readOnly ? 'Shared minute history' : 'Live Feed (1 min)'}
                   </div>
                   <button 
                       onClick={() => downloadCSV(history, 'market_history_log')}
@@ -187,7 +189,7 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
                   >
                       <Download size={14} className="sm:w-4 sm:h-4" />
                   </button>
-                  <button 
+                  {!readOnly && <button
                     onClick={() => setIsAiOpen(!isAiOpen)}
                     disabled={aiEnabled === false}
                     className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border transition-all text-[10px] sm:text-xs font-bold ${aiEnabled === false ? 'opacity-50 cursor-not-allowed bg-slate-800 text-slate-500' : isAiOpen ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-white/10 hover:bg-slate-700 hover:text-white'}`}
@@ -195,7 +197,7 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
                       {isAiOpen ? <ChevronRight size={12} className="sm:w-3.5 sm:h-3.5"/> : <Bot size={12} className="sm:w-3.5 sm:h-3.5" />}
                       <span className="hidden sm:inline">{aiEnabled === false ? 'AI Disabled' : isAiOpen ? 'Close AI' : 'Analyze with AI'}</span>
                       <span className="sm:hidden">{aiEnabled === false ? 'Off' : isAiOpen ? 'AI' : 'AI'}</span>
-                  </button>
+                  </button>}
               </div>
           </div>
           
