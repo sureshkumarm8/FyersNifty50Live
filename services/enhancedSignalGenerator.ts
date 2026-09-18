@@ -354,12 +354,12 @@ export class EnhancedSignalGenerator {
     let bearishScore = 0;
     const reasons: string[] = [];
 
-    // Trend weight: 30%
+    // Trend weight: 35%
     if (metrics.trend15m === 'BULLISH') {
-      bullishScore += metrics.trendStrength * 0.3;
+      bullishScore += metrics.trendStrength * 0.35;
       reasons.push(`Bullish trend (${metrics.trendStrength.toFixed(0)})`);
     } else if (metrics.trend15m === 'BEARISH') {
-      bearishScore += metrics.trendStrength * 0.3;
+      bearishScore += metrics.trendStrength * 0.35;
       reasons.push(`Bearish trend (${metrics.trendStrength.toFixed(0)})`);
     }
 
@@ -372,21 +372,23 @@ export class EnhancedSignalGenerator {
       reasons.push(`Bearish sentiment (${metrics.broadSentiment.toFixed(0)}%)`);
     }
 
-    // Options flow weight: 25%
+    // Options flow weight: 10% — kept low because momentumEntryGuard already
+    // enforces option-flow confirmation as a separate hard gate, so weighting it
+    // heavily here double-counts it and lets a noisy reading veto a clean setup.
     if (metrics.optionFlow === 'BULLISH') {
-      bullishScore += metrics.optionFlowStrength * 0.25;
+      bullishScore += metrics.optionFlowStrength * 0.10;
       reasons.push(`Bullish options flow (${metrics.optionFlowStrength.toFixed(0)})`);
     } else if (metrics.optionFlow === 'BEARISH') {
-      bearishScore += metrics.optionFlowStrength * 0.25;
+      bearishScore += metrics.optionFlowStrength * 0.10;
       reasons.push(`Bearish options flow (${metrics.optionFlowStrength.toFixed(0)})`);
     }
 
-    // Momentum weight: 20%
+    // Momentum weight: 30%
     if (metrics.momentumScore > 10) {
-      bullishScore += (metrics.momentumScore / 100) * 20;
+      bullishScore += (metrics.momentumScore / 100) * 30;
       reasons.push(`Positive momentum (${metrics.momentumScore.toFixed(0)})`);
     } else if (metrics.momentumScore < -10) {
-      bearishScore += (Math.abs(metrics.momentumScore) / 100) * 20;
+      bearishScore += (Math.abs(metrics.momentumScore) / 100) * 30;
       reasons.push(`Negative momentum (${metrics.momentumScore.toFixed(0)})`);
     }
 
