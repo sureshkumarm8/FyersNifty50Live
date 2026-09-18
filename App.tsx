@@ -16,15 +16,18 @@ import UnifiedAutoTrade from './components/UnifiedAutoTrade';
 import PatternDashboard from './components/PatternDashboard';
 import VisionAnalysis from './components/VisionAnalysis';
 import PaperTrading from './components/PaperTrading';
+import OpeningPilot from './components/OpeningPilot';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP, fetchPayTMFromRedis } from './services/paytmService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
 import { dbService } from './services/db';
+import { scheduleBackground } from './services/heartbeat';
 import { lifecycleManager } from './services/lifecycleManager';
 import { downloadCSV } from './services/csv';
 import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
+import { istMinutesOf } from './services/sniperEngine';
 
 // Declare global window cache for PayTM options
 declare global {
@@ -94,6 +97,13 @@ const App: React.FC = () => {
   const [configLoaded, setConfigLoaded] = useState(false); // New flag to track config loading
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
+  const [pilotClock, setPilotClock] = useState(Date.now);
+  useEffect(() => {
+    if (viewMode !== 'opening-pilot' && viewMode !== 'premarket') return;
+    setPilotClock(Date.now());
+    const timer = setInterval(() => setPilotClock(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, [viewMode]);
   const [error, setError] = useState<string | null>(null);
   const [quantError, setQuantError] = useState<string | null>(null);
   const [marketStatusMsg, setMarketStatusMsg] = useState<string | null>(null);
@@ -111,6 +121,12 @@ const App: React.FC = () => {
   
   // Data States
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
+  const premarketHistory = useMemo(() => {
+    const now = Date.now();
+    const rows = historyLog.filter(s => Number.isFinite(s.timestamp) && s.timestamp! <= now && isTodayIST(s.timestamp!))
+      .sort((a, b) => b.timestamp! - a.timestamp!);
+    return rows[0]?.timestamp && now - rows[0].timestamp <= 90_000 ? rows : [];
+  }, [historyLog, pilotClock]);
   const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>({});
   const [quantHistory, setQuantHistory] = useState<any[]>([]);
   const [quantAnalysis, setQuantAnalysis] = useState<any>(null);
@@ -1516,22 +1532,24 @@ const App: React.FC = () => {
           setMarketStatusMsg(null);
           refreshDataRef.current();
           
-          // Start regular interval after first call
-          console.log(`⏰ Setting up interval (after market start delay) with ${credentials.refreshInterval}ms refresh rate`);
-          const intervalId = setInterval(() => {
+          // Start regular interval after first call. Worker-driven so it keeps
+          // fetching when the tab/window/app is backgrounded (main-thread timers
+          // are throttled to ~1/min when hidden).
+          console.log(`⏰ Setting up background heartbeat with ${credentials.refreshInterval}ms refresh rate`);
+          const stop = scheduleBackground(() => {
             if (refreshDataRef.current) {
               refreshDataRef.current();
             }
           }, credentials.refreshInterval || 30000);
-          
-          // Store intervalId for cleanup
-          (timeoutId as any).intervalId = intervalId;
+
+          // Store cleanup for the outer effect teardown.
+          (timeoutId as any).stopInterval = stop;
         }, marketInfo.delayUntil917);
-        
+
         return () => {
           clearTimeout(timeoutId);
-          if ((timeoutId as any).intervalId) {
-            clearInterval((timeoutId as any).intervalId);
+          if ((timeoutId as any).stopInterval) {
+            (timeoutId as any).stopInterval();
           }
         };
       } else {
@@ -1539,14 +1557,15 @@ const App: React.FC = () => {
         console.log('🚀 Starting live data fetch');
         refreshDataRef.current();
         
-        console.log(`⏰ Setting up interval with ${credentials.refreshInterval}ms refresh rate`);
-        const intervalId = setInterval(() => {
+        console.log(`⏰ Setting up background heartbeat with ${credentials.refreshInterval}ms refresh rate`);
+        // Worker-driven so fetching continues when the tab/window/app is hidden.
+        const stop = scheduleBackground(() => {
           if (refreshDataRef.current) {
             refreshDataRef.current();
           }
         }, credentials.refreshInterval || 30000);
-        
-        return () => clearInterval(intervalId);
+
+        return () => stop();
       }
     }
   }, [configLoaded, isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval, credentials.bypassMarketHours]);
@@ -1602,7 +1621,8 @@ const App: React.FC = () => {
       refreshDataRef.current?.();
     };
 
-    const id = window.setInterval(() => kick('periodic check'), CHECK_MS);
+    // Worker-driven so the watchdog itself keeps checking while the tab is hidden.
+    const stop = scheduleBackground(() => kick('periodic check'), CHECK_MS);
 
     // A tab that was throttled or backgrounded comes back stale; catch it up the
     // moment it is looked at rather than on the next interval boundary.
@@ -1613,7 +1633,7 @@ const App: React.FC = () => {
     window.addEventListener('focus', onVisible);
 
     return () => {
-      window.clearInterval(id);
+      stop();
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
@@ -1731,6 +1751,9 @@ const App: React.FC = () => {
                </button>
                <button onClick={() => handleSetViewMode('paper')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'paper' ? 'bg-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <GraduationCap size={14} /> Paper
+               </button>
+               <button onClick={() => handleSetViewMode('opening-pilot')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'opening-pilot' ? 'bg-cyan-700 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Activity size={14} /> Opening Pilot
                </button>
                <button onClick={() => handleSetViewMode('premarket')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'premarket' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <TrendingUp size={14} /> PreMkt
@@ -2002,11 +2025,13 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {viewMode === 'premarket' && (
-            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
+        {(viewMode === 'premarket' || (viewMode === 'opening-pilot' && istMinutesOf(new Date(pilotClock)) < 565)) && (
+            <div className={viewMode === 'premarket' ? 'flex flex-col h-full px-4 pb-4 overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'premarket'}>
                 <PreMarketAnalyzer
                    credentials={credentials}
                    aiEnabled={credentials.aiEnabled}
+                   historyLog={premarketHistory}
+                   stocks={stocks}
                 />
             </div>
         )}
@@ -2052,6 +2077,21 @@ const App: React.FC = () => {
         )}
 
         </ErrorBoundary>
+        {/* Pilot exits keep monitoring across navigation, in their own error boundary. */}
+        <div className={viewMode === 'opening-pilot' ? 'flex flex-col h-full overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'opening-pilot'}>
+          <ErrorBoundary label="Opening Pilot">
+            <OpeningPilot
+              history={historyLog}
+              quotes={optionQuotes}
+              active={viewMode === 'opening-pilot'}
+              feedPaused={isPaused}
+              refreshInterval={credentials.refreshInterval || 60000}
+              visionScreenActive={viewMode === 'vision'}
+              onNavigate={handleSetViewMode}
+              credentials={credentials}
+            />
+          </ErrorBoundary>
+        </div>
       </main>
     </div>
   );
