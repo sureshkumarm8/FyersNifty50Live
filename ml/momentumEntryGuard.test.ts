@@ -439,7 +439,7 @@ test('history gaps, duplicate/out-of-order rows and corrupt prices cannot confir
 test('each of 1m, 5m and 15m must align in both directions', () => {
   for (const direction of ['LONG', 'SHORT'] as const) {
     const sign = direction === 'LONG' ? 1 : -1;
-    for (const [index, move] of [[1, 0], [1, -1], [5, 7.99], [15, 14.99]]) {
+    for (const [index, move] of [[1, 0], [1, -1], [5, 4.99], [15, 7.99]]) {
       const i = input(AT, direction);
       i.history[index].niftyLtp = i.history[0].niftyLtp - sign * move;
       blocked(i, /aligned 1m, 5m and 15m/);
@@ -452,8 +452,8 @@ test('choppy paths and contradictory breadth, momentum or option flow are blocke
   choppy.history[2].niftyLtp += 40;
   blocked(choppy, /Choppy price path/);
   const patches: Partial<EnhancedSignal['metrics']>[] = [
-    { broadSentiment: 19.99 }, { broadSentiment: -40 }, { broadSentiment: NaN },
-    { momentumScore: 24.99 }, { momentumScore: -50 }, { momentumScore: Infinity },
+    { broadSentiment: 4.99 }, { broadSentiment: -40 }, { broadSentiment: NaN },
+    { momentumScore: 14.99 }, { momentumScore: -50 }, { momentumScore: Infinity },
     { optionFlow: 'BEARISH' }, { optionFlow: 'NEUTRAL' },
     { optionFlowStrength: 19.99 }, { optionFlowStrength: NaN }
   ];

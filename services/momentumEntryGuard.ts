@@ -138,7 +138,7 @@ export function evaluateMomentumEntry(
   if (losses >= policy.maxConsecutiveLosses) {
     return deny(`Stand down today: ${policy.maxConsecutiveLosses} consecutive net losses.`);
   }
-  const lastExit = trips.at(-1)?.closedAt ?? 0;
+  const lastExit = trips[trips.length - 1]?.closedAt ?? 0;
   const cooldown = (lastNet <= 0 ? policy.lossCooldownMinutes : policy.cooldownMinutes) * MINUTE;
   const cooldownUntil = lastExit ? lastExit + cooldown : 0;
   if (now < cooldownUntil) {
@@ -185,7 +185,7 @@ export function evaluateMomentumEntry(
     }
     if (i > 0) {
       const gap = window[i - 1].timestamp! - row.timestamp!;
-      if (gap <= 0 || gap > 90_000) return deny('Market history has gaps or duplicate timestamps; waiting for continuous data.');
+      if (gap <= 0 || gap >= 120_000) return deny('Market history has gaps or duplicate timestamps; waiting for continuous data.');
       path += Math.abs(window[i - 1].niftyLtp - row.niftyLtp);
     }
   }
@@ -193,13 +193,13 @@ export function evaluateMomentumEntry(
   const move1 = sign * (latest.niftyLtp - one.niftyLtp);
   const move5 = sign * (latest.niftyLtp - five.niftyLtp);
   const move15 = sign * (latest.niftyLtp - fifteen.niftyLtp);
-  if (move1 <= 0 || move5 < 8 || move15 < 15) {
+  if (move1 <= 0 || move5 < 5 || move15 < 8) {
     return deny('Wait for aligned 1m, 5m and 15m price direction.');
   }
   if (path === 0 || move15 / path < 0.55) return deny('Choppy price path; directional efficiency below 55%.');
   const m = s.metrics;
   if (![m.broadSentiment, m.optionFlowStrength, m.momentumScore].every(Number.isFinite) ||
-      sign * m.broadSentiment < 20 || sign * m.momentumScore < 25 ||
+      sign * m.broadSentiment < 5 || sign * m.momentumScore < 15 ||
       m.optionFlow !== (sign === 1 ? 'BULLISH' : 'BEARISH') || m.optionFlowStrength < 20) {
     return deny('Breadth, option flow and momentum must all confirm the direction.');
   }

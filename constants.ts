@@ -143,11 +143,11 @@ export const COLUMN_GLOSSARY = [
     },
     {
         term: 'Stock Sent.',
-        def: 'Stock Sentiment. A demand indicator based on session volume delta. Formula: (Session Buy Delta - Session Sell Delta) / Session Sell Delta. Positive means more buying volume has entered than selling volume since the session started.'
+        def: 'Stock Strength. The same Day Strength shown per stock, aggregated over all 50. Formula: (Bid Day %) - (Ask Day %), where each side is measured against its level at the market open. Positive means resting demand has grown faster than resting supply this session. Not capped at 100: an ask book that doubles reads -100%.'
     },
     {
         term: 'Call/Put Sent.',
-        def: 'Call/Put Sentiment. The net demand for Call or Put options during the session. Formula: (Session Buy Delta - Session Sell Delta) / Session Sell Delta for all Calls or Puts.'
+        def: 'Call/Put Strength. Day Strength across all Call or all Put contracts. Formula: (Bid Day %) - (Ask Day %) against the opening book. Measures resting limit orders (intent, which can be cancelled), not executed volume.'
     },
     {
         term: 'PCR',
@@ -155,6 +155,6 @@ export const COLUMN_GLOSSARY = [
     },
     {
         term: 'Options Sent.',
-        def: 'Options Sentiment. The net sentiment from the options market. Formula: (Call Sentiment %) - (Put Sentiment %). Positive means call buying pressure is stronger than put buying pressure.'
+        def: 'Net Option Flow. Formula: (Call Strength) - (Put Strength). Positive means resting call demand is building faster than put demand. When this disagrees with price direction, treat it as the TRAP / DIVERGENCE case in the Guide — a caution flag, not a reversal signal on its own.'
     }
 ];

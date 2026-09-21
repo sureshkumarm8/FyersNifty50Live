@@ -50,7 +50,10 @@ const AdvancedChart: React.FC<{
 
     // 1. Prepare Data Series
     const prices = data.map(d => d.niftyLtp);
-    const flows = data.map(d => d.optionsSent); // Net Option Flow % (-100 to 100)
+    // Net Option Flow %. Typically within ±60, but not hard-bounded: it is a
+    // difference of two session-change percentages, so a book that more than
+    // doubles pushes it past 100. The scale below is derived from the data.
+    const flows = data.map(d => d.optionsSent);
     
     // 2. Calculate Scales (Normalize to 0-100 relative to SVG height)
     const minPrice = Math.min(...prices);
