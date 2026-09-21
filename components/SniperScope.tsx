@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FyersCredentials, MarketSnapshot, EnrichedFyersQuote, TradingSystemProtocol, SniperAnalysis, PivotPoints } from '../types';
 import { callAI, isAIConfigured } from '../services/aiProvider';
+import { scheduleBackground } from '../services/heartbeat';
 import { Crosshair, ShieldAlert, CheckCircle, XCircle, Search, Target, Zap, Activity, Play, Lock, AlertTriangle, Volume2, VolumeX, History, Clock, ChevronDown, StopCircle, PauseCircle, Trash2, Eye } from 'lucide-react';
 
 interface SniperScopeProps {
@@ -277,14 +278,13 @@ export const SniperScope: React.FC<SniperScopeProps> = ({ snapshot, niftyLtp, st
     }
   };
 
-  // Interval Logic
+  // Interval Logic. Worker-driven so the scan keeps running when the
+  // tab/window/app is backgrounded (main-thread timers are throttled to
+  // ~1/min when hidden).
   useEffect(() => {
-      let timer: any;
-      if (isLooping) {
-          runSniperScan(); // Run immediately on start
-          timer = setInterval(runSniperScan, scanInterval);
-      }
-      return () => clearInterval(timer);
+      if (!isLooping) return;
+      runSniperScan(); // Run immediately on start
+      return scheduleBackground(runSniperScan, scanInterval);
   }, [isLooping, scanInterval]);
 
   const toggleLoop = () => {

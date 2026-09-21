@@ -138,28 +138,41 @@ export class EnhancedSignalGenerator {
       };
     }
 
-    // Get last 3 candles for trend (15 minutes of data)
-    const recent = historyLog.slice(0, 3).reverse(); // Most recent first
-    const prices = recent.map(h => h.niftyLtp);
-    
-    // Calculate price changes
-    const change1 = prices[1] - prices[0];
-    const change2 = prices[2] - prices[1];
-    const totalChange = prices[2] - prices[0];
+    const latest = historyLog[0];
+    const latestTs = latest?.timestamp;
 
-    // Calculate velocity (points per minute, assuming 5-min candles)
-    const priceVelocity = totalChange / 10; // Over 10 minutes
+    // Anchor 15-minute trend using timestamps if available, or up to 30 snapshots
+    let olderSnap: MarketSnapshot | undefined;
+    if (Number.isFinite(latestTs) && latestTs! > 0) {
+      olderSnap = historyLog.find(h => Number.isFinite(h.timestamp) && h.timestamp! <= latestTs! - 14 * 60_000);
+    }
+    if (!olderSnap) {
+      const lookback = Math.min(historyLog.length - 1, 30);
+      olderSnap = historyLog[lookback];
+    }
 
-    // Determine trend
+    const currentPrice = latest.niftyLtp;
+    const olderPrice = olderSnap.niftyLtp;
+    const totalChange = currentPrice - olderPrice;
+
+    // Calculate elapsed minutes (derived from timestamps or row index)
+    const elapsedMinutes = (Number.isFinite(latestTs) && Number.isFinite(olderSnap.timestamp) && latestTs! > olderSnap.timestamp!)
+      ? (latestTs! - olderSnap.timestamp!) / 60_000
+      : Math.max(1, historyLog.indexOf(olderSnap) * 0.5);
+
+    const priceVelocity = elapsedMinutes > 0 ? totalChange / elapsedMinutes : 0;
+
+    // Determine trend: a directional move of > 5 points indicates trend
     let trend15m: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
     let trendStrength = 0;
 
-    if (totalChange > 10) {
+    if (totalChange > 5) {
       trend15m = 'BULLISH';
-      trendStrength = Math.min(100, Math.abs(totalChange) / 2); // 10pts = 50 strength
-    } else if (totalChange < -10) {
+      // 10 points = 50 strength, 20+ points = 100 strength
+      trendStrength = Math.min(100, Math.abs(totalChange) * 5);
+    } else if (totalChange < -5) {
       trend15m = 'BEARISH';
-      trendStrength = Math.min(100, Math.abs(totalChange) / 2);
+      trendStrength = Math.min(100, Math.abs(totalChange) * 5);
     } else {
       trendStrength = 20; // Consolidation
     }
@@ -344,6 +357,7 @@ export class EnhancedSignalGenerator {
 
   /**
    * Make final signal decision
+   * Balanced weights across 4 pillars: Trend 25%, Sentiment 25%, Options Flow 25%, Momentum 25%
    */
   private static makeSignalDecision(
     metrics: Omit<EnhancedSignalMetrics, 'overallConfidence' | 'signalStrength'>,
@@ -354,25 +368,25 @@ export class EnhancedSignalGenerator {
     let bearishScore = 0;
     const reasons: string[] = [];
 
-    // Trend weight: 30%
+    // Trend weight: 25%
     if (metrics.trend15m === 'BULLISH') {
-      bullishScore += metrics.trendStrength * 0.3;
+      bullishScore += metrics.trendStrength * 0.25;
       reasons.push(`Bullish trend (${metrics.trendStrength.toFixed(0)})`);
     } else if (metrics.trend15m === 'BEARISH') {
-      bearishScore += metrics.trendStrength * 0.3;
+      bearishScore += metrics.trendStrength * 0.25;
       reasons.push(`Bearish trend (${metrics.trendStrength.toFixed(0)})`);
     }
 
-    // Sentiment weight: 25%
-    if (metrics.broadSentiment > 20) {
+    // Sentiment weight: 25% (linear scaling, no artificial 20% dead zone)
+    if (metrics.broadSentiment > 5) {
       bullishScore += (metrics.broadSentiment / 100) * 25;
       reasons.push(`Bullish sentiment (${metrics.broadSentiment.toFixed(0)}%)`);
-    } else if (metrics.broadSentiment < -20) {
+    } else if (metrics.broadSentiment < -5) {
       bearishScore += (Math.abs(metrics.broadSentiment) / 100) * 25;
       reasons.push(`Bearish sentiment (${metrics.broadSentiment.toFixed(0)}%)`);
     }
 
-    // Options flow weight: 25%
+    // Options flow weight: 25% — primary real-time flow indicator for intraday options
     if (metrics.optionFlow === 'BULLISH') {
       bullishScore += metrics.optionFlowStrength * 0.25;
       reasons.push(`Bullish options flow (${metrics.optionFlowStrength.toFixed(0)})`);
@@ -381,12 +395,12 @@ export class EnhancedSignalGenerator {
       reasons.push(`Bearish options flow (${metrics.optionFlowStrength.toFixed(0)})`);
     }
 
-    // Momentum weight: 20%
-    if (metrics.momentumScore > 10) {
-      bullishScore += (metrics.momentumScore / 100) * 20;
+    // Momentum weight: 25%
+    if (metrics.momentumScore > 5) {
+      bullishScore += (metrics.momentumScore / 100) * 25;
       reasons.push(`Positive momentum (${metrics.momentumScore.toFixed(0)})`);
-    } else if (metrics.momentumScore < -10) {
-      bearishScore += (Math.abs(metrics.momentumScore) / 100) * 20;
+    } else if (metrics.momentumScore < -5) {
+      bearishScore += (Math.abs(metrics.momentumScore) / 100) * 25;
       reasons.push(`Negative momentum (${metrics.momentumScore.toFixed(0)})`);
     }
 
@@ -477,7 +491,7 @@ export class EnhancedSignalGenerator {
     return 'WEAK';
   }
 
-  private static getEmptyMetrics(): Omit<EnhancedSignalMetrics, 'overallConfidence' | 'signalStrength'> {
+  private static getEmptyMetrics(): EnhancedSignalMetrics {
     return {
       trend15m: 'NEUTRAL',
       trendStrength: 0,
@@ -495,6 +509,8 @@ export class EnhancedSignalGenerator {
       resistance: 0,
       volatility: 0,
       volatilityTrend: 'STABLE',
+      overallConfidence: 0,
+      signalStrength: 'WEAK',
     };
   }
 }

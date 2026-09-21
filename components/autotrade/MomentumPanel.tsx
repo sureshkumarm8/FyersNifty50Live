@@ -22,6 +22,7 @@ import { estimateOptionPremium } from '../../services/optionPricing';
 import { istDayKey, istMinutesOf } from '../../services/sniperEngine';
 import { computeCharges, PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
 import { evaluateMomentumEntry, MOMENTUM_POLICY, MomentumCandidate, pairRoundTrips } from '../../services/momentumEntryGuard';
+import { scheduleBackground } from '../../services/heartbeat';
 import { visionService } from '../../services/visionService';
 import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
 import AutoTradeHistory from './AutoTradeHistory';
@@ -476,8 +477,8 @@ export const MomentumPanel: React.FC<Props> = ({
   useEffect(() => {
     if (!running) return;
     analyse();
-    const id = window.setInterval(analyse, SCAN_MS);
-    return () => window.clearInterval(id);
+    // Worker-driven so the scan keeps running when the tab/window/app is hidden.
+    return scheduleBackground(analyse, SCAN_MS);
   }, [running, analyse]);
 
   // --- paper ledger mirror --------------------------------------------------
@@ -803,7 +804,8 @@ export const MomentumPanel: React.FC<Props> = ({
 
   // --- position monitoring --------------------------------------------------
   useEffect(() => {
-    const id = window.setInterval(() => {
+    // Worker-driven so target/stop/EOD exits still fire when the tab is hidden.
+    return scheduleBackground(() => {
       const om = orderRef.current;
       const { niftyLtp: spot } = inputsRef.current;
       if (!om || !spot) return;
@@ -834,7 +836,6 @@ export const MomentumPanel: React.FC<Props> = ({
       });
       setPositions(om.getPositions());
     }, 3000);
-    return () => window.clearInterval(id);
   }, [closeSymbol]);
 
   // --- auto execute ---------------------------------------------------------

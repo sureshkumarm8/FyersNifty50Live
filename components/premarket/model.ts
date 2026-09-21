@@ -243,6 +243,15 @@ export interface PreMarketDecision {
   resistances: number[];
   expectedResistance: number;
   expectedSupport: number;
+  /**
+   * Today's measured session high/low, supplied to the Entry-window re-cut so
+   * the zone is anchored to the real range instead of a modelled band. Absent
+   * on earlier phases, which have no traded range yet.
+   */
+  rangeHigh?: number;
+  rangeLow?: number;
+  /** Where the anchor price sits within [rangeLow, rangeHigh], 0-100. */
+  rangePosition?: number;
   primaryBias: 'LONG' | 'SHORT' | 'NEUTRAL';
   biasStrength: number;
   riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';

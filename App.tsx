@@ -16,15 +16,19 @@ import UnifiedAutoTrade from './components/UnifiedAutoTrade';
 import PatternDashboard from './components/PatternDashboard';
 import VisionAnalysis from './components/VisionAnalysis';
 import PaperTrading from './components/PaperTrading';
+import OpeningPilot from './components/OpeningPilot';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP, fetchPayTMFromRedis } from './services/paytmService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
 import { dbService } from './services/db';
+import { scheduleBackground } from './services/heartbeat';
 import { lifecycleManager } from './services/lifecycleManager';
 import { downloadCSV } from './services/csv';
 import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
+import { istMinutesOf } from './services/sniperEngine';
+import { dayStrength, isBaselineAnchorable } from './services/marketStrength';
 
 // Declare global window cache for PayTM options
 declare global {
@@ -94,6 +98,13 @@ const App: React.FC = () => {
   const [configLoaded, setConfigLoaded] = useState(false); // New flag to track config loading
 
   const [viewMode, setViewMode] = useState<ViewMode>('summary');
+  const [pilotClock, setPilotClock] = useState(Date.now);
+  useEffect(() => {
+    if (viewMode !== 'opening-pilot' && viewMode !== 'premarket') return;
+    setPilotClock(Date.now());
+    const timer = setInterval(() => setPilotClock(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, [viewMode]);
   const [error, setError] = useState<string | null>(null);
   const [quantError, setQuantError] = useState<string | null>(null);
   const [marketStatusMsg, setMarketStatusMsg] = useState<string | null>(null);
@@ -111,6 +122,12 @@ const App: React.FC = () => {
   
   // Data States
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
+  const premarketHistory = useMemo(() => {
+    const now = Date.now();
+    const rows = historyLog.filter(s => Number.isFinite(s.timestamp) && s.timestamp! <= now && isTodayIST(s.timestamp!))
+      .sort((a, b) => b.timestamp! - a.timestamp!);
+    return rows[0]?.timestamp && now - rows[0].timestamp <= 90_000 ? rows : [];
+  }, [historyLog, pilotClock]);
   const [sessionHistory, setSessionHistory] = useState<SessionHistoryMap>({});
   const [quantHistory, setQuantHistory] = useState<any[]>([]);
   const [quantAnalysis, setQuantAnalysis] = useState<any>(null);
@@ -142,7 +159,12 @@ const App: React.FC = () => {
   const initialStocksRef = useRef<Record<string, FyersQuote>>({});
   const prevOptionsRef = useRef<Record<string, FyersQuote>>({});
   const initialOptionsRef = useRef<Record<string, FyersQuote>>({});
-  
+  // Set once the baseline has been anchored to the post-open book, so a browser
+  // refresh at 14:00 restores the morning anchor instead of re-anchoring to the
+  // afternoon book and flattening every Str column to ~0 for the rest of the day.
+  const baselineAnchoredRef = useRef(false);
+  const optionBaselineAnchoredRef = useRef(false);
+
   const prevNiftyLtpRef = useRef<number | null>(null);
   const didFetchPivots = useRef(false);
 
@@ -304,11 +326,8 @@ const App: React.FC = () => {
                       totalSellQty += s.total_sell_quantity || 0;
                     });
                     
-                    // Calculate stock DELTAS from initial
-                    const stockBuyDelta = totalBuyQty - initialStockBuy;
-                    const stockSellDelta = totalSellQty - initialStockSell;
-                    const stockSent = stockSellDelta !== 0 ? ((stockBuyDelta - stockSellDelta) / Math.abs(stockSellDelta) * 100) : 0;
-                    
+                    const stockSent = dayStrength(totalBuyQty, initialStockBuy, totalSellQty, initialStockSell);
+
                     // Calculate CURRENT options totals
                     let callsBuyQty = 0, callsSellQty = 0, callsOI = 0;
                     let putsBuyQty = 0, putsSellQty = 0, putsOI = 0;
@@ -328,19 +347,19 @@ const App: React.FC = () => {
                       }
                     });
                     
-                    // Calculate options DELTAS from initial
-                    const callBuyDelta = callsBuyQty - initialCallBuy;
-                    const callSellDelta = callsSellQty - initialCallSell;
-                    const putBuyDelta = putsBuyQty - initialPutBuy;
-                    const putSellDelta = putsSellQty - initialPutSell;
-                    
                     const pcr = callsOI > 0 ? putsOI / callsOI : 0;
-                    const callSent = callSellDelta !== 0 ? ((callBuyDelta - callSellDelta) / Math.abs(callSellDelta) * 100) : 0;
-                    const putSent = putSellDelta !== 0 ? ((putBuyDelta - putSellDelta) / Math.abs(putSellDelta) * 100) : 0;
+                    const callSent = dayStrength(callsBuyQty, initialCallBuy, callsSellQty, initialCallSell);
+                    const putSent = dayStrength(putsBuyQty, initialPutBuy, putsSellQty, initialPutSell);
                     const optionsSent = callSent - putSent;
-                    
-                    // Overall sentiment (weighted)
-                    const overallSent = (stockSent * 0.7) + (optionsSent * 0.3);
+
+                    // Weighted breadth, matching the live path. This used to be
+                    // (stockSent * 0.7 + optionsSent * 0.3) — a different metric
+                    // on a different scale from the one live trading produces,
+                    // which is why replayed history could never reproduce live
+                    // engine behaviour. Redis snapshots carry no per-stock
+                    // weightage, so fall back to an equal-weighted count.
+                    const advDecTotal = adv + dec;
+                    const overallSent = advDecTotal > 0 ? ((adv - dec) / advDecTotal) * 100 : 0;
                     
                     // Create proper MarketSnapshot
                     return {
@@ -711,9 +730,11 @@ const App: React.FC = () => {
         if (base && isTodayIST(base.savedAt) && base.stocks && Object.keys(base.stocks).length > 0) {
           initialStocksRef.current = base.stocks;
           prevStocksRef.current = { ...base.stocks };
+          baselineAnchoredRef.current = base.anchored === true;
           if (base.options && Object.keys(base.options).length > 0) {
             initialOptionsRef.current = base.options;
             prevOptionsRef.current = { ...base.options };
+            optionBaselineAnchoredRef.current = base.optionAnchored === true;
           }
           baselineSavedDateRef.current = base.savedAt; // already persisted for today
           console.log(`♻️ Restored session baseline: ${Object.keys(base.stocks).length} stocks, ${Object.keys(base.options || {}).length} options`);
@@ -1286,6 +1307,23 @@ const App: React.FC = () => {
       // freshness check (90s) govern staleness instead.
       if (niftyLtpVal > 0) setNiftyLtp(niftyLtpVal);
 
+      // Re-anchor the session baseline once, at the first beat at/after 09:20.
+      // A baseline captured pre-market is a stub book — on 2026-09-16 the call
+      // bid book was 6.58M at 08:24 and 46.38M by 09:17 purely because the
+      // market opened — so every Day% that day measured a +605% artifact, and
+      // the ask book crossing back through its pre-market level is what made
+      // the old delta-denominator divide by zero. Re-seeding replaces the stub
+      // with the real opening book; pre-market views keep their own baseline
+      // until then.
+      if (!baselineAnchoredRef.current && isBaselineAnchorable() && stockData.length > 0) {
+        baselineAnchoredRef.current = true;
+        stockData.forEach(stock => { initialStocksRef.current[stock.symbol] = stock; });
+        // Force the persist block below to rewrite the stored baseline, which
+        // otherwise only writes once a day and would keep the pre-market stub.
+        baselineSavedDateRef.current = 0;
+        console.log(`⚓ Session baseline anchored to the opening book (${stockData.length} stocks)`);
+      }
+
       const enrichedStocks = enrichData(stockData, prevStocksRef, initialStocksRef, true);
       console.log(`📊 [Mobile Debug] Enriched ${enrichedStocks.length} stocks, setting state...`);
       console.log(`📊 [Data Debug] Sample stock data:`, enrichedStocks.slice(0, 2).map(s => ({ 
@@ -1350,6 +1388,12 @@ const App: React.FC = () => {
           }
           
           console.log(`[App] Processing ${rawOptions.length} raw options for enrichment`);
+          // Same re-anchor as the stock book; see the note at the stock site.
+          if (!optionBaselineAnchoredRef.current && isBaselineAnchorable() && rawOptions.length > 0) {
+            optionBaselineAnchoredRef.current = true;
+            rawOptions.forEach(opt => { initialOptionsRef.current[opt.symbol] = opt; });
+            console.log(`⚓ Option baseline anchored to the opening book (${rawOptions.length} contracts)`);
+          }
           const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
           console.log(`[App] Enriched ${enrichedOptions.length} options, setting to state`);
           setOptionQuotes(enrichedOptions);
@@ -1363,6 +1407,10 @@ const App: React.FC = () => {
             baselineSavedDateRef.current = Date.now();
             dbService.setMeta('session_baseline', {
               savedAt: Date.now(),
+              // Persisted so a refresh restores the morning anchor rather than
+              // re-anchoring to whatever the book looks like at refresh time.
+              anchored: baselineAnchoredRef.current,
+              optionAnchored: optionBaselineAnchoredRef.current,
               stocks: initialStocksRef.current,
               options: initialOptionsRef.current,
             }).catch(e => console.warn('[Baseline] persist failed:', e));
@@ -1379,7 +1427,10 @@ const App: React.FC = () => {
           const dec = enrichedStocks.filter(s => (s.lp_chg_day_p || 0) < 0).length;
           
           let totalWeight = 0, bullishWeight = 0, bearishWeight = 0;
-          let stockBuyDelta = 0, stockSellDelta = 0;
+          // Session-open levels are accumulated alongside the current levels:
+          // every "Str" column divides by the open, never by the delta.
+          let stockBuyQty = 0, stockSellQty = 0;
+          let initialStockBuyQty = 0, initialStockSellQty = 0;
 
           enrichedStocks.forEach(s => {
               const w = s.weight || 0;
@@ -1387,38 +1438,53 @@ const App: React.FC = () => {
               totalWeight += w;
               if (chg > 0) bullishWeight += w;
               if (chg < 0) bearishWeight += w;
-              
-              stockBuyDelta += (s.total_buy_qty || 0) - (s.initial_total_buy_qty || 0);
-              stockSellDelta += (s.total_sell_qty || 0) - (s.initial_total_sell_qty || 0);
+
+              stockBuyQty += s.total_buy_qty || 0;
+              stockSellQty += s.total_sell_qty || 0;
+              initialStockBuyQty += s.initial_total_buy_qty || 0;
+              initialStockSellQty += s.initial_total_sell_qty || 0;
           });
 
           const overallSent = totalWeight > 0 ? ((bullishWeight - bearishWeight) / totalWeight) * 100 : 0;
-          const stockSent = stockSellDelta !== 0 ? ((stockBuyDelta - stockSellDelta) / Math.abs(stockSellDelta)) * 100 : 0;
+          // Until the baseline is anchored (10:00 IST) the reference book is
+          // still the pre-market/opening stub, so a Strength reading would be
+          // measuring its own baseline. Report 0 — no signal yet — rather than
+          // a confident-looking artifact. Breadth and PCR are unaffected.
+          const stockSent = baselineAnchoredRef.current
+            ? dayStrength(stockBuyQty, initialStockBuyQty, stockSellQty, initialStockSellQty)
+            : 0;
 
           // Option Aggregations
           let callsBuyQty = 0, callsSellQty = 0, putsBuyQty = 0, putsSellQty = 0;
           let callsOI = 0, putsOI = 0;
-          let callBuyDelta = 0, callSellDelta = 0, putBuyDelta = 0, putSellDelta = 0;
+          let initialCallBuyQty = 0, initialCallSellQty = 0;
+          let initialPutBuyQty = 0, initialPutSellQty = 0;
 
           enrichedOptions.forEach(o => {
               if (o.symbol.endsWith('CE')) {
                   callsBuyQty += o.total_buy_qty || 0;
                   callsSellQty += o.total_sell_qty || 0;
                   callsOI += o.oi || 0;
-                  callBuyDelta += (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
-                  callSellDelta += (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
+                  initialCallBuyQty += o.initial_total_buy_qty || 0;
+                  initialCallSellQty += o.initial_total_sell_qty || 0;
               } else {
                   putsBuyQty += o.total_buy_qty || 0;
                   putsSellQty += o.total_sell_qty || 0;
                   putsOI += o.oi || 0;
-                  putBuyDelta += (o.total_buy_qty || 0) - (o.initial_total_buy_qty || 0);
-                  putSellDelta += (o.total_sell_qty || 0) - (o.initial_total_sell_qty || 0);
+                  initialPutBuyQty += o.initial_total_buy_qty || 0;
+                  initialPutSellQty += o.initial_total_sell_qty || 0;
               }
           });
 
           const pcr = callsOI > 0 ? putsOI / callsOI : 0;
-          const callSent = callSellDelta !== 0 ? ((callBuyDelta - callSellDelta) / Math.abs(callSellDelta)) * 100 : 0;
-          const putSent = putSellDelta !== 0 ? ((putBuyDelta - putSellDelta) / Math.abs(putSellDelta)) * 100 : 0;
+          // Same pre-anchor gate as stockSent above.
+          const optionsAnchored = optionBaselineAnchoredRef.current;
+          const callSent = optionsAnchored
+            ? dayStrength(callsBuyQty, initialCallBuyQty, callsSellQty, initialCallSellQty)
+            : 0;
+          const putSent = optionsAnchored
+            ? dayStrength(putsBuyQty, initialPutBuyQty, putsSellQty, initialPutSellQty)
+            : 0;
           const optionsSent = callSent - putSent;
 
           // Check if we need to add a new snapshot (newest first, so check [0])
@@ -1516,22 +1582,24 @@ const App: React.FC = () => {
           setMarketStatusMsg(null);
           refreshDataRef.current();
           
-          // Start regular interval after first call
-          console.log(`⏰ Setting up interval (after market start delay) with ${credentials.refreshInterval}ms refresh rate`);
-          const intervalId = setInterval(() => {
+          // Start regular interval after first call. Worker-driven so it keeps
+          // fetching when the tab/window/app is backgrounded (main-thread timers
+          // are throttled to ~1/min when hidden).
+          console.log(`⏰ Setting up background heartbeat with ${credentials.refreshInterval}ms refresh rate`);
+          const stop = scheduleBackground(() => {
             if (refreshDataRef.current) {
               refreshDataRef.current();
             }
           }, credentials.refreshInterval || 30000);
-          
-          // Store intervalId for cleanup
-          (timeoutId as any).intervalId = intervalId;
+
+          // Store cleanup for the outer effect teardown.
+          (timeoutId as any).stopInterval = stop;
         }, marketInfo.delayUntil917);
-        
+
         return () => {
           clearTimeout(timeoutId);
-          if ((timeoutId as any).intervalId) {
-            clearInterval((timeoutId as any).intervalId);
+          if ((timeoutId as any).stopInterval) {
+            (timeoutId as any).stopInterval();
           }
         };
       } else {
@@ -1539,14 +1607,15 @@ const App: React.FC = () => {
         console.log('🚀 Starting live data fetch');
         refreshDataRef.current();
         
-        console.log(`⏰ Setting up interval with ${credentials.refreshInterval}ms refresh rate`);
-        const intervalId = setInterval(() => {
+        console.log(`⏰ Setting up background heartbeat with ${credentials.refreshInterval}ms refresh rate`);
+        // Worker-driven so fetching continues when the tab/window/app is hidden.
+        const stop = scheduleBackground(() => {
           if (refreshDataRef.current) {
             refreshDataRef.current();
           }
         }, credentials.refreshInterval || 30000);
-        
-        return () => clearInterval(intervalId);
+
+        return () => stop();
       }
     }
   }, [configLoaded, isDbLoaded, credentials.appId, credentials.accessToken, credentials.paytmAccessToken, credentials.dataProvider, isPaused, credentials.refreshInterval, credentials.bypassMarketHours]);
@@ -1602,7 +1671,8 @@ const App: React.FC = () => {
       refreshDataRef.current?.();
     };
 
-    const id = window.setInterval(() => kick('periodic check'), CHECK_MS);
+    // Worker-driven so the watchdog itself keeps checking while the tab is hidden.
+    const stop = scheduleBackground(() => kick('periodic check'), CHECK_MS);
 
     // A tab that was throttled or backgrounded comes back stale; catch it up the
     // moment it is looked at rather than on the next interval boundary.
@@ -1613,7 +1683,7 @@ const App: React.FC = () => {
     window.addEventListener('focus', onVisible);
 
     return () => {
-      window.clearInterval(id);
+      stop();
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
@@ -1731,6 +1801,9 @@ const App: React.FC = () => {
                </button>
                <button onClick={() => handleSetViewMode('paper')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'paper' ? 'bg-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <GraduationCap size={14} /> Paper
+               </button>
+               <button onClick={() => handleSetViewMode('opening-pilot')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'opening-pilot' ? 'bg-cyan-700 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Activity size={14} /> Opening Pilot
                </button>
                <button onClick={() => handleSetViewMode('premarket')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'premarket' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <TrendingUp size={14} /> PreMkt
@@ -2002,11 +2075,13 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {viewMode === 'premarket' && (
-            <div className="flex flex-col h-full px-4 pb-4 overflow-hidden">
+        {(viewMode === 'premarket' || (viewMode === 'opening-pilot' && istMinutesOf(new Date(pilotClock)) < 565)) && (
+            <div className={viewMode === 'premarket' ? 'flex flex-col h-full px-4 pb-4 overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'premarket'}>
                 <PreMarketAnalyzer
                    credentials={credentials}
                    aiEnabled={credentials.aiEnabled}
+                   historyLog={premarketHistory}
+                   stocks={stocks}
                 />
             </div>
         )}
@@ -2052,6 +2127,21 @@ const App: React.FC = () => {
         )}
 
         </ErrorBoundary>
+        {/* Pilot exits keep monitoring across navigation, in their own error boundary. */}
+        <div className={viewMode === 'opening-pilot' ? 'flex flex-col h-full overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'opening-pilot'}>
+          <ErrorBoundary label="Opening Pilot">
+            <OpeningPilot
+              history={historyLog}
+              quotes={optionQuotes}
+              active={viewMode === 'opening-pilot'}
+              feedPaused={isPaused}
+              refreshInterval={credentials.refreshInterval || 60000}
+              visionScreenActive={viewMode === 'vision'}
+              onNavigate={handleSetViewMode}
+              credentials={credentials}
+            />
+          </ErrorBoundary>
+        </div>
       </main>
     </div>
   );
