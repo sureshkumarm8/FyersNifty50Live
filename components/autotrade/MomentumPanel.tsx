@@ -235,6 +235,9 @@ export const MomentumPanel: React.FC<Props> = ({
   const runningRef = useRef(running);
   runningRef.current = running;
   const gateLogRef = useRef('');
+  // Snapshot timestamp of the last score line, so the score prints once per
+  // snapshot rather than on every 30s scan of the same data.
+  const scoredAtRef = useRef(0);
 
   const orderRef = useRef<OrderManager | null>(null);
   /** Symbols with an exit order already in flight - the monitor ticks every 3s. */
@@ -468,6 +471,26 @@ export const MomentumPanel: React.FC<Props> = ({
     const gate = assessEntry(s, signalAtRef.current);
     candidateRef.current = gate.candidate;
     setSignal(s);
+
+    // One score line per snapshot, not per scan. A bare denial reason says the
+    // setup failed but not by how much, so a run of "below 68" is unreadable:
+    // 67 and 31 look identical. Print the score with the four terms that make
+    // it, so a weak day is distinguishable from a broken input.
+    if (scoredAtRef.current !== signalAtRef.current) {
+      scoredAtRef.current = signalAtRef.current;
+      const m = s.metrics;
+      const threshold = settingsRef.current.minConfidence;
+      const fmtPct = (v: number) => (Number.isFinite(v) ? v.toFixed(0) : '–');
+      addLog(
+        `score ${s.confidence.toFixed(1)}/${threshold} ${s.direction} · ` +
+          `trend ${m.trend15m}/${fmtPct(m.trendStrength)} · ` +
+          `breadth ${fmtPct(m.broadSentiment)} · ` +
+          `optFlow ${m.optionFlow}/${fmtPct(m.optionFlowStrength)} · ` +
+          `mom ${fmtPct(m.momentumScore)}`,
+        s.confidence >= threshold ? 'good' : 'info'
+      );
+    }
+
     if (gateLogRef.current !== gate.reason) {
       gateLogRef.current = gate.reason;
       addLog(gate.reason, gate.ready ? 'good' : 'warn');

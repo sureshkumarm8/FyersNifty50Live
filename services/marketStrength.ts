@@ -26,42 +26,74 @@
 import { istMinutesOf } from './sniperEngine';
 
 /**
- * 10:00 IST. The baseline must not be captured before this.
+ * 09:17 IST — two minutes after the open, the earliest point at which the
+ * depth book is genuinely formed. Chosen so the dashboard carries a Strength
+ * reading through the opening session, which is when it is most wanted.
  *
- * Two separate reasons, both measured on real session logs:
+ * Pre-market the book is a stub and must never be the baseline. On 2026-09-16
+ * the app was opened at 08:24 with a 6.58M call bid book which filled to
+ * 46.38M by 09:17 purely because the market opened — anchoring there makes
+ * every Day% read +605% before a single real trade. On 2026-09-22 at 09:10
+ * every Nifty constituent had one side of its book at exactly 0, which is what
+ * blanked Day Net Strength for all 48.
  *
- * 1. Pre-market the book is a stub. On 2026-09-16 the app was opened at 08:24
- *    with a 6.58M call bid book, which filled to 46.38M by 09:17 purely because
- *    the market opened. Anchoring there makes every Day% read +605% before a
- *    single real trade — and, because the ask book shrinks below its pre-market
- *    level and later grows back through it, it is what manufactured the
- *    divide-by-zero in the old delta-denominator formula.
+ * KNOWN BIAS, measured, deliberately accepted: the bid:ask ratio decays for
+ * roughly the first 45 minutes and then plateaus (16-09: 7.18 -> 4.11, 17-09:
+ * 6.30 -> 3.91). Anchoring inside that decay puts a structural downward slope
+ * through the session. Measured drift in Call Str by anchor time:
  *
- * 2. The bid:ask ratio decays hard for the first ~45 minutes and then plateaus
- *    (16-09: 7.18 -> 4.11, 17-09: 6.30 -> 3.91, both flat thereafter). That
- *    decay is book structure, not market direction, and anchoring inside it
- *    bakes a false downward slope into the whole day. Measured session drift in
- *    Call Str by anchor time:
+ *     anchor    16-09      17-09
+ *     09:20     -57.0      -45.4
+ *     09:45     -19.3      -33.4
+ *     10:00     -21.3       +4.0
  *
- *        anchor    16-09      17-09
- *        09:20     -57.0      -45.4
- *        09:45     -19.3      -33.4
- *        10:00     -21.3       +4.0
- *
- *    -57 is the size of the entire real signal range, so a 09:20 anchor is
- *    mostly measuring its own baseline. Only two sessions had usable pre-10:00
- *    data, so treat 10:00 as the best available estimate rather than a fitted
- *    optimum — but it beat 09:20 on both, and the mechanism explains why.
- *
- * The cost is real: no Strength reading before 10:00. That is the honest
- * answer, not a gap — before the book settles these columns cannot separate
- * structure from signal.
+ * So an 09:17 anchor trades a known negative bias for coverage of the opening
+ * session. Read Strength CHANGES rather than levels before ~10:00, and do not
+ * compare a 09:30 level against a 14:30 level.
  */
-export const BASELINE_ANCHOR_MINUTES = 10 * 60;
+export const BASELINE_ANCHOR_MINUTES = 9 * 60 + 17;
 
 /** True once the clock is far enough past the open that the book is real. */
 export function isBaselineAnchorable(now: Date = new Date()): boolean {
   return istMinutesOf(now) >= BASELINE_ANCHOR_MINUTES;
+}
+
+/**
+ * A baseline quote is only usable when BOTH sides of its book have depth.
+ *
+ * Pre-open the exchange reports a half-formed book: on 2026-09-22 at 09:10
+ * every Nifty constituent had one side at exactly 0 and the other in the tens
+ * — ADANIENT was buy=0 / sell=61 against a real book of ~100k a quarter hour
+ * later, which renders as askDay% = 163,803%. Because Day Net Strength needs
+ * both sides, it came out blank for all 48 stocks.
+ *
+ * Refusing such a baseline leaves every Day column empty until a real book
+ * exists, which is the honest reading — the alternative is a five-figure
+ * percentage that looks like a measurement.
+ */
+export function isUsableBaseline(
+  buy: number | undefined,
+  sell: number | undefined
+): boolean {
+  return Number.isFinite(buy) && (buy as number) > 0
+    && Number.isFinite(sell) && (sell as number) > 0;
+}
+
+/**
+ * Should this symbol's baseline be captured from this quote, right now?
+ *
+ * Anchoring is per symbol rather than one clock tick for the whole universe.
+ * A single wholesale anchor is what let a half-formed book through: at the
+ * anchor instant some symbols have depth and some do not, and the ones that
+ * do not get a stub frozen in for the rest of the day. Per symbol, a straggler
+ * simply waits for its own next beat and anchors a few seconds later.
+ */
+export function shouldAnchorSymbol(
+  buy: number | undefined,
+  sell: number | undefined,
+  now: Date = new Date()
+): boolean {
+  return isBaselineAnchorable(now) && isUsableBaseline(buy, sell);
 }
 
 /**

@@ -28,7 +28,7 @@ import { downloadCSV } from './services/csv';
 import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 import { istMinutesOf } from './services/sniperEngine';
-import { dayStrength, isBaselineAnchorable } from './services/marketStrength';
+import { dayStrength, isUsableBaseline, shouldAnchorSymbol } from './services/marketStrength';
 
 // Declare global window cache for PayTM options
 declare global {
@@ -159,9 +159,12 @@ const App: React.FC = () => {
   const initialStocksRef = useRef<Record<string, FyersQuote>>({});
   const prevOptionsRef = useRef<Record<string, FyersQuote>>({});
   const initialOptionsRef = useRef<Record<string, FyersQuote>>({});
-  // Set once the baseline has been anchored to the post-open book, so a browser
-  // refresh at 14:00 restores the morning anchor instead of re-anchoring to the
-  // afternoon book and flattening every Str column to ~0 for the rest of the day.
+  // Which symbols have taken a real post-open baseline. Tracked per symbol so a
+  // contract whose book is still forming at 09:17 anchors on its own next beat
+  // instead of freezing in a stub, and so a browser refresh at 14:00 restores
+  // the morning anchor rather than re-anchoring to the afternoon book.
+  const anchoredStockSymbolsRef = useRef<Set<string>>(new Set());
+  const anchoredOptionSymbolsRef = useRef<Set<string>>(new Set());
   const baselineAnchoredRef = useRef(false);
   const optionBaselineAnchoredRef = useRef(false);
 
@@ -708,6 +711,17 @@ const App: React.FC = () => {
           const merged = mergeSnapshots(prev, today);
           return merged.length > prev.length ? merged : prev;
         });
+        // Seed the spot from the newest restored snapshot so a reload does not
+        // report "No Nifty price yet" for a full refresh cycle. Production on
+        // 2026-09-22 spent 10:33:50-10:34:24 and 10:37:08-10:37:55 in that
+        // state, blind, because niftyLtp starts null and only the next
+        // successful fetch fills it. This is a stale price by construction, so
+        // it is only a bridge — the momentum guard's own 90s freshness check
+        // still rejects it if the feed does not come back.
+        const newest = today.reduce((a, b) => (b.timestamp > a.timestamp ? b : a), today[0]);
+        if (newest?.niftyLtp > 0) {
+          setNiftyLtp(prev => (prev && prev > 0 ? prev : newest.niftyLtp));
+        }
         console.log(`💾 Restored ${today.length} snapshot(s) for today from IndexedDB`);
       } catch (e) {
         console.warn('[History] Local snapshot restore failed:', e);
@@ -730,11 +744,17 @@ const App: React.FC = () => {
         if (base && isTodayIST(base.savedAt) && base.stocks && Object.keys(base.stocks).length > 0) {
           initialStocksRef.current = base.stocks;
           prevStocksRef.current = { ...base.stocks };
-          baselineAnchoredRef.current = base.anchored === true;
+          if (Array.isArray(base.anchoredStocks)) {
+            anchoredStockSymbolsRef.current = new Set(base.anchoredStocks);
+            baselineAnchoredRef.current = anchoredStockSymbolsRef.current.size > 0;
+          }
           if (base.options && Object.keys(base.options).length > 0) {
             initialOptionsRef.current = base.options;
             prevOptionsRef.current = { ...base.options };
-            optionBaselineAnchoredRef.current = base.optionAnchored === true;
+            if (Array.isArray(base.anchoredOptions)) {
+              anchoredOptionSymbolsRef.current = new Set(base.anchoredOptions);
+              optionBaselineAnchoredRef.current = anchoredOptionSymbolsRef.current.size > 0;
+            }
           }
           baselineSavedDateRef.current = base.savedAt; // already persisted for today
           console.log(`♻️ Restored session baseline: ${Object.keys(base.stocks).length} stocks, ${Object.keys(base.options || {}).length} options`);
@@ -846,11 +866,39 @@ const App: React.FC = () => {
       });
   };
 
+  /**
+   * Capture the session baseline for any symbol that does not have one yet and
+   * whose book is now genuinely formed. Returns how many were newly anchored.
+   * Idempotent: a symbol anchored earlier today is left alone.
+   */
+  const anchorBaselines = (
+      quotes: FyersQuote[],
+      initialRef: React.MutableRefObject<Record<string, FyersQuote>>,
+      anchoredRef: React.MutableRefObject<Set<string>>
+  ): number => {
+      const now = new Date();
+      let anchored = 0;
+      quotes.forEach(q => {
+          if (!q.symbol || anchoredRef.current.has(q.symbol)) return;
+          if (!shouldAnchorSymbol(q.total_buy_qty, q.total_sell_qty, now)) return;
+          initialRef.current[q.symbol] = q;
+          anchoredRef.current.add(q.symbol);
+          anchored++;
+      });
+      return anchored;
+  };
+
   const enrichData = (
-      currentData: FyersQuote[], 
+      currentData: FyersQuote[],
       prevRef: React.MutableRefObject<Record<string, FyersQuote>>, 
       initialRef: React.MutableRefObject<Record<string, FyersQuote>>,
-      isStock: boolean
+      isStock: boolean,
+      // Symbols holding a real post-open baseline. Day-since-open columns are
+      // computed only for these: a pre-open baseline is a stub, and measuring
+      // against it produces five-figure percentages that read as signal.
+      // Membership is per symbol because the stragglers are the whole problem —
+      // at any single instant some books are formed and some are not.
+      anchoredSymbols: Set<string> = new Set()
   ): EnrichedFyersQuote[] => {
       // Debug: Log first few symbols to verify initialization
       if (currentData.length > 0 && Object.keys(initialRef.current).length > 0) {
@@ -909,11 +957,17 @@ const App: React.FC = () => {
         }
 
         if (initial) {
-            if (curr.total_buy_qty !== undefined && initial.total_buy_qty !== undefined && initial.total_buy_qty !== 0) {
-                bid_chg_day_p = ((curr.total_buy_qty - initial.total_buy_qty) / initial.total_buy_qty) * 100;
+            // Both sides must have depth or the whole baseline is rejected:
+            // a half-formed pre-open book (one side 0, the other in the tens)
+            // renders as a five-figure Day% that looks like a measurement.
+            // See isUsableBaseline.
+            const baselineUsable = anchoredSymbols.has(curr.symbol)
+                && isUsableBaseline(initial.total_buy_qty, initial.total_sell_qty);
+            if (baselineUsable && curr.total_buy_qty !== undefined) {
+                bid_chg_day_p = ((curr.total_buy_qty - initial.total_buy_qty!) / initial.total_buy_qty!) * 100;
             }
-            if (curr.total_sell_qty !== undefined && initial.total_sell_qty !== undefined && initial.total_sell_qty !== 0) {
-                ask_chg_day_p = ((curr.total_sell_qty - initial.total_sell_qty) / initial.total_sell_qty) * 100;
+            if (baselineUsable && curr.total_sell_qty !== undefined) {
+                ask_chg_day_p = ((curr.total_sell_qty - initial.total_sell_qty!) / initial.total_sell_qty!) * 100;
             }
             if (bid_chg_day_p !== undefined && ask_chg_day_p !== undefined) {
                 day_net_strength = bid_chg_day_p - ask_chg_day_p;
@@ -1307,24 +1361,20 @@ const App: React.FC = () => {
       // freshness check (90s) govern staleness instead.
       if (niftyLtpVal > 0) setNiftyLtp(niftyLtpVal);
 
-      // Re-anchor the session baseline once, at the first beat at/after 09:20.
-      // A baseline captured pre-market is a stub book — on 2026-09-16 the call
-      // bid book was 6.58M at 08:24 and 46.38M by 09:17 purely because the
-      // market opened — so every Day% that day measured a +605% artifact, and
-      // the ask book crossing back through its pre-market level is what made
-      // the old delta-denominator divide by zero. Re-seeding replaces the stub
-      // with the real opening book; pre-market views keep their own baseline
-      // until then.
-      if (!baselineAnchoredRef.current && isBaselineAnchorable() && stockData.length > 0) {
-        baselineAnchoredRef.current = true;
-        stockData.forEach(stock => { initialStocksRef.current[stock.symbol] = stock; });
+      // Anchor each stock's baseline independently, at the first beat at/after
+      // 09:17 where that symbol's own book has depth on both sides. Symbols
+      // already anchored today are never re-anchored, so the morning reference
+      // holds for the whole session. See shouldAnchorSymbol.
+      const newlyAnchoredStocks = anchorBaselines(stockData, initialStocksRef, anchoredStockSymbolsRef);
+      if (newlyAnchoredStocks > 0) {
         // Force the persist block below to rewrite the stored baseline, which
-        // otherwise only writes once a day and would keep the pre-market stub.
+        // otherwise only writes once a day and would keep the pre-open stub.
         baselineSavedDateRef.current = 0;
-        console.log(`⚓ Session baseline anchored to the opening book (${stockData.length} stocks)`);
+        baselineAnchoredRef.current = anchoredStockSymbolsRef.current.size > 0;
+        console.log(`⚓ Anchored ${newlyAnchoredStocks} stock baselines (${anchoredStockSymbolsRef.current.size}/${stockData.length} total)`);
       }
 
-      const enrichedStocks = enrichData(stockData, prevStocksRef, initialStocksRef, true);
+      const enrichedStocks = enrichData(stockData, prevStocksRef, initialStocksRef, true, anchoredStockSymbolsRef.current);
       console.log(`📊 [Mobile Debug] Enriched ${enrichedStocks.length} stocks, setting state...`);
       console.log(`📊 [Data Debug] Sample stock data:`, enrichedStocks.slice(0, 2).map(s => ({ 
         symbol: s.symbol, 
@@ -1388,13 +1438,14 @@ const App: React.FC = () => {
           }
           
           console.log(`[App] Processing ${rawOptions.length} raw options for enrichment`);
-          // Same re-anchor as the stock book; see the note at the stock site.
-          if (!optionBaselineAnchoredRef.current && isBaselineAnchorable() && rawOptions.length > 0) {
-            optionBaselineAnchoredRef.current = true;
-            rawOptions.forEach(opt => { initialOptionsRef.current[opt.symbol] = opt; });
-            console.log(`⚓ Option baseline anchored to the opening book (${rawOptions.length} contracts)`);
+          // Same per-symbol anchor as the stock book; see the note at that site.
+          const newlyAnchoredOptions = anchorBaselines(rawOptions, initialOptionsRef, anchoredOptionSymbolsRef);
+          if (newlyAnchoredOptions > 0) {
+            baselineSavedDateRef.current = 0;
+            optionBaselineAnchoredRef.current = anchoredOptionSymbolsRef.current.size > 0;
+            console.log(`⚓ Anchored ${newlyAnchoredOptions} option baselines (${anchoredOptionSymbolsRef.current.size}/${rawOptions.length} total)`);
           }
-          const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false);
+          const enrichedOptions = enrichData(rawOptions, prevOptionsRef, initialOptionsRef, false, anchoredOptionSymbolsRef.current);
           console.log(`[App] Enriched ${enrichedOptions.length} options, setting to state`);
           setOptionQuotes(enrichedOptions);
           updateSessionHistory(enrichedOptions);
@@ -1409,8 +1460,8 @@ const App: React.FC = () => {
               savedAt: Date.now(),
               // Persisted so a refresh restores the morning anchor rather than
               // re-anchoring to whatever the book looks like at refresh time.
-              anchored: baselineAnchoredRef.current,
-              optionAnchored: optionBaselineAnchoredRef.current,
+              anchoredStocks: [...anchoredStockSymbolsRef.current],
+              anchoredOptions: [...anchoredOptionSymbolsRef.current],
               stocks: initialStocksRef.current,
               options: initialOptionsRef.current,
             }).catch(e => console.warn('[Baseline] persist failed:', e));
@@ -1439,20 +1490,19 @@ const App: React.FC = () => {
               if (chg > 0) bullishWeight += w;
               if (chg < 0) bearishWeight += w;
 
-              stockBuyQty += s.total_buy_qty || 0;
-              stockSellQty += s.total_sell_qty || 0;
-              initialStockBuyQty += s.initial_total_buy_qty || 0;
-              initialStockSellQty += s.initial_total_sell_qty || 0;
+              // Only anchored symbols contribute: a stock still carrying a
+              // pre-open stub would otherwise inflate the aggregate the same
+              // way it inflated its own row.
+              if (anchoredStockSymbolsRef.current.has(s.symbol)) {
+                  stockBuyQty += s.total_buy_qty || 0;
+                  stockSellQty += s.total_sell_qty || 0;
+                  initialStockBuyQty += s.initial_total_buy_qty || 0;
+                  initialStockSellQty += s.initial_total_sell_qty || 0;
+              }
           });
 
           const overallSent = totalWeight > 0 ? ((bullishWeight - bearishWeight) / totalWeight) * 100 : 0;
-          // Until the baseline is anchored (10:00 IST) the reference book is
-          // still the pre-market/opening stub, so a Strength reading would be
-          // measuring its own baseline. Report 0 — no signal yet — rather than
-          // a confident-looking artifact. Breadth and PCR are unaffected.
-          const stockSent = baselineAnchoredRef.current
-            ? dayStrength(stockBuyQty, initialStockBuyQty, stockSellQty, initialStockSellQty)
-            : 0;
+          const stockSent = dayStrength(stockBuyQty, initialStockBuyQty, stockSellQty, initialStockSellQty);
 
           // Option Aggregations
           let callsBuyQty = 0, callsSellQty = 0, putsBuyQty = 0, putsSellQty = 0;
@@ -1460,37 +1510,62 @@ const App: React.FC = () => {
           let initialCallBuyQty = 0, initialCallSellQty = 0;
           let initialPutBuyQty = 0, initialPutSellQty = 0;
 
+          // Current and baseline must cover exactly the same contracts or the
+          // ratio is meaningless, so Strength uses its own anchored-only sums.
+          // The callsBuyQty/putsBuyQty columns stay full totals — they are
+          // reported levels, not a ratio.
+          let anchCallBuy = 0, anchCallSell = 0, anchPutBuy = 0, anchPutSell = 0;
+
           enrichedOptions.forEach(o => {
+              const anchored = anchoredOptionSymbolsRef.current.has(o.symbol);
               if (o.symbol.endsWith('CE')) {
                   callsBuyQty += o.total_buy_qty || 0;
                   callsSellQty += o.total_sell_qty || 0;
                   callsOI += o.oi || 0;
-                  initialCallBuyQty += o.initial_total_buy_qty || 0;
-                  initialCallSellQty += o.initial_total_sell_qty || 0;
+                  if (anchored) {
+                      anchCallBuy += o.total_buy_qty || 0;
+                      anchCallSell += o.total_sell_qty || 0;
+                      initialCallBuyQty += o.initial_total_buy_qty || 0;
+                      initialCallSellQty += o.initial_total_sell_qty || 0;
+                  }
               } else {
                   putsBuyQty += o.total_buy_qty || 0;
                   putsSellQty += o.total_sell_qty || 0;
                   putsOI += o.oi || 0;
-                  initialPutBuyQty += o.initial_total_buy_qty || 0;
-                  initialPutSellQty += o.initial_total_sell_qty || 0;
+                  if (anchored) {
+                      anchPutBuy += o.total_buy_qty || 0;
+                      anchPutSell += o.total_sell_qty || 0;
+                      initialPutBuyQty += o.initial_total_buy_qty || 0;
+                      initialPutSellQty += o.initial_total_sell_qty || 0;
+                  }
               }
           });
 
           const pcr = callsOI > 0 ? putsOI / callsOI : 0;
-          // Same pre-anchor gate as stockSent above.
-          const optionsAnchored = optionBaselineAnchoredRef.current;
-          const callSent = optionsAnchored
-            ? dayStrength(callsBuyQty, initialCallBuyQty, callsSellQty, initialCallSellQty)
-            : 0;
-          const putSent = optionsAnchored
-            ? dayStrength(putsBuyQty, initialPutBuyQty, putsSellQty, initialPutSellQty)
-            : 0;
+          const callSent = dayStrength(anchCallBuy, initialCallBuyQty, anchCallSell, initialCallSellQty);
+          const putSent = dayStrength(anchPutBuy, initialPutBuyQty, anchPutSell, initialPutSellQty);
           const optionsSent = callSent - putSent;
 
           // Check if we need to add a new snapshot (newest first, so check [0])
-          const lastLogTime = historyLog.length > 0 ? historyLog[0].time : '';
-          const currentMin = timeStr.substring(0, 5);
-          const lastLogMin = lastLogTime.substring(0, 5);
+          // Append on ELAPSED TIME, not on crossing a minute boundary.
+          //
+          // The boundary rule silently dropped a row whenever a fetch beat was
+          // slow or failed: the minute ticked over with no snapshot, and the
+          // next beat saw a new minute and carried on, leaving a permanent
+          // hole. Production on 2026-09-22 logged 143s, 155s and 180s holes in
+          // one twenty-minute stretch, and the momentum guard rejects a window
+          // containing them — it denied two setups that had already cleared the
+          // score threshold (10:35:57 at 68.2 and 10:43:30 at 69.6).
+          //
+          // 55s rather than 60s so a beat arriving slightly early still counts;
+          // at a 30s refresh that yields one row per minute as intended, and
+          // after a stall the very next beat writes a row instead of waiting
+          // for the next boundary.
+          const lastLogTs = historyLog.length > 0 ? historyLog[0].timestamp : 0;
+          const sinceLastLog = Number.isFinite(lastLogTs) && lastLogTs > 0
+            ? Date.now() - lastLogTs
+            : Number.POSITIVE_INFINITY;
+          const dueForSnapshot = sinceLastLog >= 55_000;
 
           // On refresh / first launch the baseline refs (initial_* quantities)
           // are freshly seeded, so every delta-based metric is 0 for one beat —
@@ -1502,7 +1577,7 @@ const App: React.FC = () => {
           // marks the zero-baseline beat.
           const isZeroBaseline = adv === 0 && dec === 0;
 
-          if (currentMin !== lastLogMin && !isZeroBaseline) {
+          if (dueForSnapshot && !isZeroBaseline) {
               const snapshot: MarketSnapshot = {
                   time: timeStr,
                   timestamp: Date.now(),

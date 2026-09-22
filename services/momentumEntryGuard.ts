@@ -6,8 +6,60 @@ import { istDayKey, istMinutesOf } from './sniperEngine';
 import { isMarketLive } from './marketSession';
 
 const MINUTE = 60_000;
+
+/**
+ * Longest gap still counted as an intact step. Snapshots are appended at
+ * >= 55s, so 90s absorbs normal jitter; anything wider is a dropped beat and
+ * its churn has to be estimated rather than observed.
+ */
+const NOMINAL_GAP_MS = 90_000;
+
+/**
+ * How much of the 15-minute window may be missing before the price path is
+ * inference rather than measurement. The 2026-09-22 feed stall ran 201s —
+ * about 22% of the window — and must still be tradeable; three or more
+ * consecutive dropped beats (4m+, hole >= 25%) must not.
+ */
+const MAX_HOLE_FRACTION = 1 / 4;
+
+/** Minimum snapshots required in the ~15-minute window (nominally ~15). */
+const MIN_WINDOW_ROWS = 10;
 export const MOMENTUM_POLICY = {
   minConfidence: 68,
+  /**
+   * Directional efficiency floor: move15 / path.
+   *
+   * Was a hardcoded 0.55, which was the single biggest bottleneck on
+   * 2026-09-22 — 13 of the 23 real denials among scans that had already
+   * cleared the score threshold.
+   *
+   * Measured at the guard's own one-per-minute cadence across that whole
+   * session (67 rolling 15-minute windows): median efficiency 19.4%, max
+   * 70.5%. Windows clearing each floor:
+   *
+   *     >= 55%   10%
+   *     >= 45%   21%
+   *     >= 40%   28%
+   *     >= 35%   34%
+   *
+   * So 0.40 roughly triples the admissible windows versus 0.55 while still
+   * refusing the churning ~70% — it is a deliberate loosening, not a
+   * recalibration to some "true" value. Note the floor is also sampling-rate
+   * dependent: path grows with snapshot frequency while net move does not, so
+   * this number is only meaningful at roughly one snapshot per minute.
+   *
+   * Lifted to a named policy value so it is visible and tunable next to
+   * minConfidence instead of buried in the path check.
+   *
+   * NOTE, recorded deliberately: on 2026-09-22, scans clearing 68 averaged
+   * -2.52 points over the following 15 minutes and scans clearing 75 averaged
+   * -10.82 at a 22% win rate (n=20 and n=9, heavily overlapping windows, one
+   * session). Relaxing this admits trades that sample predicts will lose. It
+   * is enabled to generate real entry/exit records, which no amount of gate
+   * tuning can substitute for. Raise it back to 0.55 to restore the old
+   * behaviour.
+   */
+  minPathEfficiency: 0.40,
   cooldownMinutes: 5,
   lossCooldownMinutes: 15,
   maxDailyTrades: 4,
@@ -175,8 +227,24 @@ export function evaluateMomentumEntry(
       snapshotAt! - fifteen.timestamp! > 16.5 * MINUTE) {
     return deny('Warming up: need continuous, timestamped 1m, 5m and 15m market history.');
   }
+  // A hole in the window does NOT invalidate the window.
+  //
+  // move1/move5/move15 are measured point-to-point against the 1m, 5m and 15m
+  // anchor rows, each of which already carries its own age tolerance above.
+  // Those three numbers are exactly as trustworthy with a hole in the middle as
+  // without one — the 15-minute-ago price and the current price are both still
+  // there. Only `path`, and therefore the efficiency ratio and averageStep,
+  // depend on seeing every step in between.
+  //
+  // So holes are priced, not punished. The bias runs one way: across a hole we
+  // observe a straight line instead of the real wiggles, so path comes out too
+  // SMALL and efficiency too LARGE — a gappy window looks cleaner than it was.
+  // Each hole is therefore charged the greater of its own net move and the
+  // churn rate observed over the intact stretches, which makes a hole reduce
+  // confidence instead of either discarding the window or flattering it.
   const window = history.slice(0, history.indexOf(fifteen) + 1);
-  let path = 0;
+  let observedPath = 0, observedMs = 0, observedSteps = 0;
+  let holeMs = 0, holePath = 0;
   for (let i = 0; i < window.length; i++) {
     const row = window[i];
     if (!Number.isFinite(row.niftyLtp) || row.niftyLtp <= 0 ||
@@ -185,25 +253,63 @@ export function evaluateMomentumEntry(
     }
     if (i > 0) {
       const gap = window[i - 1].timestamp! - row.timestamp!;
-      if (gap <= 0 || gap >= 120_000) return deny('Market history has gaps or duplicate timestamps; waiting for continuous data.');
-      path += Math.abs(window[i - 1].niftyLtp - row.niftyLtp);
+      // Duplicate or out-of-order rows are corruption, not a dropped beat.
+      if (gap <= 0) return deny('Market history has duplicate or out-of-order timestamps.');
+      const step = Math.abs(window[i - 1].niftyLtp - row.niftyLtp);
+      if (gap <= NOMINAL_GAP_MS) { observedPath += step; observedMs += gap; observedSteps++; }
+      else { holeMs += gap; holePath += step; }
     }
   }
+  if (window.length < MIN_WINDOW_ROWS) {
+    return deny(`Sparse market history: ${window.length} snapshots in the 15m window, need ${MIN_WINDOW_ROWS}.`);
+  }
+
   const sign = s.direction === 'LONG' ? 1 : -1;
   const move1 = sign * (latest.niftyLtp - one.niftyLtp);
   const move5 = sign * (latest.niftyLtp - five.niftyLtp);
   const move15 = sign * (latest.niftyLtp - fifteen.niftyLtp);
+  // Evaluated before anything path-derived: a hole cannot affect these.
   if (move1 <= 0 || move5 < 5 || move15 < 8) {
     return deny('Wait for aligned 1m, 5m and 15m price direction.');
   }
-  if (path === 0 || move15 / path < 0.55) return deny('Choppy price path; directional efficiency below 55%.');
+
+  // Past this fraction the estimate is mostly inference rather than data, and
+  // the efficiency test stops meaning anything. This is the only place a hole
+  // can deny — and it denies the path measurement, not the whole window.
+  const spanMs = latest.timestamp! - fifteen.timestamp!;
+  if (observedMs <= 0 || holeMs > spanMs * MAX_HOLE_FRACTION) {
+    return deny(`Price path unmeasurable: ${Math.round(holeMs / 1000)}s of the ${Math.round(spanMs / MINUTE)}m window is missing.`);
+  }
+  const path = observedPath + Math.max(holePath, (observedPath / observedMs) * holeMs);
+  const efficiency = path > 0 ? move15 / path : 0;
+  if (path === 0 || efficiency < policy.minPathEfficiency) {
+    // Report the measured figure: a 39% reading and a 6% reading are different
+    // situations, and the old fixed message hid which one you were looking at.
+    return deny(`Choppy price path; directional efficiency ${(efficiency * 100).toFixed(0)}% below ${(policy.minPathEfficiency * 100).toFixed(0)}%.`);
+  }
   const m = s.metrics;
   if (![m.broadSentiment, m.optionFlowStrength, m.momentumScore].every(Number.isFinite) ||
-      sign * m.broadSentiment < 5 || sign * m.momentumScore < 15 ||
-      m.optionFlow !== (sign === 1 ? 'BULLISH' : 'BEARISH') || m.optionFlowStrength < 20) {
-    return deny('Breadth, option flow and momentum must all confirm the direction.');
+      sign * m.broadSentiment < 5 || sign * m.momentumScore < 15) {
+    return deny('Breadth and momentum must both confirm the direction.');
   }
-  const averageStep = path / (window.length - 1);
+  // Option flow is deliberately NOT a gate.
+  //
+  // It was one for a day, and the day it ran in production it denied the best
+  // setup of the session (2026-09-22 10:42:59, score 77.8, trend BEARISH/100,
+  // breadth -85, momentum -100) on a divergence that turned out to be an
+  // artifact of comparing a cumulative figure to a 15-minute trend. That
+  // specific defect is fixed in the generator, but the deeper reason stands:
+  // measured against the forward 15-row move across 16/17/21-09, option flow
+  // scores +0.01 / +0.04 / -0.10 windowed and -0.31 / +0.06 / -0.26
+  // cumulative. It has no demonstrated edge in either form, and a term with no
+  // edge must not hold a veto. It still carries weight in the score, and the
+  // panel still shows the TRAP badge when it disagrees — that is the right
+  // place for it until a real edge is measured over many more sessions.
+  // Anti-chase deliberately uses the OBSERVED step size, not the hole-inflated
+  // path. Both its thresholds scale upward with averageStep, so feeding the
+  // estimate in would let a feed stall widen the very limits meant to stop a
+  // chase — a hole must never make an entry easier.
+  const averageStep = observedSteps > 0 ? observedPath / observedSteps : 0;
   if (move1 > Math.max(12, averageStep * 2.5) ||
       Math.abs(spot! - latest.niftyLtp) > Math.max(8, averageStep * 1.5)) {
     return deny('Price is extended or has moved away from the setup; do not chase.');

@@ -127,6 +127,19 @@ export class EnhancedSignalGenerator {
   }
 
   /**
+   * The newest snapshot at least `ageMs` older than the latest one.
+   *
+   * Shared so that trend and option flow are anchored to the SAME window.
+   * They were not, which is how a 15-minute price trend ended up being
+   * compared against a since-session-open flow figure.
+   */
+  private static anchorRow(historyLog: MarketSnapshot[], ageMs: number): MarketSnapshot | undefined {
+    const latestTs = historyLog[0]?.timestamp;
+    if (!Number.isFinite(latestTs) || !(latestTs! > 0)) return undefined;
+    return historyLog.find(h => Number.isFinite(h.timestamp) && h.timestamp! <= latestTs! - ageMs);
+  }
+
+  /**
    * Analyze 15-minute trend from historical data
    */
   private static analyzeTrend(historyLog: MarketSnapshot[]) {
@@ -142,10 +155,7 @@ export class EnhancedSignalGenerator {
     const latestTs = latest?.timestamp;
 
     // Anchor 15-minute trend using timestamps if available, or up to 30 snapshots
-    let olderSnap: MarketSnapshot | undefined;
-    if (Number.isFinite(latestTs) && latestTs! > 0) {
-      olderSnap = historyLog.find(h => Number.isFinite(h.timestamp) && h.timestamp! <= latestTs! - 14 * 60_000);
-    }
+    let olderSnap = this.anchorRow(historyLog, 14 * 60_000);
     if (!olderSnap) {
       const lookback = Math.min(historyLog.length - 1, 30);
       olderSnap = historyLog[lookback];
@@ -197,17 +207,34 @@ export class EnhancedSignalGenerator {
     // Call-Put Ratio (higher = more bullish)
     const callPutRatio = latest.pcr ? 1 / latest.pcr : 0;
     
-    // Option sentiment
-    const optionFlow = latest.optionsSent || 0; // (Call Sent - Put Sent)
-    let optionFlowDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-    let optionFlowStrength = Math.abs(optionFlow);
+    // Option flow, measured over the SAME 15-minute window as trend15m.
+    //
+    // optionsSent is cumulative since the session anchor, so it describes what
+    // the whole session has done, not what is happening now. Comparing it to a
+    // 15-minute price trend compares two different spans, and the result is a
+    // phantom divergence: on 2026-09-22 the log ran twenty consecutive rows of
+    // BEARISH/100 trend against BULLISH option flow, purely because the morning
+    // had been up and the cumulative figure had not yet unwound.
+    //
+    // Measured across 16/17/21-09, cumulative optionsSent correlates +0.42 /
+    // +0.38 / +0.59 with the TRAILING price move — it lags. Differencing it
+    // over the matched window lifts sign agreement with price from 47% to 83%
+    // on the cleanest session.
+    const olderForFlow = this.anchorRow(historyLog, 14 * 60_000) ?? historyLog[historyLog.length - 1];
+    const flowNow = latest.optionsSent || 0;
+    const flowThen = olderForFlow?.optionsSent || 0;
+    const optionFlow = flowNow - flowThen;
 
-    if (optionFlow > 10) {
+    let optionFlowDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    let optionFlowStrength = Math.min(100, Math.abs(optionFlow));
+
+    // Threshold on the windowed scale. The old >10 was set when optionsSent was
+    // pinned at its ±100 rail by a divide-by-zero; on the corrected scale the
+    // windowed figure spans roughly ±60 on a normal session.
+    if (optionFlow > 3) {
       optionFlowDirection = 'BULLISH';
-      optionFlowStrength = Math.min(100, optionFlow);
-    } else if (optionFlow < -10) {
+    } else if (optionFlow < -3) {
       optionFlowDirection = 'BEARISH';
-      optionFlowStrength = Math.min(100, Math.abs(optionFlow));
     }
 
     // Call buy pressure vs Put buy pressure
