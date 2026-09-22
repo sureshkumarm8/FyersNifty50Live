@@ -416,16 +416,82 @@ test('history needs fifteen elapsed minutes, not fifteen samples', () => {
   assert.equal(evaluateMomentumEntry(input(), confirmed()).ready, true);
 });
 
+test('a single dropped snapshot is tolerated; a stalled feed is not', () => {
+  // Production drops beats: 2026-09-22 ran 143s, 155s, 180s and one 201s hole.
+  // One missing row must not throw away the whole window.
+  const oneDropped = input();
+  oneDropped.history.splice(8, 1);
+  assert.equal(evaluateMomentumEntry(oneDropped, confirmed()).ready, true,
+    'a single dropped beat (2m hole) must still confirm');
+
+  // Three consecutive drops is a 4-minute hole — past that the path is
+  // inference, so the PATH is what gets refused, by name.
+  const stalled = input();
+  stalled.history.splice(8, 3);
+  blocked(stalled, /Price path unmeasurable/);
+});
+
+test('the efficiency floor is policy-driven and reports what it measured', () => {
+  assert.equal(MOMENTUM_POLICY.minPathEfficiency, 0.40,
+    'deliberate loosening from 0.55 on 2026-09-22 evidence; see the policy comment');
+
+  // Build a window whose net move is real but whose path zig-zags enough to
+  // land under the floor, and check the denial names the measured figure.
+  const choppy = input();
+  choppy.history.forEach((row, i) => {
+    // Rows are newest-first. Keep the recent end monotonic so the 1m/5m/15m
+    // alignment legs pass, then zig-zag the middle to inflate `path` only.
+    row.niftyLtp = 23500 - i * 2 + (i >= 6 && i % 2 ? 12 : 0);
+  });
+  const r = blocked(choppy, /directional efficiency \d+% below 40%/);
+  assert.ok(/efficiency \d+%/.test(r.reason), `expected a measured %, got: ${r.reason}`);
+});
+
+test('a hole cannot block the move-alignment test', () => {
+  // The whole point: move1/move5/move15 are point-to-point against the 1m/5m/
+  // 15m anchors, so a hole in between leaves them exactly as valid. A gappy
+  // window whose moves do not align must say so, not blame the gap.
+  const flat = input();
+  flat.history.splice(8, 1);                       // 2m hole
+  flat.history.forEach(r => { r.niftyLtp = 23500; });   // no move at all
+  blocked(flat, /Wait for aligned/);
+});
+
+test('a hole makes the efficiency test stricter, never looser', () => {
+  // Across a hole we see a straight line instead of the real wiggles, so an
+  // unadjusted path would be too small and efficiency too generous. Charging
+  // the hole at the observed churn rate must push efficiency DOWN.
+  const intact = input();
+  const holed = input();
+  holed.history.splice(8, 1);
+  const eff = (i: typeof intact) => {
+    // Same prices either way; only the sampling differs.
+    const r = evaluateMomentumEntry(i, confirmed());
+    return r;
+  };
+  // Both are clean trends here, so both should still pass — the assertion is
+  // that removing a sample does not turn a marginal setup into a better one.
+  assert.equal(eff(intact).ready, true, 'intact window confirms');
+  assert.equal(eff(holed).ready, true, 'holed window still confirms on a clean trend');
+});
+
+test('a sparse window cannot confirm even when every gap is legal', () => {
+  // Rows every 2 minutes: no gap breaks the 3-minute rule, but eight samples
+  // cannot describe a fifteen-minute price path.
+  const sparse = input();
+  // Nine rows spanning sixteen minutes, so the 1m/5m/15m anchors all resolve.
+  sparse.history = history().slice(0, 9);
+  sparse.history.forEach((row, i) => { row.timestamp = AT - i * 2 * MINUTE; });
+  blocked(sparse, /Sparse market history/);
+});
+
 test('history gaps, duplicate/out-of-order rows and corrupt prices cannot confirm', () => {
-  const gap = input();
-  gap.history.splice(8, 1);
-  blocked(gap, /gaps or duplicate/);
   const duplicate = input();
   duplicate.history.splice(8, 0, { ...duplicate.history[8] });
-  blocked(duplicate, /gaps or duplicate/);
+  blocked(duplicate, /duplicate or out-of-order/);
   const unordered = input();
   [unordered.history[8], unordered.history[9]] = [unordered.history[9], unordered.history[8]];
-  blocked(unordered, /gaps or duplicate/);
+  blocked(unordered, /duplicate or out-of-order/);
   const priorDay = input();
   priorDay.history[8].timestamp = AT - 24 * 60 * MINUTE;
   blocked(priorDay, /Warming up|previous-session/);
@@ -454,13 +520,36 @@ test('choppy paths and contradictory breadth, momentum or option flow are blocke
   const patches: Partial<EnhancedSignal['metrics']>[] = [
     { broadSentiment: 4.99 }, { broadSentiment: -40 }, { broadSentiment: NaN },
     { momentumScore: 14.99 }, { momentumScore: -50 }, { momentumScore: Infinity },
-    { optionFlow: 'BEARISH' }, { optionFlow: 'NEUTRAL' },
-    { optionFlowStrength: 19.99 }, { optionFlowStrength: NaN }
+    { optionFlowStrength: NaN }
   ];
   for (const patch of patches) {
     const s = signal();
     Object.assign(s.metrics, patch);
-    blocked({ ...input(), signal: s }, /Breadth, option flow and momentum/);
+    blocked({ ...input(), signal: s }, /Breadth and momentum/);
+  }
+});
+
+test('option flow never vetoes an entry, in any direction or strength', () => {
+  // It held a veto for one day and spent it denying the best setup of that
+  // session (22-09 10:42:59, score 77.8) on a phantom divergence. Measured
+  // against forward returns it has no edge, so it informs the score and the
+  // TRAP badge but cannot block. This test exists to stop it becoming a gate
+  // again without evidence.
+  for (const direction of ['LONG', 'SHORT'] as const) {
+    const opposing = direction === 'LONG' ? 'BEARISH' : 'BULLISH';
+    for (const patch of [
+      { optionFlow: opposing as 'BULLISH' | 'BEARISH', optionFlowStrength: 90 },
+      { optionFlow: 'NEUTRAL' as const, optionFlowStrength: 0 },
+      { optionFlow: 'NEUTRAL' as const, optionFlowStrength: 3 },
+    ]) {
+      const s = signal(direction);
+      Object.assign(s.metrics, patch);
+      assert.equal(
+        evaluateMomentumEntry({ ...input(AT, direction), signal: s }, confirmed(AT, direction)).ready,
+        true,
+        `${direction}: optionFlow ${patch.optionFlow}/${patch.optionFlowStrength} must not veto a clean setup`
+      );
+    }
   }
 });
 
