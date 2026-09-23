@@ -2,7 +2,7 @@
 import http from 'http';
 import { URL } from 'url';
 import crypto from 'crypto';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -79,6 +79,134 @@ const localStore = {
   config: null,
   latestSnapshot: null
 };
+
+/**
+ * PUBLISH THE BROWSER'S WORKING PAYTM TOKEN.
+ *
+ * A PayTM token is day-scoped and only the browser ever holds a fresh one - it
+ * arrives from the OAuth flow into localStorage. Every browser-independent
+ * producer (api/cron-fetch.js, here and on Vercel) reads the token from Redis
+ * `paytm:access_token`, and nothing was ever writing that key: on 2026-09-23 it
+ * was null and the `.env.local` copy answered 401, so the cron could not fetch a
+ * single row and the open tab was the only source of market history. That is
+ * why an idle-sleeping laptop left a 16-minute hole in `snapshots:index`.
+ *
+ * The live-quote proxy sees the good token on every beat, so harvest it there.
+ * Written only when it changes: one Redis call per session, not one per beat.
+ */
+let lastPublishedPaytmToken = null;
+
+async function publishPaytmToken(token) {
+  if (!token || token === lastPublishedPaytmToken) return;
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const auth = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  if (!url || !auth) return;
+  try {
+    const { Redis } = await import('@upstash/redis');
+    // 14h: longer than one trading day, short enough that a dead token cannot
+    // linger for a week and keep the failover fetcher quietly failing.
+    await new Redis({ url, token: auth }).set('paytm:access_token', token, { ex: 50400 });
+    lastPublishedPaytmToken = token;
+    console.log('[Token] Published the browser PayTM token to Redis for background fetchers.');
+  } catch (err) {
+    console.warn('[Token] Could not publish PayTM token:', err.message);
+  }
+}
+
+/**
+ * LOCAL FAILOVER FETCHER.
+ *
+ * Market history had exactly one producer: the open browser tab. Reload it,
+ * background it, or let the host idle-sleep and nothing writes a snapshot -
+ * while momentumEntryGuard needs continuous ~1/minute rows and denies entries
+ * for a further ~15 minutes after a hole, until the hole rolls out of its
+ * 15-minute window. A 15-minute stall therefore costs about 30 minutes.
+ *
+ * api/cron-fetch.js already solves this for the deployed app (cron-job.org calls
+ * it every minute) and writes exactly the same keys as the browser, so run it
+ * here too. It self-skips while `frontend_active` is fresh - a 90s TTL set by
+ * api/save-redis-data.js on every browser save - so this only fetches when the
+ * tab is not feeding Redis. No duplicate beats and no coordination needed.
+ * It also returns early outside 09:17-15:30 IST, so off-hours cost is nil.
+ *
+ * This cannot help while the whole machine is asleep; nothing in-process can.
+ * Keep the host awake during market hours (`caffeinate -dimsu`, or permanently
+ * `sudo pmset -c sleep 0`).
+ */
+/**
+ * The failover fetcher reads the option universe from the generated plain-JS
+ * mirrors in constants/ (see scripts/generateConstantsJs.cjs). Those are
+ * regenerated weekly with the expiry roll, and a stale mirror would make this
+ * poll last week's strikes - silently wrong, which is worse than not fetching.
+ * Compare mtimes and say so loudly rather than trusting anyone to remember.
+ */
+function warnOnStaleConstantMirrors() {
+  for (const name of ['paytmMappings', 'niftyWeeklyOptions']) {
+    const ts = join(__dirname, 'constants', `${name}.ts`);
+    const js = join(__dirname, 'constants', `${name}.js`);
+    try {
+      if (!existsSync(js)) {
+        console.warn(`⚠️  constants/${name}.js is MISSING - run \`npm run generate:constants\`. The failover fetcher cannot load without it.`);
+        continue;
+      }
+      if (existsSync(ts) && statSync(ts).mtimeMs > statSync(js).mtimeMs) {
+        console.warn(`⚠️  constants/${name}.js is OLDER than its .ts source - run \`npm run generate:constants\` or the failover fetcher will use stale data.`);
+      }
+    } catch (err) {
+      console.warn(`⚠️  Could not check constants/${name}: ${err.message}`);
+    }
+  }
+}
+
+const FAILOVER_INTERVAL_MS = 60_000;
+
+/**
+ * A full fetch measured 50s on 2026-09-23 (48 stocks plus 82 option contracts,
+ * fetched in sequential batches), which is close enough to the interval that
+ * two runs would overlap on any slow beat and race each other into Redis.
+ */
+let failoverInFlight = false;
+
+async function runFailoverFetch() {
+  if (failoverInFlight) {
+    console.warn('[Failover] Previous fetch still running - skipping this tick.');
+    return;
+  }
+  failoverInFlight = true;
+  const req = {
+    method: 'GET',
+    url: '/api/cron-fetch',
+    query: {},
+    headers: process.env.CRON_SECRET
+      ? { authorization: `Bearer ${process.env.CRON_SECRET}` }
+      : {}
+  };
+  let payload = null;
+  let status = 200;
+  const res = {
+    statusCode: 200,
+    setHeader: () => res,
+    status: code => { status = code; return res; },
+    json: body => { payload = body; return res; },
+    send: body => { payload = body; return res; },
+    end: () => res
+  };
+
+  try {
+    const { default: handler } = await import('./api/cron-fetch.js');
+    await handler(req, res);
+    if (!payload || payload.marketClosed || payload.skipped) return;
+    if (status >= 400 || payload.success === false) {
+      console.warn(`[Failover] cron-fetch declined (${status}): ${payload.error || 'unknown'}`);
+      return;
+    }
+    console.log(`[Failover] Wrote a snapshot at ${payload.istTime || new Date().toISOString()} - no browser was feeding Redis.`);
+  } catch (err) {
+    console.warn('[Failover] cron-fetch threw:', err.message);
+  } finally {
+    failoverInFlight = false;
+  }
+}
 
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
@@ -306,9 +434,14 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
         return;
       }
 
+      // The in-memory store is only ever filled by /api/save-history, which the
+      // SPA never calls - so locally this endpoint always 404'd while Redis held
+      // a full day of snapshots. That silently killed the one path that can
+      // refill a hole in momentum history after a reload or a feed stall, and
+      // made local behaviour diverge from the deployed app. Serve the same Redis
+      // the Vercel handler serves.
       if (localStore.history.length === 0) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'No historical data available' }));
+        await runVercelHandler('./api/get-history.js', req, res, reqUrl);
         return;
       }
 
@@ -618,6 +751,10 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
            
            if (!paytmResponse.ok) {
               console.error(`[Proxy] PayTM Error Response: ${text.substring(0, 200)}`);
+           } else {
+              // The tab just proved this token works. Hand it to the failover
+              // fetcher so history keeps flowing when the tab does not.
+              void publishPaytmToken(authHeader.replace('Bearer ', ''));
            }
            
            let data;
@@ -998,5 +1135,9 @@ server.listen(PORT, () => {
     console.log(`   • History stored in memory (resets on restart)`);
     console.log(`   • Authentication relaxed for testing`);
   }
+  warnOnStaleConstantMirrors();
+  // Browser-independent history producer; see runFailoverFetch above.
+  setInterval(runFailoverFetch, FAILOVER_INTERVAL_MS);
+  console.log(`⏱️  Failover market-data fetcher armed (every ${FAILOVER_INTERVAL_MS / 1000}s, only when no browser is feeding Redis)`);
   console.log();
 });
