@@ -113,11 +113,87 @@ export interface MomentumCandidate {
   observations: number;
 }
 
+export type GateStatus = 'pass' | 'block' | 'pending' | 'skip';
+
+export interface GateCheck {
+  id: string;
+  label: string;
+  status: GateStatus;
+  /** Only set on the gate that blocked: the verbatim denial reason. */
+  detail?: string;
+}
+
+/**
+ * Every gate, in the order `evaluateMomentumEntry` applies them.
+ *
+ * The guard is a strict sequence of early returns, so position alone tells the
+ * whole story: if it stopped at gate N, gates 1..N-1 necessarily passed and
+ * N+1.. were never evaluated. That lets the panel show the full checklist
+ * without a second implementation of the rules to drift out of sync with this
+ * one — the ids below are the only thing the UI depends on.
+ *
+ * Several distinct denials share an id where they are facets of one idea (three
+ * separate loss limits, three ways the confirmation window can be malformed).
+ */
+export const MOMENTUM_GATES: { id: string; label: string }[] = [
+  { id: 'engine-running', label: 'Engine running' },
+  { id: 'paper-mode', label: 'Paper mode (LIVE entries disabled)' },
+  { id: 'settings-valid', label: 'Valid score / daily-limit settings' },
+  { id: 'entry-window', label: 'Entry window 09:30-15:00 IST' },
+  { id: 'flat-book', label: 'No open position or pending order' },
+  { id: 'daily-limit', label: 'Daily entry limit not reached' },
+  { id: 'loss-limits', label: 'Daily loss and consecutive-loss limits' },
+  { id: 'cooldown', label: 'Post-trade cooldown elapsed' },
+  { id: 'fresh-snapshot', label: 'Fresh market snapshot (max 90s)' },
+  { id: 'directional-signal', label: 'Signal is directional, not NEUTRAL' },
+  { id: 'signal-current', label: 'Signal scanned on the latest snapshot' },
+  { id: 'new-evidence', label: 'New market evidence since last trade' },
+  { id: 'score', label: 'Signal score at or above threshold' },
+  { id: 'history-anchors', label: 'Continuous 1m, 5m and 15m history' },
+  { id: 'window-quality', label: 'Confirmation window intact (>=10 rows)' },
+  { id: 'price-alignment', label: 'Price aligned on 1m, 5m and 15m' },
+  { id: 'path-measurable', label: 'Price path measurable (hole <=25%)' },
+  { id: 'efficiency', label: 'Directional efficiency above floor' },
+  { id: 'breadth-momentum', label: 'Breadth and momentum both confirm' },
+  { id: 'anti-chase', label: 'Price not extended (no chasing)' },
+  { id: 'vision', label: 'Vision agrees with the direction' },
+  { id: 'execution-valid', label: 'Valid execution price, qty and risk' },
+  { id: 'risk-reward', label: 'Net reward/risk after charges' },
+  { id: 'risk-budget', label: 'Stop risk within remaining daily budget' },
+  { id: 'confirmation', label: 'Confirmed across 3 snapshots over 2m' }
+];
+
+const GATE_ORDER = new Map(MOMENTUM_GATES.map((g, i) => [g.id, i]));
+
+/**
+ * `blockedAt === null` means every gate passed. Otherwise everything before the
+ * blocking gate passed, and everything after it was never reached.
+ */
+function buildChecks(
+  blockedAt: string | null,
+  detail: string,
+  visionRequired: boolean
+): GateCheck[] {
+  const blockIndex = blockedAt === null ? Number.POSITIVE_INFINITY : (GATE_ORDER.get(blockedAt) ?? -1);
+  return MOMENTUM_GATES.map((gate, index) => {
+    let status: GateStatus =
+      index < blockIndex ? 'pass' : index === blockIndex ? 'block' : 'pending';
+    // Vision is only a gate when the user has switched it on; showing it as
+    // "passed" when it was never consulted would be a lie.
+    if (gate.id === 'vision' && !visionRequired && status === 'pass') status = 'skip';
+    return status === 'block' ? { ...gate, status, detail } : { ...gate, status };
+  });
+}
+
 export interface MomentumGate {
   ready: boolean;
   reason: string;
   candidate: MomentumCandidate | null;
   netRiskReward?: number;
+  /** Full checklist for display. Never used to decide anything. */
+  checks: GateCheck[];
+  /** Id of the gate that blocked, or null when all gates passed. */
+  blockedBy: string | null;
 }
 
 export interface MomentumGateInput {
@@ -147,38 +223,41 @@ export function evaluateMomentumEntry(
   input: MomentumGateInput,
   previous: MomentumCandidate | null
 ): MomentumGate {
-  const deny = (reason: string): MomentumGate => ({ ready: false, reason, candidate: null });
+  const deny = (reason: string, gate: string): MomentumGate => ({
+    ready: false, reason, candidate: null,
+    checks: buildChecks(gate, reason, input.requireVision), blockedBy: gate
+  });
   const { now, signal: s, history, spot } = input;
   const policy = MOMENTUM_POLICY;
-  if (!input.running) return deny('Engine stopped; entry confirmation reset.');
+  if (!input.running) return deny('Engine stopped; entry confirmation reset.', 'engine-running');
   if (input.tradingMode === 'LIVE') {
-    return deny('LIVE Momentum entries disabled: verified option quotes and broker fill reconciliation are required.');
+    return deny('LIVE Momentum entries disabled: verified option quotes and broker fill reconciliation are required.', 'paper-mode');
   }
-  if (!Number.isFinite(input.minConfidence)) return deny('Invalid minimum signal score.');
+  if (!Number.isFinite(input.minConfidence)) return deny('Invalid minimum signal score.', 'settings-valid');
   const maxDailyTrades = input.maxDailyTrades === undefined ? policy.maxDailyTrades : input.maxDailyTrades;
   if (!Number.isSafeInteger(maxDailyTrades) || maxDailyTrades < 1) {
-    return deny('Invalid daily entry limit; enter a positive whole number.');
+    return deny('Invalid daily entry limit; enter a positive whole number.', 'settings-valid');
   }
   const minutes = istMinutesOf(new Date(now));
   if (!isMarketLive(new Date(now)) || minutes < 9 * 60 + 30 || minutes >= 15 * 60) {
-    return deny('Entry window: 09:30-15:00 IST; wait outside the opening noise.');
+    return deny('Entry window: 09:30-15:00 IST; wait outside the opening noise.', 'entry-window');
   }
   if (input.openPositions > 0 || input.orders.some(o =>
     ['PENDING', 'PLACED', 'PARTIAL'].includes(o.status))) {
-    return deny('Position or unconfirmed order already open.');
+    return deny('Position or unconfirmed order already open.', 'flat-book');
   }
 
   const today = istDayKey(now);
   const orders = input.orders.filter(o => istDayKey(o.timestamp) === today);
   const buys = orders.filter(o => o.side === 'BUY' && o.status === 'FILLED');
-  if (buys.length >= maxDailyTrades) return deny(`Daily limit: ${maxDailyTrades} entries reached.`);
+  if (buys.length >= maxDailyTrades) return deny(`Daily limit: ${maxDailyTrades} entries reached.`, 'daily-limit');
   const trips = pairRoundTrips(orders, today);
   let netPnl = 0;
   let losses = 0;
   let lastNet = 0;
   for (const trip of trips) {
     if (![trip.entry, trip.exit, trip.qty].every(v => Number.isFinite(v) && v > 0)) {
-      return deny('Order book contains an unpriced fill; reconcile it before entering again.');
+      return deny('Order book contains an unpriced fill; reconcile it before entering again.', 'loss-limits');
     }
     lastNet = (trip.exit - trip.entry) * trip.qty
       - computeCharges(trip.entry, trip.qty, 'BUY', input.brokerage).total
@@ -186,33 +265,33 @@ export function evaluateMomentumEntry(
     netPnl += lastNet;
     losses = lastNet <= 0 ? losses + 1 : 0;
   }
-  if (netPnl <= -policy.maxDailyLoss) return deny(`Daily net loss limit reached (Rs ${policy.maxDailyLoss}).`);
+  if (netPnl <= -policy.maxDailyLoss) return deny(`Daily net loss limit reached (Rs ${policy.maxDailyLoss}).`, 'loss-limits');
   if (losses >= policy.maxConsecutiveLosses) {
-    return deny(`Stand down today: ${policy.maxConsecutiveLosses} consecutive net losses.`);
+    return deny(`Stand down today: ${policy.maxConsecutiveLosses} consecutive net losses.`, 'loss-limits');
   }
   const lastExit = trips[trips.length - 1]?.closedAt ?? 0;
   const cooldown = (lastNet <= 0 ? policy.lossCooldownMinutes : policy.cooldownMinutes) * MINUTE;
   const cooldownUntil = lastExit ? lastExit + cooldown : 0;
   if (now < cooldownUntil) {
-    return deny(`Post-${lastNet <= 0 ? 'loss' : 'exit'} cooldown: ${Math.ceil((cooldownUntil - now) / MINUTE)}m remaining.`);
+    return deny(`Post-${lastNet <= 0 ? 'loss' : 'exit'} cooldown: ${Math.ceil((cooldownUntil - now) / MINUTE)}m remaining.`, 'cooldown');
   }
   const lastAttempt = Math.max(0, ...orders.filter(o => o.side === 'BUY').map(o => o.timestamp));
-  if (now - lastAttempt < MINUTE) return deny('Entry attempt consumed; wait for a fresh setup before retrying.');
+  if (now - lastAttempt < MINUTE) return deny('Entry attempt consumed; wait for a fresh setup before retrying.', 'cooldown');
 
   const latest = history[0];
   const snapshotAt = latest?.timestamp;
   if (!Number.isFinite(spot) || !(spot! > 0) || !Number.isFinite(snapshotAt) ||
       now - snapshotAt! > policy.maxSnapshotAgeMs || snapshotAt! > now) {
-    return deny('Waiting for a fresh timestamped market snapshot (maximum age 90s).');
+    return deny('Waiting for a fresh timestamped market snapshot (maximum age 90s).', 'fresh-snapshot');
   }
-  if (!s || s.direction === 'NEUTRAL') return deny('No directional setup.');
-  if (input.signalAt !== snapshotAt) return deny('New market data arrived; waiting for a fresh signal scan.');
+  if (!s || s.direction === 'NEUTRAL') return deny('No directional setup.', 'directional-signal');
+  if (input.signalAt !== snapshotAt) return deny('New market data arrived; waiting for a fresh signal scan.', 'signal-current');
   if (snapshotAt! <= lastAttempt || snapshotAt! <= cooldownUntil) {
-    return deny('Waiting for new market evidence after the previous trade/cooldown.');
+    return deny('Waiting for new market evidence after the previous trade/cooldown.', 'new-evidence');
   }
   const threshold = Math.max(policy.minConfidence, input.minConfidence);
   if (!Number.isFinite(s.confidence) || s.confidence < threshold) {
-    return deny(`Signal score below ${threshold}; this score is not a win probability.`);
+    return deny(`Signal score below ${threshold}; this score is not a win probability.`, 'score');
   }
 
   // Use actual elapsed time, not the generator's assumption of five minutes per row.
@@ -225,7 +304,7 @@ export function evaluateMomentumEntry(
       snapshotAt! - one.timestamp! > 2.5 * MINUTE ||
       snapshotAt! - five.timestamp! > 6.5 * MINUTE ||
       snapshotAt! - fifteen.timestamp! > 16.5 * MINUTE) {
-    return deny('Warming up: need continuous, timestamped 1m, 5m and 15m market history.');
+    return deny('Warming up: need continuous, timestamped 1m, 5m and 15m market history.', 'history-anchors');
   }
   // A hole in the window does NOT invalidate the window.
   //
@@ -249,19 +328,19 @@ export function evaluateMomentumEntry(
     const row = window[i];
     if (!Number.isFinite(row.niftyLtp) || row.niftyLtp <= 0 ||
         !Number.isFinite(row.timestamp) || istDayKey(row.timestamp!) !== today) {
-      return deny('Invalid or previous-session data in the confirmation window.');
+      return deny('Invalid or previous-session data in the confirmation window.', 'window-quality');
     }
     if (i > 0) {
       const gap = window[i - 1].timestamp! - row.timestamp!;
       // Duplicate or out-of-order rows are corruption, not a dropped beat.
-      if (gap <= 0) return deny('Market history has duplicate or out-of-order timestamps.');
+      if (gap <= 0) return deny('Market history has duplicate or out-of-order timestamps.', 'window-quality');
       const step = Math.abs(window[i - 1].niftyLtp - row.niftyLtp);
       if (gap <= NOMINAL_GAP_MS) { observedPath += step; observedMs += gap; observedSteps++; }
       else { holeMs += gap; holePath += step; }
     }
   }
   if (window.length < MIN_WINDOW_ROWS) {
-    return deny(`Sparse market history: ${window.length} snapshots in the 15m window, need ${MIN_WINDOW_ROWS}.`);
+    return deny(`Sparse market history: ${window.length} snapshots in the 15m window, need ${MIN_WINDOW_ROWS}.`, 'window-quality');
   }
 
   const sign = s.direction === 'LONG' ? 1 : -1;
@@ -270,7 +349,10 @@ export function evaluateMomentumEntry(
   const move15 = sign * (latest.niftyLtp - fifteen.niftyLtp);
   // Evaluated before anything path-derived: a hole cannot affect these.
   if (move1 <= 0 || move5 < 5 || move15 < 8) {
-    return deny('Wait for aligned 1m, 5m and 15m price direction.');
+    return deny(
+      `Wait for aligned 1m, 5m and 15m price direction (now ${move1 >= 0 ? '+' : ''}${move1.toFixed(1)} / ${move5 >= 0 ? '+' : ''}${move5.toFixed(1)} / ${move15 >= 0 ? '+' : ''}${move15.toFixed(1)} pts, need >0 / >=5 / >=8).`,
+      'price-alignment'
+    );
   }
 
   // Past this fraction the estimate is mostly inference rather than data, and
@@ -278,19 +360,22 @@ export function evaluateMomentumEntry(
   // can deny — and it denies the path measurement, not the whole window.
   const spanMs = latest.timestamp! - fifteen.timestamp!;
   if (observedMs <= 0 || holeMs > spanMs * MAX_HOLE_FRACTION) {
-    return deny(`Price path unmeasurable: ${Math.round(holeMs / 1000)}s of the ${Math.round(spanMs / MINUTE)}m window is missing.`);
+    return deny(`Price path unmeasurable: ${Math.round(holeMs / 1000)}s of the ${Math.round(spanMs / MINUTE)}m window is missing.`, 'path-measurable');
   }
   const path = observedPath + Math.max(holePath, (observedPath / observedMs) * holeMs);
   const efficiency = path > 0 ? move15 / path : 0;
   if (path === 0 || efficiency < policy.minPathEfficiency) {
     // Report the measured figure: a 39% reading and a 6% reading are different
     // situations, and the old fixed message hid which one you were looking at.
-    return deny(`Choppy price path; directional efficiency ${(efficiency * 100).toFixed(0)}% below ${(policy.minPathEfficiency * 100).toFixed(0)}%.`);
+    return deny(`Choppy price path; directional efficiency ${(efficiency * 100).toFixed(0)}% below ${(policy.minPathEfficiency * 100).toFixed(0)}%.`, 'efficiency');
   }
   const m = s.metrics;
   if (![m.broadSentiment, m.optionFlowStrength, m.momentumScore].every(Number.isFinite) ||
       sign * m.broadSentiment < 5 || sign * m.momentumScore < 15) {
-    return deny('Breadth and momentum must both confirm the direction.');
+    return deny(
+      `Breadth and momentum must both confirm the direction (breadth ${(sign * m.broadSentiment).toFixed(0)} needs >=5, momentum ${(sign * m.momentumScore).toFixed(0)} needs >=15).`,
+      'breadth-momentum'
+    );
   }
   // Option flow is deliberately NOT a gate.
   //
@@ -312,11 +397,11 @@ export function evaluateMomentumEntry(
   const averageStep = observedSteps > 0 ? observedPath / observedSteps : 0;
   if (move1 > Math.max(12, averageStep * 2.5) ||
       Math.abs(spot! - latest.niftyLtp) > Math.max(8, averageStep * 1.5)) {
-    return deny('Price is extended or has moved away from the setup; do not chase.');
+    return deny('Price is extended or has moved away from the setup; do not chase.', 'anti-chase');
   }
 
   if (input.requireVision) {
-    if (input.visionError) return deny(`Vision required: ${input.visionError}`);
+    if (input.visionError) return deny(`Vision required: ${input.visionError}`, 'vision');
     const run = input.vision;
     const verdict = run?.analysis.parsed;
     const capturedAt = run ? Date.parse(run.startedAt) : NaN;
@@ -324,10 +409,10 @@ export function evaluateMomentumEntry(
         !Number.isFinite(capturedAt) || now - capturedAt > policy.maxVisionAgeMs || capturedAt > now ||
         !Number.isFinite(verdict.confidence) || verdict.confidence < 70 ||
         run.shots.length === 0 || run.shots.some(shot => !shot.ok || shot.awaitingLogin)) {
-      return deny('Vision required: waiting for a readable, successful chart capture less than 5m old.');
+      return deny('Vision required: waiting for a readable, successful chart capture less than 5m old.', 'vision');
     }
     if (verdict.bias !== (sign === 1 ? 'bullish' : 'bearish')) {
-      return deny(`Vision does not agree (${verdict.bias}); stand aside.`);
+      return deny(`Vision does not agree (${verdict.bias}); stand aside.`, 'vision');
     }
   }
 
@@ -335,7 +420,7 @@ export function evaluateMomentumEntry(
   if (![premium, quantity, targetPct, stopPct, brokerage].every(Number.isFinite) ||
       premium <= 0 || quantity <= 0 || !Number.isInteger(quantity) ||
       targetPct <= 0 || stopPct <= 0 || stopPct >= 100 || brokerage < 0) {
-    return deny('Invalid execution price, quantity or risk settings.');
+    return deny('Invalid execution price, quantity or risk settings.', 'execution-valid');
   }
   const target = premium * (1 + targetPct / 100);
   const stop = premium * (1 - stopPct / 100);
@@ -347,9 +432,9 @@ export function evaluateMomentumEntry(
     + computeCharges(stop, quantity, 'SELL', brokerage).total + (premium + stop) * quantity * 0.005;
   const netRiskReward = reward / risk;
   if (netRiskReward < policy.minNetRiskReward) {
-    return { ...deny(`Net reward/risk ${netRiskReward.toFixed(2)} below ${policy.minNetRiskReward} after charges and slippage.`), netRiskReward };
+    return { ...deny(`Net reward/risk ${netRiskReward.toFixed(2)} below ${policy.minNetRiskReward} after charges and slippage.`, 'risk-reward'), netRiskReward };
   }
-  if (risk > policy.maxDailyLoss + netPnl) return deny('Planned stop risk exceeds the remaining daily loss budget.');
+  if (risk > policy.maxDailyLoss + netPnl) return deny('Planned stop risk exceeds the remaining daily loss budget.', 'risk-budget');
 
   const same = previous?.direction === s.direction &&
     previous.firstAt > Math.max(lastAttempt, cooldownUntil) &&
@@ -358,10 +443,14 @@ export function evaluateMomentumEntry(
     ? { ...previous, lastAt: snapshotAt!, observations: previous.observations + (snapshotAt! > previous.lastAt ? 1 : 0) }
     : { direction: s.direction, firstAt: snapshotAt!, lastAt: snapshotAt!, observations: 1 };
   const ready = candidate.observations >= 3 && candidate.lastAt - candidate.firstAt >= policy.confirmationMinutes * MINUTE;
+  const reason = ready
+    ? `Confirmed across ${candidate.observations} fresh snapshots; net R:R ${netRiskReward.toFixed(2)}.`
+    : `Confirming direction: ${candidate.observations}/3 fresh snapshots over at least ${policy.confirmationMinutes}m.`;
   return {
-    ready, candidate, netRiskReward,
-    reason: ready
-      ? `Confirmed across ${candidate.observations} fresh snapshots; net R:R ${netRiskReward.toFixed(2)}.`
-      : `Confirming direction: ${candidate.observations}/3 fresh snapshots over at least ${policy.confirmationMinutes}m.`
+    ready, candidate, netRiskReward, reason,
+    // Every rule passed; only the multi-snapshot confirmation can still be
+    // outstanding, and that is progress rather than a rejection.
+    checks: buildChecks(ready ? null : 'confirmation', reason, input.requireVision),
+    blockedBy: ready ? null : 'confirmation'
   };
 }

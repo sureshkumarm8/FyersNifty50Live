@@ -11,7 +11,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, BarChart3, Gauge, Pause, Play, Settings2, TrendingDown, TrendingUp, Waves, Zap
+  Activity, BarChart3, Gauge, Pause, Play, Settings2, ShieldCheck, TrendingDown, TrendingUp, Waves, Zap
 } from 'lucide-react';
 import { FyersCredentials, MarketSnapshot, PivotPoints, VisionRun } from '../../types';
 import { OrderManager, Position } from '../../services/orderManager';
@@ -221,6 +221,7 @@ export const MomentumPanel: React.FC<Props> = ({
   const [running, setRunning] = useState(restored.running);
   const [settings, setSettings] = useState<MomentumSettings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
+  const [showGates, setShowGates] = useState(true);
   const [signal, setSignal] = useState<EnhancedSignal | null>(null);
   const [log, setLog] = useState<LogEntry[]>(restored.log);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -260,6 +261,8 @@ export const MomentumPanel: React.FC<Props> = ({
   inputsRef.current = { niftyLtp, historyLog, pivots };
   /** Last warm-up state logged, so a stalled feed is reported once, not every tick. */
   const warmupRef = useRef('');
+  /** Latches the stalled/recovered edge so a dead feed is announced once. */
+  const stalledRef = useRef(false);
 
   const addLog = useCallback((text: string, level: LogEntry['level'] = 'info') => {
     setLog(prev => [{ ts: Date.now(), text, level }, ...prev].slice(0, 150));
@@ -460,6 +463,24 @@ export const MomentumPanel: React.FC<Props> = ({
       return;
     }
     warmupRef.current = '';
+
+    // A stalled feed is a systemic fault, not a strategy decision. Once history
+    // is warm the old code said nothing about it, so a dead feed surfaced only
+    // as an ordinary-looking denial ("Waiting for a fresh timestamped market
+    // snapshot") that reads like the market being unexciting. Announce the
+    // transition in both directions instead.
+    const newest = history[0]?.timestamp ?? 0;
+    const ageMs = newest ? Date.now() - newest : Number.POSITIVE_INFINITY;
+    const stalled = ageMs > 2 * 60_000;
+    if (stalled !== stalledRef.current) {
+      stalledRef.current = stalled;
+      addLog(
+        stalled
+          ? `⚠️ Feed stalled — newest snapshot is ${Math.round(ageMs / 1000)}s old. No entry can clear the 90s freshness gate until snapshots resume.`
+          : '✅ Feed recovered — snapshots are arriving again.',
+        stalled ? 'bad' : 'good'
+      );
+    }
     const s = EnhancedSignalGenerator.generateSignal(
       history,
       piv?.s1 ?? ltp - 50,
@@ -879,6 +900,17 @@ export const MomentumPanel: React.FC<Props> = ({
   const qualifies = entryGate.ready;
   const m = signal?.metrics;
 
+  // A gate switched off by settings (Vision) is not a gate you can pass, so it
+  // must not sit in the denominator and make a clean run read as 24/25.
+  // Driven by the 1s `clock` so it counts up visibly while a feed is dying.
+  const feedAgeSec = Number.isFinite(historyLog[0]?.timestamp)
+    ? Math.max(0, Math.round((clock - historyLog[0].timestamp!) / 1000))
+    : null;
+
+  const blockingGate = entryGate.checks.find(c => c.status === 'block');
+  const gatesApplicable = entryGate.checks.filter(c => c.status !== 'skip').length;
+  const gatesPassed = entryGate.checks.filter(c => c.status === 'pass').length;
+
   return (
     <div className="space-y-4">
       {/* ---- header ---- */}
@@ -912,6 +944,11 @@ export const MomentumPanel: React.FC<Props> = ({
                 {historyLog.length >= MIN_HISTORY
                   ? `History ${historyLog.length}`
                   : `Warming up ${historyLog.length}/${MIN_HISTORY}`}
+              </Pill>
+              {/* The freshness gate rejects anything over 90s, so show the
+                  number that gate actually reads rather than a vague status. */}
+              <Pill tone={feedAgeSec === null ? 'muted' : feedAgeSec > 120 ? 'bad' : feedAgeSec > 90 ? 'warn' : 'good'}>
+                Feed {feedAgeSec === null ? '—' : `${feedAgeSec}s old`}
               </Pill>
             </div>
           </div>
@@ -965,6 +1002,76 @@ export const MomentumPanel: React.FC<Props> = ({
           LIVE entries are blocked until quote and fill verification exists. Stop pauses entries, not position protection.
         </p>
       </div>
+
+      {/*
+        Every gate, always visible.
+        ---------------------------
+        The log only ever printed the FIRST failing reason, so a run of
+        "Signal score below 68" hid the fact that four other gates were also
+        unsatisfied, and a passing gate was never acknowledged at all. There is
+        no second copy of the rules here: momentumEntryGuard returns the
+        checklist it actually walked, so this cannot drift from the decision.
+        "Not reached" is honest rather than decorative - the guard stops at the
+        first failure, so later gates genuinely were not evaluated.
+      */}
+      <Card
+        title="Entry gates"
+        icon={<ShieldCheck className="h-4 w-4 text-sky-400" />}
+        right={
+          <div className="flex items-center gap-2">
+            <Pill tone={entryGate.ready ? 'good' : 'warn'}>
+              {gatesPassed}/{gatesApplicable} passed
+            </Pill>
+            <button
+              onClick={() => setShowGates(v => !v)}
+              className="rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-400 transition hover:bg-slate-800"
+            >
+              {showGates ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        }
+      >
+        {!showGates ? (
+          <p className="text-xs text-slate-400">
+            {entryGate.ready
+              ? 'All gates passed — entry is armed.'
+              : <>Blocked at <span className="font-semibold text-rose-300">{blockingGate?.label ?? '—'}</span>: {entryGate.reason}</>}
+          </p>
+        ) : (
+          <ol className="space-y-1">
+            {entryGate.checks.map((check, index) => {
+              const tone =
+                check.status === 'pass' ? 'text-emerald-300'
+                : check.status === 'block' ? 'text-rose-300'
+                : 'text-slate-500';
+              const mark =
+                check.status === 'pass' ? '✓'
+                : check.status === 'block' ? '✕'
+                : check.status === 'skip' ? '–'
+                : '·';
+              return (
+                <li
+                  key={check.id}
+                  className={`flex gap-2 rounded-lg px-2 py-1 text-xs ${
+                    check.status === 'block' ? 'bg-rose-500/10' : ''
+                  }`}
+                >
+                  <span className="w-5 shrink-0 text-right tabular-nums text-slate-600">{index + 1}</span>
+                  <span className={`w-3 shrink-0 font-bold ${tone}`}>{mark}</span>
+                  <span className="min-w-0">
+                    <span className={check.status === 'pending' || check.status === 'skip' ? 'text-slate-500' : 'text-slate-200'}>
+                      {check.label}
+                    </span>
+                    {check.status === 'skip' && <span className="ml-1.5 text-slate-600">not required</span>}
+                    {check.status === 'pending' && <span className="ml-1.5 text-slate-600">not reached</span>}
+                    {check.detail && <span className="mt-0.5 block text-rose-300/90">{check.detail}</span>}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </Card>
 
       {showSettings && (
         <Card title="Momentum settings" icon={<Settings2 className="h-4 w-4 text-sky-400" />}>
