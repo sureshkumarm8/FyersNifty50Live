@@ -1557,15 +1557,29 @@ const App: React.FC = () => {
           // containing them — it denied two setups that had already cleared the
           // score threshold (10:35:57 at 68.2 and 10:43:30 at 69.6).
           //
-          // 55s rather than 60s so a beat arriving slightly early still counts;
-          // at a 30s refresh that yields one row per minute as intended, and
-          // after a stall the very next beat writes a row instead of waiting
-          // for the next boundary.
-          const lastLogTs = historyLog.length > 0 ? historyLog[0].timestamp : 0;
-          const sinceLastLog = Number.isFinite(lastLogTs) && lastLogTs > 0
-            ? Date.now() - lastLogTs
-            : Number.POSITIVE_INFINITY;
-          const dueForSnapshot = sinceLastLog >= 55_000;
+          // ...and then do not rate-limit the append at all: write on every
+          // successful beat and let `mergeSnapshots` keep exactly one row per
+          // minute.
+          //
+          // The old rule ("append only once 55s has elapsed") assumed a tidy
+          // 30s poll, but the poll jitters - measured 2026-09-23, consecutive
+          // fetches landed anywhere from 6s to 39s apart. A beat arriving at
+          // +52s was therefore skipped and the next one at +80s became the row,
+          // so row spacing wandered between 55s and ~124s. That straddles two
+          // separate 90s limits in momentumEntryGuard: `maxSnapshotAgeMs`
+          // (-> "Waiting for a fresh timestamped market snapshot") and
+          // NOMINAL_GAP_MS (-> the gap is charged as a hole, and enough of them
+          // gives "Price path unmeasurable"). On 2026-09-23 those two denials
+          // plus their knock-on effects killed 4 of 11 scans that had already
+          // cleared the score threshold, even though Redis held an unbroken
+          // series for the same period - the holes existed only in this array.
+          //
+          // Appending every beat cannot change the sampling rate the guard is
+          // calibrated for, because minuteKey() collapses each minute to a
+          // single row and `preferred` (the new snapshot) wins the collision.
+          // The row for a minute simply becomes the freshest reading in that
+          // minute instead of the oldest, so history[0] is now at most one poll
+          // old rather than up to two minutes old. Spacing stays ~60s.
 
           // On refresh / first launch the baseline refs (initial_* quantities)
           // are freshly seeded, so every delta-based metric is 0 for one beat —
@@ -1577,7 +1591,7 @@ const App: React.FC = () => {
           // marks the zero-baseline beat.
           const isZeroBaseline = adv === 0 && dec === 0;
 
-          if (dueForSnapshot && !isZeroBaseline) {
+          if (!isZeroBaseline) {
               const snapshot: MarketSnapshot = {
                   time: timeStr,
                   timestamp: Date.now(),
@@ -1621,7 +1635,10 @@ const App: React.FC = () => {
       refreshInFlightRef.current = false;
       setIsLoading(false);
     }
-  }, [credentials, isDbLoaded, historyLog, sessionHistory, stocks.length, runFeedbackLoop]); // Added runFeedbackLoop
+  // `historyLog` is deliberately absent: nothing here reads it any more (the
+  // append is unconditional and mergeSnapshots owns the one-row-per-minute
+  // rule), so keeping it only rebuilt this whole callback on every appended row.
+  }, [credentials, isDbLoaded, sessionHistory, stocks.length, runFeedbackLoop]);
 
   // Stable Interval Logic
   const refreshDataRef = useRef(refreshData);

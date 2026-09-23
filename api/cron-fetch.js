@@ -4,8 +4,11 @@
 import { Redis } from '@upstash/redis';
 
 // Import mapping data
-import { PAYTM_NIFTY50_MAP } from '../constants/paytmMappings.js';
-import { NIFTY_WEEKLY_OPTIONS, CURRENT_EXPIRY_FORMATTED } from '../constants/niftyWeeklyOptions.js';
+// Generated plain-JS mirrors of the .ts sources — this file is plain node and
+// cannot import TypeScript. See scripts/generateConstantsJs.cjs for why they
+// live in generated/ rather than beside the sources.
+import { PAYTM_NIFTY50_MAP } from '../constants/generated/paytmMappings.js';
+import { NIFTY_WEEKLY_OPTIONS, CURRENT_EXPIRY_FORMATTED } from '../constants/generated/niftyWeeklyOptions.js';
 
 // Convert PayTM quote to FyersQuote format
 function convertPayTMToFyersFormat(paytmQuote, mappingData, isOption = false) {

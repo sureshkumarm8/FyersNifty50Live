@@ -3,7 +3,7 @@ import type { MarketSnapshot, VisionRun, VisionVerdict } from '../types';
 import { EnhancedSignalGenerator, type EnhancedSignal } from '../services/enhancedSignalGenerator';
 import type { Order } from '../services/orderManager';
 import {
-  evaluateMomentumEntry, pairRoundTrips, MOMENTUM_POLICY,
+  evaluateMomentumEntry, pairRoundTrips, MOMENTUM_POLICY, MOMENTUM_GATES,
   type MomentumCandidate, type MomentumGateInput
 } from '../services/momentumEntryGuard';
 import { computeCharges } from '../services/paperTradingService';
@@ -700,6 +700,86 @@ test('pairRoundTrips sorts without mutation, filters day/status and preserves fi
   assert.deepEqual(pairRoundTrips(replacement, istDayKey(AT)), [
     { symbol: CE, entry: 100, exit: 120, qty: 25, at: AT - MINUTE, closedAt: AT }
   ]);
+});
+
+// --- the displayed checklist must describe the decision, not a second copy of it
+
+test('the gate checklist covers every gate, in order, exactly once', () => {
+  const ids = MOMENTUM_GATES.map(g => g.id);
+  assert.equal(new Set(ids).size, ids.length, 'gate ids must be unique');
+  const checks = evaluateMomentumEntry(input(), confirmed()).checks;
+  assert.deepEqual(checks.map(c => c.id), ids, 'checklist order must match MOMENTUM_GATES');
+  assert.ok(MOMENTUM_GATES.every(g => g.label.length > 0), 'every gate needs a human label');
+});
+
+test('a confirmed entry reports every gate passed and nothing blocking', () => {
+  const gate = evaluateMomentumEntry(input(), confirmed());
+  assert.equal(gate.ready, true, gate.reason);
+  assert.equal(gate.blockedBy, null);
+  assert.ok(gate.checks.every(c => c.status === 'pass' || c.status === 'skip'), 'no blocks when ready');
+  assert.equal(gate.checks.filter(c => c.status === 'block').length, 0);
+});
+
+test('exactly one gate blocks, earlier gates pass and later gates are not reached', () => {
+  // Score is the 13th gate: everything before it is satisfied by `input()`.
+  const weak = input();
+  weak.signal = { ...signal(), confidence: 10 };
+  const gate = evaluateMomentumEntry(weak, confirmed());
+  assert.equal(gate.ready, false);
+  assert.equal(gate.blockedBy, 'score');
+
+  const blocks = gate.checks.filter(c => c.status === 'block');
+  assert.equal(blocks.length, 1, 'the guard stops at the first failure');
+  assert.equal(blocks[0].id, 'score');
+  assert.match(blocks[0].detail ?? '', /Signal score below/);
+  assert.equal(blocks[0].detail, gate.reason, 'the blocking detail is the reason shown in the log');
+
+  const at = (id: string) => gate.checks.findIndex(c => c.id === id);
+  assert.ok(gate.checks.slice(0, at('score')).every(c => c.status === 'pass' || c.status === 'skip'));
+  assert.ok(gate.checks.slice(at('score') + 1).every(c => c.status === 'pending'),
+    'gates after the block were never evaluated and must not claim to have passed');
+});
+
+test('Vision is skipped when off and a real gate when on', () => {
+  const off = evaluateMomentumEntry(input(), confirmed());
+  assert.equal(off.checks.find(c => c.id === 'vision')?.status, 'skip');
+
+  const on = input();
+  on.requireVision = true;
+  const gate = evaluateMomentumEntry(on, confirmed());
+  assert.equal(gate.blockedBy, 'vision');
+  assert.equal(gate.checks.find(c => c.id === 'vision')?.status, 'block');
+});
+
+test('an outstanding multi-snapshot confirmation is reported as the blocking gate', () => {
+  const gate = evaluateMomentumEntry(input(), null);
+  assert.equal(gate.ready, false);
+  assert.equal(gate.blockedBy, 'confirmation');
+  assert.match(gate.reason, /Confirming direction: 1\/3/);
+  const at = gate.checks.findIndex(c => c.id === 'confirmation');
+  assert.equal(at, gate.checks.length - 1, 'confirmation is the last gate');
+  assert.ok(gate.checks.slice(0, at).every(c => c.status === 'pass' || c.status === 'skip'),
+    'every rule passed; only the confirmation count is outstanding');
+});
+
+test('blocking details quantify the price-alignment and breadth/momentum gates', () => {
+  // These two denials are the most common real blocks, so their messages have
+  // to say by how much they missed, not merely that they missed.
+  const flat = input();
+  flat.history = flat.history.map(h => ({ ...h, niftyLtp: 23500 }));
+  flat.spot = 23500;
+  const alignment = blocked(flat, /Wait for aligned 1m, 5m and 15m/);
+  assert.equal(alignment.blockedBy, 'price-alignment');
+  assert.match(alignment.reason, /need >0 \/ >=5 \/ >=8/);
+
+  const weakMomentum = input();
+  weakMomentum.signal = {
+    ...signal(),
+    metrics: { ...signal().metrics, momentumScore: 3 }
+  };
+  const confirm = blocked(weakMomentum, /Breadth and momentum must both confirm/);
+  assert.equal(confirm.blockedBy, 'breadth-momentum');
+  assert.match(confirm.reason, /momentum 3 needs >=15/);
 });
 
 console.log(`\n${passed} Momentum entry guard regression tests passed.`);

@@ -143,14 +143,14 @@ async function publishPaytmToken(token) {
 function warnOnStaleConstantMirrors() {
   for (const name of ['paytmMappings', 'niftyWeeklyOptions']) {
     const ts = join(__dirname, 'constants', `${name}.ts`);
-    const js = join(__dirname, 'constants', `${name}.js`);
+    const js = join(__dirname, 'constants', 'generated', `${name}.js`);
     try {
       if (!existsSync(js)) {
-        console.warn(`⚠️  constants/${name}.js is MISSING - run \`npm run generate:constants\`. The failover fetcher cannot load without it.`);
+        console.warn(`⚠️  constants/generated/${name}.js is MISSING - run \`npm run generate:constants\`. The failover fetcher cannot load without it.`);
         continue;
       }
       if (existsSync(ts) && statSync(ts).mtimeMs > statSync(js).mtimeMs) {
-        console.warn(`⚠️  constants/${name}.js is OLDER than its .ts source - run \`npm run generate:constants\` or the failover fetcher will use stale data.`);
+        console.warn(`⚠️  constants/generated/${name}.js is OLDER than its .ts source - run \`npm run generate:constants\` or the failover fetcher will use stale data.`);
       }
     } catch (err) {
       console.warn(`⚠️  Could not check constants/${name}: ${err.message}`);

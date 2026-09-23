@@ -31,25 +31,38 @@
  */
 
 const { transformSync } = require('esbuild');
-const { readFileSync, writeFileSync, statSync } = require('fs');
+const { readFileSync, writeFileSync, statSync, mkdirSync } = require('fs');
 const { join, basename } = require('path');
 
 const ROOT = join(__dirname, '..');
+
+/**
+ * Output goes in constants/generated/, NOT next to the .ts source.
+ *
+ * Vite's default resolve.extensions is ['.mjs', '.js', '.mts', '.ts', ...], so
+ * a sibling `paytmMappings.js` wins over `paytmMappings.ts` for the
+ * extensionless import in services/paytmService.ts — the entire frontend would
+ * silently switch to this generated copy, and editing the .ts without
+ * regenerating would leave the running app on stale option strikes. Keeping the
+ * mirrors in their own directory means nothing shadows anything.
+ */
+const OUT_DIR = join(ROOT, 'constants', 'generated');
 
 /** Sources that a plain-node handler needs to be able to import. */
 const SOURCES = ['constants/paytmMappings.ts', 'constants/niftyWeeklyOptions.ts'];
 
 const BANNER =
   '// GENERATED FILE - DO NOT EDIT.\n' +
-  '// Plain-JS mirror emitted from the .ts source by scripts/generateConstantsJs.cjs\n' +
+  '// Plain-JS mirror emitted from ../<name>.ts by scripts/generateConstantsJs.cjs\n' +
   '// so plain-node handlers (api/cron-fetch.js) can import it. Edit the .ts and\n' +
   '// run `npm run generate:constants`.\n';
 
 let failed = false;
+mkdirSync(OUT_DIR, { recursive: true });
 
 for (const rel of SOURCES) {
   const src = join(ROOT, rel);
-  const out = src.replace(/\.ts$/, '.js');
+  const out = join(OUT_DIR, basename(rel).replace(/\.ts$/, '.js'));
   try {
     const ts = readFileSync(src, 'utf8');
     // Type-stripping only: no bundling, no minifying, no syntax downlevelling,
@@ -61,7 +74,7 @@ for (const rel of SOURCES) {
     });
     writeFileSync(out, BANNER + code);
     const bytes = statSync(out).size;
-    console.log(`[constants] ${rel} -> ${basename(out)} (${(bytes / 1024).toFixed(1)} KB)`);
+    console.log(`[constants] ${rel} -> constants/generated/${basename(out)} (${(bytes / 1024).toFixed(1)} KB)`);
   } catch (err) {
     failed = true;
     console.error(`[constants] FAILED on ${rel}: ${err.message}`);

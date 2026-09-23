@@ -1,5 +1,5 @@
 // GENERATED FILE - DO NOT EDIT.
-// Plain-JS mirror emitted from the .ts source by scripts/generateConstantsJs.cjs
+// Plain-JS mirror emitted from ../<name>.ts by scripts/generateConstantsJs.cjs
 // so plain-node handlers (api/cron-fetch.js) can import it. Edit the .ts and
 // run `npm run generate:constants`.
 const CURRENT_EXPIRY_DATE = "2026-09-29";
