@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.33.0",
-    "@upstash/redis": "^1.37.0",
+    "@upstash/redis": "^1.39.0",
     "dotenv": "^17.4.2",
     "http-proxy": "^1.18.1",
     "lucide-react": "^0.344.0",
