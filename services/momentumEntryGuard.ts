@@ -25,7 +25,7 @@ const MAX_HOLE_FRACTION = 1 / 4;
 /** Minimum snapshots required in the ~15-minute window (nominally ~15). */
 const MIN_WINDOW_ROWS = 10;
 export const MOMENTUM_POLICY = {
-  minConfidence: 68,
+  minConfidence: 62,
   /**
    * Directional efficiency floor: move15 / path.
    *
@@ -59,7 +59,7 @@ export const MOMENTUM_POLICY = {
    * tuning can substitute for. Raise it back to 0.55 to restore the old
    * behaviour.
    */
-  minPathEfficiency: 0.40,
+  minPathEfficiency: 0.30,
   cooldownMinutes: 5,
   lossCooldownMinutes: 15,
   maxDailyTrades: 4,
@@ -348,9 +348,10 @@ export function evaluateMomentumEntry(
   const move5 = sign * (latest.niftyLtp - five.niftyLtp);
   const move15 = sign * (latest.niftyLtp - fifteen.niftyLtp);
   // Evaluated before anything path-derived: a hole cannot affect these.
-  if (move1 <= 0 || move5 < 5 || move15 < 8) {
+  const move1Floor = (move5 >= 12 && move15 >= 20) ? -2.0 : 0;
+  if (move1 <= move1Floor || move5 < 5 || move15 < 8) {
     return deny(
-      `Wait for aligned 1m, 5m and 15m price direction (now ${move1 >= 0 ? '+' : ''}${move1.toFixed(1)} / ${move5 >= 0 ? '+' : ''}${move5.toFixed(1)} / ${move15 >= 0 ? '+' : ''}${move15.toFixed(1)} pts, need >0 / >=5 / >=8).`,
+      `Wait for aligned 1m, 5m and 15m price direction (now ${move1 >= 0 ? '+' : ''}${move1.toFixed(1)} / ${move5 >= 0 ? '+' : ''}${move5.toFixed(1)} / ${move15 >= 0 ? '+' : ''}${move15.toFixed(1)} pts, need >${move1Floor} / >=5 / >=8).`,
       'price-alignment'
     );
   }

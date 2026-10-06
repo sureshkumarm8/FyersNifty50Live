@@ -432,8 +432,8 @@ test('a single dropped snapshot is tolerated; a stalled feed is not', () => {
 });
 
 test('the efficiency floor is policy-driven and reports what it measured', () => {
-  assert.equal(MOMENTUM_POLICY.minPathEfficiency, 0.40,
-    'deliberate loosening from 0.55 on 2026-09-22 evidence; see the policy comment');
+  assert.equal(MOMENTUM_POLICY.minPathEfficiency, 0.30,
+    'deliberate loosening from 0.40 on October 2026 logs evidence; see the policy comment');
 
   // Build a window whose net move is real but whose path zig-zags enough to
   // land under the floor, and check the denial names the measured figure.
@@ -443,7 +443,7 @@ test('the efficiency floor is policy-driven and reports what it measured', () =>
     // alignment legs pass, then zig-zag the middle to inflate `path` only.
     row.niftyLtp = 23500 - i * 2 + (i >= 6 && i % 2 ? 12 : 0);
   });
-  const r = blocked(choppy, /directional efficiency \d+% below 40%/);
+  const r = blocked(choppy, /directional efficiency \d+% below 30%/);
   assert.ok(/efficiency \d+%/.test(r.reason), `expected a measured %, got: ${r.reason}`);
 });
 

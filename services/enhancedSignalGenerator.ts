@@ -451,10 +451,10 @@ export class EnhancedSignalGenerator {
 
     if (diff > 20) {
       direction = 'LONG';
-      confidence = Math.min(100, 50 + (diff / 2));
+      confidence = Math.min(100, 50 + (diff * 0.8));
     } else if (diff < -20) {
       direction = 'SHORT';
-      confidence = Math.min(100, 50 + (Math.abs(diff) / 2));
+      confidence = Math.min(100, 50 + (Math.abs(diff) * 0.8));
     } else {
       confidence = Math.max(0, 40 - (Math.abs(diff) / 2));
     }

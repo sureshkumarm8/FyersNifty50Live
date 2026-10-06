@@ -200,7 +200,41 @@ export function buildOpeningRange(
     // history is newest-first; sort ascending so [0] really is the open.
     .sort((a, b) => (a.at as number) - (b.at as number));
 
-  if (stamped.length === 0) return null;
+  if (stamped.length === 0) {
+    if (istMinutesOf(now) >= ENTRY_OPEN) {
+      const todaySnaps = history
+        .map(s => ({ snap: s, at: snapshotMinutes(s), day: s.timestamp ? istDayKey(s.timestamp) : today }))
+        .filter(x => x.at !== null && x.day === today && (x.at as number) >= MARKET_OPEN && (x.at as number) <= ENTRY_CLOSE)
+        .sort((a, b) => (a.at as number) - (b.at as number));
+
+      if (todaySnaps.length >= 3) {
+        const earlySnaps = todaySnaps.slice(0, 10);
+        const earlyPrices = earlySnaps
+          .map(x => x.snap.niftyLtp)
+          .filter(p => typeof p === 'number' && isFinite(p) && p > 0);
+        if (earlyPrices.length >= 3) {
+          const high = Math.max(...earlyPrices);
+          const low = Math.min(...earlyPrices);
+          const open = earlyPrices[0];
+          let openType: OpeningRange['openType'] = 'FLAT';
+          if (prevClose && prevClose > 0) {
+            if (open > prevClose + SNIPER.targetPoints) openType = 'GAP_UP';
+            else if (open < prevClose - SNIPER.targetPoints) openType = 'GAP_DOWN';
+          }
+          return {
+            high,
+            low,
+            open,
+            ...deriveWalls(high, low),
+            openType,
+            samples: earlyPrices.length,
+            lockedAt: now.getTime()
+          };
+        }
+      }
+    }
+    return null;
+  }
 
   const prices = stamped
     .map(x => x.snap.niftyLtp)
