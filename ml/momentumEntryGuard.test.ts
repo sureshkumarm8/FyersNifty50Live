@@ -782,4 +782,101 @@ test('blocking details quantify the price-alignment and breadth/momentum gates',
   assert.match(confirm.reason, /momentum 3 needs >=15/);
 });
 
+test('super-trend relaxes efficiency hurdle from 0.30 to 0.20 when macro conviction aligns', () => {
+  // Construct a price history with 15m displacement = 25 pts, total path = 100 pts -> efficiency = 0.25 (25%)
+  const rows = history();
+  rows[0].niftyLtp = 23525;
+  rows[1].niftyLtp = 23523; // move1 = +2 (step 2)
+  rows[5].niftyLtp = 23517; // move5 = +8
+  rows[15].niftyLtp = 23500; // move15 = +25
+  // Fill intermediate rows so total observed path adds up to ~100
+  // Steps: 0->1 is 2. 1->2, 2->3, 3->4, 4->5
+  rows[2].niftyLtp = 23520;
+  rows[3].niftyLtp = 23522;
+  rows[4].niftyLtp = 23518;
+  // From 5 to 15 (10 intervals), alternate between 23510 and 23502
+  for (let idx = 6; idx < 15; idx++) {
+    rows[idx].niftyLtp = idx % 2 === 0 ? 23512 : 23504;
+  }
+  const base = input();
+  base.history = rows;
+  base.spot = rows[0].niftyLtp;
+
+  // Case A: Normal trend strength (80 < 85) -> blocked by path-efficiency hurdle 30%
+  base.signal = {
+    ...signal('LONG'),
+    confidence: 80,
+    metrics: { ...signal('LONG').metrics, trendStrength: 80, broadSentiment: 40 }
+  };
+  const normalResult = evaluateMomentumEntry(base, confirmed());
+  assert.equal(normalResult.ready, false);
+  assert.equal(normalResult.blockedBy, 'efficiency');
+  assert.match(normalResult.reason, /directional efficiency \d+% below 30%/i);
+
+  // Case B: Super-trend (trendStrength: 90 >= 85, broadSentiment: 45 >= 35, confidence: 85 >= 75)
+  // Hurdle relaxes to 20%, so ~25% passes!
+  base.signal = {
+    ...signal('LONG'),
+    confidence: 85,
+    metrics: { ...signal('LONG').metrics, trendStrength: 90, broadSentiment: 45, trend15m: 'BULLISH' }
+  };
+  const superResult = evaluateMomentumEntry(base, confirmed());
+  assert.equal(superResult.ready, true, `Super-trend should pass with efficiency >= 20%: ${superResult.reason}`);
+});
+
+test('fast-track confirmation permits entry on 2nd observation over 45s on super-conviction setup', () => {
+  const at = AT;
+  const i = input(at, 'LONG');
+  i.fastTrackConfirmation = true;
+  i.signal = {
+    ...signal('LONG'),
+    confidence: 95,
+    metrics: {
+      ...signal('LONG').metrics,
+      trendStrength: 98,
+      trend15m: 'BULLISH',
+      broadSentiment: 60
+    }
+  };
+
+  // 1st observation: candidate recorded, 1/2 confirming
+  const step1 = evaluateMomentumEntry(i, null);
+  assert.equal(step1.ready, false);
+  assert.equal(step1.blockedBy, 'confirmation');
+  assert.match(step1.reason, /Confirming direction: 1\/2/);
+  assert.equal(step1.candidate?.observations, 1);
+
+  // 2nd observation after 50 seconds (>= 45s): fast-track triggers entry!
+  const t2 = at + 50 * 1000;
+  const rows2 = history(t2, 'LONG');
+  const iStep2 = {
+    ...i,
+    now: t2,
+    signalAt: t2,
+    history: rows2,
+    spot: rows2[0].niftyLtp
+  };
+  const step2 = evaluateMomentumEntry(iStep2, step1.candidate);
+  assert.equal(step2.ready, true, `Fast-track should confirm after 2 observations: ${step2.reason}`);
+  assert.equal(step2.blockedBy, null);
+});
+
+test('macro retest allowance expands move1Floor to -4.0 pts when 5m/15m displacement is massive', () => {
+  const rows = history();
+  // 15m move = +30 (>= 25), 5m move = +18 (>= 15), but 1m move = -2.5 (a minor retest counter-wick)
+  rows[15].niftyLtp = 23470;
+  rows[5].niftyLtp = 23482;
+  rows[1].niftyLtp = 23502.5;
+  rows[0].niftyLtp = 23500; // 1m move = 23500 - 23502.5 = -2.5 pts
+
+  const i = input();
+  i.history = rows;
+  i.spot = rows[0].niftyLtp;
+
+  // With macro displacement (move5: 18, move15: 30), move1: -2.5 > move1Floor (-4.0), so price-alignment passes!
+  const res = evaluateMomentumEntry(i, confirmed());
+  assert.notEqual(res.blockedBy, 'price-alignment', `Retest wick should be tolerated under macro displacement: ${res.reason}`);
+  assert.equal(res.ready, true);
+});
+
 console.log(`\n${passed} Momentum entry guard regression tests passed.`);

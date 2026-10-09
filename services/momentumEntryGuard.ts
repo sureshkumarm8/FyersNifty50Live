@@ -213,6 +213,7 @@ export interface MomentumGateInput {
   minConfidence: number;
   maxDailyTrades?: number;
   brokerage: number;
+  fastTrackConfirmation?: boolean;
   requireVision: boolean;
   vision: VisionRun | null;
   visionError?: string | null;
@@ -348,7 +349,13 @@ export function evaluateMomentumEntry(
   const move5 = sign * (latest.niftyLtp - five.niftyLtp);
   const move15 = sign * (latest.niftyLtp - fifteen.niftyLtp);
   // Evaluated before anything path-derived: a hole cannot affect these.
-  const move1Floor = (move5 >= 12 && move15 >= 20) ? -2.0 : 0;
+  // In a powerful macro move (move15 >= 25 && move5 >= 15), a 3-4 point counter-wick is a normal retest of broken S/R.
+  // We expand the move1 floor to -4.0 points when macro displacement is deep, while requiring strict >0 on weaker moves.
+  const move1Floor = (move5 >= 15 && move15 >= 25)
+    ? -4.0
+    : (move5 >= 12 && move15 >= 20)
+      ? -2.0
+      : 0;
   if (move1 <= move1Floor || move5 < 5 || move15 < 8) {
     return deny(
       `Wait for aligned 1m, 5m and 15m price direction (now ${move1 >= 0 ? '+' : ''}${move1.toFixed(1)} / ${move5 >= 0 ? '+' : ''}${move5.toFixed(1)} / ${move15 >= 0 ? '+' : ''}${move15.toFixed(1)} pts, need >${move1Floor} / >=5 / >=8).`,
@@ -365,12 +372,26 @@ export function evaluateMomentumEntry(
   }
   const path = observedPath + Math.max(holePath, (observedPath / observedMs) * holeMs);
   const efficiency = path > 0 ? move15 / path : 0;
-  if (path === 0 || efficiency < policy.minPathEfficiency) {
+  
+  const m = s.metrics;
+  // Dynamic Efficiency Hurdle:
+  // In a normal or choppy market, require policy.minPathEfficiency (0.30).
+  // On a Super-Trend Day (Macro trend strength >= 85, 15m trend aligns, breadth sentiment >= 35),
+  // healthy staircase trends (impulse -> retest wick -> impulse) naturally dilute straight-line efficiency.
+  // We relax the hurdle dynamically to 0.20 to capture legitimate trend runners without chasing chop.
+  const isSuperTrend = (
+    s.confidence >= 75 &&
+    m.trend15m === (sign === 1 ? 'BULLISH' : 'BEARISH') &&
+    m.trendStrength >= 85 &&
+    sign * m.broadSentiment >= 35
+  );
+  const requiredEfficiency = isSuperTrend ? 0.20 : policy.minPathEfficiency;
+
+  if (path === 0 || efficiency < requiredEfficiency) {
     // Report the measured figure: a 39% reading and a 6% reading are different
     // situations, and the old fixed message hid which one you were looking at.
-    return deny(`Choppy price path; directional efficiency ${(efficiency * 100).toFixed(0)}% below ${(policy.minPathEfficiency * 100).toFixed(0)}%.`, 'efficiency');
+    return deny(`Choppy price path; directional efficiency ${(efficiency * 100).toFixed(0)}% below ${(requiredEfficiency * 100).toFixed(0)}%${isSuperTrend ? ' (macro trend-adjusted)' : ''}.`, 'efficiency');
   }
-  const m = s.metrics;
   if (![m.broadSentiment, m.optionFlowStrength, m.momentumScore].every(Number.isFinite) ||
       sign * m.broadSentiment < 5 || sign * m.momentumScore < 15) {
     return deny(
@@ -443,10 +464,26 @@ export function evaluateMomentumEntry(
   const candidate: MomentumCandidate = same
     ? { ...previous, lastAt: snapshotAt!, observations: previous.observations + (snapshotAt! > previous.lastAt ? 1 : 0) }
     : { direction: s.direction, firstAt: snapshotAt!, lastAt: snapshotAt!, observations: 1 };
-  const ready = candidate.observations >= 3 && candidate.lastAt - candidate.firstAt >= policy.confirmationMinutes * MINUTE;
+
+  // Fast-track confirmation:
+  // Standard requirement: 3 observations over at least policy.confirmationMinutes (2 minutes).
+  // Super-trend high conviction: If signal confidence >= 90%, trendStrength >= 95, and breadth >= 50,
+  // fast-track after 2 observations over at least 45 seconds so entry is not delayed past the impulse.
+  const isSuperConviction = Boolean(
+    input.fastTrackConfirmation &&
+    s.confidence >= 90 &&
+    m.trendStrength >= 95 &&
+    m.trend15m === (sign === 1 ? 'BULLISH' : 'BEARISH') &&
+    sign * m.broadSentiment >= 50
+  );
+  const requiredObservations = isSuperConviction ? 2 : 3;
+  const requiredDurationMs = isSuperConviction ? 45 * 1000 : policy.confirmationMinutes * MINUTE;
+
+  const ready = candidate.observations >= requiredObservations &&
+    candidate.lastAt - candidate.firstAt >= requiredDurationMs;
   const reason = ready
-    ? `Confirmed across ${candidate.observations} fresh snapshots; net R:R ${netRiskReward.toFixed(2)}.`
-    : `Confirming direction: ${candidate.observations}/3 fresh snapshots over at least ${policy.confirmationMinutes}m.`;
+    ? `Confirmed across ${candidate.observations} fresh snapshots (${isSuperConviction ? 'fast-track high conviction' : 'standard'}); net R:R ${netRiskReward.toFixed(2)}.`
+    : `Confirming direction: ${candidate.observations}/${requiredObservations} fresh snapshots over at least ${Math.round(requiredDurationMs / 1000)}s${isSuperConviction ? ' (fast-track)' : ''}.`;
   return {
     ready, candidate, netRiskReward, reason,
     // Every rule passed; only the multi-snapshot confirmation can still be

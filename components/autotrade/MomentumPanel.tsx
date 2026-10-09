@@ -22,6 +22,8 @@ import { estimateOptionPremium } from '../../services/optionPricing';
 import { istDayKey, istMinutesOf } from '../../services/sniperEngine';
 import { computeCharges, PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
 import { evaluateMomentumEntry, MOMENTUM_POLICY, MomentumCandidate, pairRoundTrips } from '../../services/momentumEntryGuard';
+import { evaluateTrailingStop, isTrailingStopTriggered } from '../../services/trailingStopEngine';
+import { playOrderFilledChime, playGateArmedChime } from '../../utils/audioChimes';
 import { scheduleBackground } from '../../services/heartbeat';
 import { visionService } from '../../services/visionService';
 import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
@@ -53,6 +55,10 @@ interface MomentumSettings {
   targetPct: number;
   stopPct: number;
   requireVision: boolean;
+  /** Dynamic Smart Trailing Stop (Breakeven + Chandelier trail). */
+  enableTrailing: boolean;
+  breakevenTriggerPct: number;
+  trailOffsetPct: number;
 }
 
 const DEFAULT_SETTINGS: MomentumSettings = {
@@ -65,7 +71,10 @@ const DEFAULT_SETTINGS: MomentumSettings = {
   itmOffset: 0,
   targetPct: 25,
   stopPct: 15,
-  requireVision: false
+  requireVision: false,
+  enableTrailing: true,
+  breakevenTriggerPct: 12,
+  trailOffsetPct: 8
 };
 
 function loadSettings(): MomentumSettings {
@@ -78,8 +87,7 @@ function loadSettings(): MomentumSettings {
     // otherwise survive the merge and turn every quantity into 0.
     const num = (v: unknown, fallback: number, min: number, max: number) =>
       typeof v === 'number' && isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
-    // The two new flags default ON for anyone whose settings predate them —
-    // `=== true` would leave every existing user with a silent engine.
+    // The flags default ON for anyone whose settings predate them
     const bool = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback);
     return {
       minConfidence: num(parsed.minConfidence, DEFAULT_SETTINGS.minConfidence, MOMENTUM_POLICY.minConfidence, 95),
@@ -92,7 +100,10 @@ function loadSettings(): MomentumSettings {
       autoExecute: parsed.autoExecute === true,
       autoPaperExecute: bool(parsed.autoPaperExecute, true),
       autoStart: bool(parsed.autoStart, true),
-      requireVision: bool(parsed.requireVision, false)
+      requireVision: bool(parsed.requireVision, false),
+      enableTrailing: bool(parsed.enableTrailing, true),
+      breakevenTriggerPct: num(parsed.breakevenTriggerPct, DEFAULT_SETTINGS.breakevenTriggerPct, 5, 50),
+      trailOffsetPct: num(parsed.trailOffsetPct, DEFAULT_SETTINGS.trailOffsetPct, 3, 30)
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -125,6 +136,9 @@ interface MomentumEntry {
   at?: number;
   targetPct?: number;
   stopPct?: number;
+  highWaterPremium?: number;
+  breakevenLocked?: boolean;
+  currentTrailingStop?: number | null;
 }
 
 interface MomentumSession {
@@ -427,7 +441,8 @@ export const MomentumPanel: React.FC<Props> = ({
       brokerage: paperTradingEngine.getBook().settings.brokeragePerOrder,
       requireVision: config.requireVision,
       vision: visionRef.current.run,
-      visionError: visionRef.current.error
+      visionError: visionRef.current.error,
+      fastTrackConfirmation: true
     }, candidateRef.current);
   }, [expiry]);
 
@@ -783,6 +798,7 @@ export const MomentumPanel: React.FC<Props> = ({
         setPositions(om.getPositions());
         setStats(p => ({ ...p, trades: p.trades + 1 }));
         addLog(`✅ Bought ${proposed.symbol} × ${proposed.qty} at spot ${fmt(spot)}`, 'good');
+        playOrderFilledChime();
         journalEntry(proposed.symbol, proposed.strike, proposed.optionType, fill, spot, s);
       } else {
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
@@ -828,6 +844,7 @@ export const MomentumPanel: React.FC<Props> = ({
             - computeCharges(pos.avgPrice, Math.abs(pos.quantity), 'BUY', brokerage).total
             - computeCharges(order.avgPrice, Math.abs(pos.quantity), 'SELL', brokerage).total;
           addLog(`🚪 Closed ${symbol} — ${reason} · net ${inr(netPnl)}`, netPnl > 0 ? 'good' : 'bad');
+          playOrderFilledChime();
           setStats(p => ({ ...p, wins: p.wins + (grossPnl > 0 ? 1 : 0), pnl: p.pnl + grossPnl }));
           // Journal before the metadata is dropped — the exit note is built from it.
           journalExit(symbol, order.avgPrice, reason, grossPnl, pnlPercent);
@@ -864,6 +881,27 @@ export const MomentumPanel: React.FC<Props> = ({
         const drift = (spot - meta.entry) * (meta.direction === 'LONG' ? 1 : -1);
         const premium = Math.max(1, p.avgPrice + drift * 0.5);
         om.updatePositionPnL(p.symbol, premium);
+
+        // Dynamic Smart Trailing Stop evaluation
+        const trailingState = evaluateTrailingStop(
+          p.avgPrice,
+          premium,
+          {
+            highWaterPremium: meta.highWaterPremium ?? p.avgPrice,
+            breakevenLocked: meta.breakevenLocked ?? false,
+            currentTrailingStop: meta.currentTrailingStop ?? null
+          },
+          {
+            enableTrailing: settingsRef.current.enableTrailing,
+            breakevenTriggerPct: settingsRef.current.breakevenTriggerPct,
+            trailOffsetPct: settingsRef.current.trailOffsetPct,
+            breakevenBufferPct: 1.5
+          }
+        );
+        meta.highWaterPremium = trailingState.highWaterPremium;
+        meta.breakevenLocked = trailingState.breakevenLocked;
+        meta.currentTrailingStop = trailingState.currentTrailingStop;
+
         // Keep the ledger's unrealised P&L and its high/low-water marks in step,
         // so the MFE/MAE on the closed row reflects the whole trade rather than
         // just the entry and exit prices. The engine never exits on these marks.
@@ -874,9 +912,16 @@ export const MomentumPanel: React.FC<Props> = ({
         const meta = entryRef.current[p.symbol];
         const targetPct = meta?.targetPct ?? settingsRef.current.targetPct;
         const stopPct = meta?.stopPct ?? settingsRef.current.stopPct;
-        if (istMinutesOf(new Date()) >= 15 * 60 + 15) closeSymbol(p.symbol, 'EOD market close');
-        else if (p.pnlPercent >= targetPct) closeSymbol(p.symbol, `target +${targetPct}%`);
-        else if (p.pnlPercent <= -stopPct) closeSymbol(p.symbol, `stop −${stopPct}%`);
+        if (istMinutesOf(new Date()) >= 15 * 60 + 15) {
+          closeSymbol(p.symbol, 'EOD market close');
+        } else if (p.pnlPercent >= targetPct) {
+          closeSymbol(p.symbol, `target +${targetPct}%`);
+        } else if (meta?.currentTrailingStop && p.ltp <= meta.currentTrailingStop) {
+          const lockedPct = (((meta.currentTrailingStop - p.avgPrice) / p.avgPrice) * 100).toFixed(1);
+          closeSymbol(p.symbol, `trailing stop ₹${meta.currentTrailingStop.toFixed(2)} (+${lockedPct}%)`);
+        } else if (p.pnlPercent <= -stopPct) {
+          closeSymbol(p.symbol, `stop −${stopPct}%`);
+        }
       });
       setPositions(om.getPositions());
     }, 3000);
@@ -990,88 +1035,112 @@ export const MomentumPanel: React.FC<Props> = ({
         </div>
       </div>
 
-      <div className="rounded-xl border border-sky-500/20 bg-slate-900 px-4 py-3 text-xs text-slate-300">
-        <p className="font-semibold">{entryGate.ready ? 'Ready: ' : 'Waiting: '}{entryGate.reason}</p>
-        <p className="mt-1 text-slate-500">
-          3 fresh observations / 2m minimum · 5m after profit / 15m after loss · maximum {settings.maxDailyTrades} entries/day ·
-          stop after 2 consecutive net losses or ₹2,000 net loss.
-          {settings.requireVision ? ' Fresh Vision agreement required.' : ' Vision agreement is OFF (enable in settings).'}
-        </p>
-        <p className="mt-1 text-amber-400/80">
-          PAPER entries only: premiums and P&amp;L marks are estimates, not executable option quotes.
-          LIVE entries are blocked until quote and fill verification exists. Stop pauses entries, not position protection.
-        </p>
-      </div>
-
-      {/*
-        Every gate, always visible.
-        ---------------------------
-        The log only ever printed the FIRST failing reason, so a run of
-        "Signal score below 68" hid the fact that four other gates were also
-        unsatisfied, and a passing gate was never acknowledged at all. There is
-        no second copy of the rules here: momentumEntryGuard returns the
-        checklist it actually walked, so this cannot drift from the decision.
-        "Not reached" is honest rather than decorative - the guard stops at the
-        first failure, so later gates genuinely were not evaluated.
-      */}
-      <Card
-        title="Entry gates"
-        icon={<ShieldCheck className="h-4 w-4 text-sky-400" />}
-        right={
+      {/* High-density, compact Entry Gates Panel */}
+      <section className="rounded-xl border border-slate-800/80 bg-slate-900/70 p-3 backdrop-blur shadow-sm">
+        {/* Compact Header: Title + Status + Progress + Toggle */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/60 pb-2">
           <div className="flex items-center gap-2">
-            <Pill tone={entryGate.ready ? 'good' : 'warn'}>
-              {gatesPassed}/{gatesApplicable} passed
-            </Pill>
+            <ShieldCheck className="h-4 w-4 text-sky-400 shrink-0" />
+            <span className="text-xs font-bold tracking-wide text-slate-200">Entry gates</span>
+            <span
+              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold border ${
+                entryGate.ready
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                  : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${entryGate.ready ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              {entryGate.ready ? 'ARMED' : 'WAITING'}
+            </span>
+            <span className="text-[10px] font-mono text-slate-400">
+              ({gatesPassed}/{gatesApplicable})
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline text-[10px] text-slate-500">
+              3 obs / 2m · max {settings.maxDailyTrades}/day · -₹2,000 limit
+            </span>
             <button
               onClick={() => setShowGates(v => !v)}
-              className="rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-400 transition hover:bg-slate-800"
+              className="rounded border border-slate-700/80 px-2 py-0.5 text-[10px] font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
             >
-              {showGates ? 'Hide' : 'Show'}
+              {showGates ? 'Compact' : 'Expand (15)'}
             </button>
           </div>
-        }
-      >
-        {!showGates ? (
-          <p className="text-xs text-slate-400">
-            {entryGate.ready
-              ? 'All gates passed — entry is armed.'
-              : <>Blocked at <span className="font-semibold text-rose-300">{blockingGate?.label ?? '—'}</span>: {entryGate.reason}</>}
-          </p>
-        ) : (
-          <ol className="space-y-1">
+        </div>
+
+        {/* 15-Segment Micro Progress Line */}
+        <div className="mt-2 flex items-center gap-0.5">
+          {entryGate.checks.map((c, i) => (
+            <div
+              key={c.id}
+              title={`${i + 1}. ${c.label} (${c.status})`}
+              className={`h-1 flex-1 rounded-full transition-all ${
+                c.status === 'pass'
+                  ? 'bg-emerald-400/80'
+                  : c.status === 'block'
+                  ? 'bg-rose-500 ring-1 ring-rose-400/50'
+                  : c.status === 'skip'
+                  ? 'bg-slate-700/30'
+                  : 'bg-slate-800'
+              }`}
+            />
+          ))}
+        </div>
+
+        {/* Inline Status / Blocking reason callout (single compact line) */}
+        <div className="mt-2 flex items-center justify-between text-[11px] leading-tight">
+          <div className="flex items-center gap-1.5 truncate text-slate-300">
+            {entryGate.ready ? (
+              <span className="text-emerald-300 font-medium">✓ All protocol gates passed — entry is armed.</span>
+            ) : (
+              <span className="truncate text-rose-300/90">
+                <span className="font-semibold text-rose-400">
+                  Blocked #{entryGate.checks.findIndex(c => c.id === blockingGate?.id) + 1} ({blockingGate?.label ?? '—'}):
+                </span>{' '}
+                <span className="text-slate-300">{entryGate.reason}</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* High-density grid of all 15 gates when expanded */}
+        {showGates && (
+          <div className="mt-2.5 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-1 pt-2 border-t border-slate-800/40">
             {entryGate.checks.map((check, index) => {
               const tone =
-                check.status === 'pass' ? 'text-emerald-300'
-                : check.status === 'block' ? 'text-rose-300'
+                check.status === 'pass' ? 'text-emerald-400'
+                : check.status === 'block' ? 'text-rose-400'
                 : 'text-slate-500';
               const mark =
                 check.status === 'pass' ? '✓'
                 : check.status === 'block' ? '✕'
                 : check.status === 'skip' ? '–'
                 : '·';
+              const bg =
+                check.status === 'block' ? 'bg-rose-500/15 border-rose-500/40 text-rose-200'
+                : check.status === 'pass' ? 'bg-emerald-500/5 border-emerald-500/20 text-slate-300'
+                : check.status === 'skip' ? 'bg-slate-900/30 border-slate-800/40 text-slate-500 opacity-60'
+                : 'bg-slate-900/40 border-slate-800/40 text-slate-500';
+
               return (
-                <li
+                <div
                   key={check.id}
-                  className={`flex gap-2 rounded-lg px-2 py-1 text-xs ${
-                    check.status === 'block' ? 'bg-rose-500/10' : ''
-                  }`}
+                  title={check.detail || `${check.label} (${check.status})`}
+                  className={`flex items-center justify-between gap-1 rounded border px-1.5 py-0.5 text-[10px] leading-none transition ${bg}`}
                 >
-                  <span className="w-5 shrink-0 text-right tabular-nums text-slate-600">{index + 1}</span>
-                  <span className={`w-3 shrink-0 font-bold ${tone}`}>{mark}</span>
-                  <span className="min-w-0">
-                    <span className={check.status === 'pending' || check.status === 'skip' ? 'text-slate-500' : 'text-slate-200'}>
-                      {check.label}
-                    </span>
-                    {check.status === 'skip' && <span className="ml-1.5 text-slate-600">not required</span>}
-                    {check.status === 'pending' && <span className="ml-1.5 text-slate-600">not reached</span>}
-                    {check.detail && <span className="mt-0.5 block text-rose-300/90">{check.detail}</span>}
-                  </span>
-                </li>
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="font-mono text-[9px] text-slate-500 shrink-0">{index + 1}</span>
+                    <span className="truncate">{check.label}</span>
+                  </div>
+                  <span className={`font-bold text-[11px] shrink-0 ${tone}`}>{mark}</span>
+                </div>
               );
             })}
-          </ol>
+          </div>
         )}
-      </Card>
+      </section>
 
       {showSettings && (
         <Card title="Momentum settings" icon={<Settings2 className="h-4 w-4 text-sky-400" />}>
@@ -1083,7 +1152,9 @@ export const MomentumPanel: React.FC<Props> = ({
                 ['lots', 'Lots per entry', 1, 20],
                 ['itmOffset', 'ITM offset (points)', 0, 500],
                 ['targetPct', 'Target (premium %)', 5, 100],
-                ['stopPct', 'Stop (premium %)', 5, 60]
+                ['stopPct', 'Stop (premium %)', 5, 60],
+                ['breakevenTriggerPct', 'Breakeven lock trigger (% gain)', 5, 50],
+                ['trailOffsetPct', 'Trailing offset from peak (%)', 3, 30]
               ] as const
             ).map(([key, label, min, max]) => (
               <label key={key} className="block">
@@ -1111,6 +1182,12 @@ export const MomentumPanel: React.FC<Props> = ({
               The daily entry limit is saved automatically and applies to today's existing trade count.
               Raising it does not bypass cooldowns, confirmation or loss protections.
             </p>
+            <Toggle
+              label="Dynamic Smart Trailing Stop (Breakeven + Chandelier)"
+              hint="Locks stop at Cost + 1.5% once gain reaches trigger %, then trails behind peak premium to prevent giving back profits."
+              checked={settings.enableTrailing}
+              onChange={v => setSettings(s => ({ ...s, enableTrailing: v }))}
+            />
             <Toggle
               label="Auto-start at market open"
               hint="Begins the 30s scan loop at 09:15 IST without anyone pressing Start."

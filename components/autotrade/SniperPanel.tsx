@@ -419,12 +419,26 @@ export const SniperPanel: React.FC<Props> = ({
   // --- the Download: lock the 09:15–09:25 range ------------------------------
   useEffect(() => {
     const now = new Date();
+    const today = istDayKey(now.getTime());
+    let savedRange: OpeningRange | null = null;
+    try {
+      const raw = localStorage.getItem(`sniper_range_${today}`);
+      if (raw) savedRange = JSON.parse(raw);
+    } catch {}
+
     const prevClose =
       historyLog.length > 0 && isFinite(historyLog[0].ptsChg)
         ? historyLog[0].niftyLtp - historyLog[0].ptsChg
         : null;
-    const built = buildOpeningRange(historyLog, prevClose, now);
+    const built = buildOpeningRange(historyLog, prevClose, now, savedRange);
     if (!built) return;
+
+    if (!savedRange && built.samples >= 3) {
+      try {
+        localStorage.setItem(`sniper_range_${today}`, JSON.stringify(built));
+      } catch {}
+    }
+
     setRange(prev => {
       if (prev && prev.high === built.high && prev.low === built.low && prev.samples === built.samples) {
         return prev;

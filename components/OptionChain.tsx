@@ -2,8 +2,9 @@
 import React, { useMemo } from 'react';
 import { SortConfig, SortField, EnrichedFyersQuote } from '../types';
 import { StockTable } from './StockTable';
-import { Target, Zap, Clock } from 'lucide-react';
+import { Target, Zap, Clock, ShieldAlert, Activity } from 'lucide-react';
 import { getNextExpiryDate, getFormattedExpiryDate } from '../constants/niftyExpiryDates';
+import { calculateGexProfile } from '../services/gammaExposure';
 
 interface OptionChainProps {
   quotes: EnrichedFyersQuote[];
@@ -30,6 +31,12 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
 
   // Get next expiry date from static calendar
   const nextExpiry = useMemo(() => getNextExpiryDate(), []);
+
+  // Calculate GEX Profile
+  const gexProfile = useMemo(() => {
+    if (!niftyLtp || niftyLtp <= 0 || quotes.length === 0) return null;
+    return calculateGexProfile(quotes, niftyLtp);
+  }, [quotes, niftyLtp]);
   
   // Check if we have no valid options data
   const hasNoData = quotes.length === 0 || quotes.every(q => q.lp === 0 && q.volume === 0);
@@ -153,6 +160,62 @@ export const OptionChain: React.FC<OptionChainProps> = ({ quotes, niftyLtp, last
             </div>
         </div>
       </div>
+
+      {/* GEX Profile & Zero-Gamma Flip Bar */}
+      {gexProfile && gexProfile.strikes.length > 0 && (
+        <div className="flex-none mb-3 p-3 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">GEX Regime</span>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wide border flex items-center gap-1 ${
+                gexProfile.regime === 'LONG_GAMMA'
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                  : gexProfile.regime === 'SHORT_GAMMA'
+                  ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                  : 'bg-slate-800 text-slate-300 border-slate-700'
+              }`}>
+                {gexProfile.regime === 'LONG_GAMMA' ? (
+                  <>🛡️ LONG GAMMA (Mean-Reverting)</>
+                ) : gexProfile.regime === 'SHORT_GAMMA' ? (
+                  <>⚡ SHORT GAMMA (High Volatility)</>
+                ) : (
+                  <>⚖️ NEUTRAL GAMMA</>
+                )}
+              </span>
+            </div>
+
+            <div className="hidden md:flex items-center gap-1.5 text-xs font-mono">
+              <span className="text-slate-500">Net GEX:</span>
+              <span className={`font-semibold ${gexProfile.netGexTotal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {gexProfile.netGexTotal >= 0 ? '+' : ''}{Math.round(gexProfile.netGexTotal).toLocaleString()} Cr
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs font-mono">
+            {gexProfile.zeroGammaFlipLevel && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase font-bold text-slate-400">Zero-Flip:</span>
+                <span className="text-amber-300 font-bold bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30 text-[11px]">
+                  ₹{Math.round(gexProfile.zeroGammaFlipLevel).toLocaleString()}
+                </span>
+              </div>
+            )}
+            {gexProfile.majorPutWallGex && (
+              <div className="hidden sm:flex items-center gap-1 text-[11px]">
+                <span className="text-slate-500">Put Wall (Floor):</span>
+                <span className="text-emerald-300 font-semibold">{gexProfile.majorPutWallGex}</span>
+              </div>
+            )}
+            {gexProfile.majorCallWallGex && (
+              <div className="hidden sm:flex items-center gap-1 text-[11px]">
+                <span className="text-slate-500">Call Wall (Cap):</span>
+                <span className="text-rose-300 font-semibold">{gexProfile.majorCallWallGex}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Table (Scrolling) */}
       <div className="flex-1 overflow-y-auto custom-scrollbar rounded-2xl border border-slate-800 bg-slate-900/40">

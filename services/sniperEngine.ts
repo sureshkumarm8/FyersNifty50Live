@@ -189,9 +189,19 @@ export function snapshotMinutes(snap: MarketSnapshot): number | null {
 export function buildOpeningRange(
   history: MarketSnapshot[],
   prevClose: number | null,
-  now: Date
+  now: Date,
+  persistedRange?: OpeningRange | null
 ): OpeningRange | null {
   const today = istDayKey(now.getTime());
+
+  // If a valid persisted opening range exists for today, keep it ready as fallback
+  const hasValidPersisted = Boolean(
+    persistedRange &&
+    persistedRange.high > 0 &&
+    persistedRange.low > 0 &&
+    persistedRange.lockedAt &&
+    istDayKey(persistedRange.lockedAt) === today
+  );
 
   const stamped = history
     .map(s => ({ snap: s, at: snapshotMinutes(s), day: s.timestamp ? istDayKey(s.timestamp) : today }))
@@ -201,6 +211,9 @@ export function buildOpeningRange(
     .sort((a, b) => (a.at as number) - (b.at as number));
 
   if (stamped.length === 0) {
+    if (hasValidPersisted) {
+      return persistedRange!;
+    }
     if (istMinutesOf(now) >= ENTRY_OPEN) {
       const todaySnaps = history
         .map(s => ({ snap: s, at: snapshotMinutes(s), day: s.timestamp ? istDayKey(s.timestamp) : today }))

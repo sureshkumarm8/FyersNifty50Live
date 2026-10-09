@@ -416,47 +416,9 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
 
   // --- LOCAL TESTING ENDPOINTS ---
   
-  // Get history from local storage
+  // Get history: always serve from Upstash Redis via the Vercel handler
   if (reqUrl.pathname === '/api/get-history' && req.method === 'GET') {
-    try {
-      const { limit = 500, latest = false } = Object.fromEntries(reqUrl.searchParams);
-      
-      console.log(`[Local] Get history request - limit: ${limit}, latest: ${latest}`);
-
-      if (latest === 'true') {
-        if (!localStore.latestSnapshot) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'No data available yet' }));
-          return;
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, data: localStore.latestSnapshot }));
-        return;
-      }
-
-      // The in-memory store is only ever filled by /api/save-history, which the
-      // SPA never calls - so locally this endpoint always 404'd while Redis held
-      // a full day of snapshots. That silently killed the one path that can
-      // refill a hole in momentum history after a reload or a feed stall, and
-      // made local behaviour diverge from the deployed app. Serve the same Redis
-      // the Vercel handler serves.
-      if (localStore.history.length === 0) {
-        await runVercelHandler('./api/get-history.js', req, res, reqUrl);
-        return;
-      }
-
-      const limitNum = Math.min(parseInt(limit), 1000);
-      const data = localStore.history.slice(0, limitNum);
-      
-      console.log(`[Local] Returning ${data.length} history items`);
-      
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, count: data.length, data }));
-    } catch (err) {
-      console.error('[Local] Get history error:', err);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
-    }
+    await runVercelHandler('./api/get-history.js', req, res, reqUrl);
     return;
   }
 

@@ -34,6 +34,11 @@ export interface EnhancedSignalMetrics {
   // Volatility
   volatility: number; // % change over period
   volatilityTrend: 'EXPANDING' | 'CONTRACTING' | 'STABLE';
+
+  // Order Flow & Liquidity Intelligence
+  absorptionScore?: number; // -100 to +100
+  liquiditySweep?: 'BEAR_TRAP' | 'BULL_TRAP' | 'NONE';
+  sweepLevel?: number;
   
   // Confidence Score
   overallConfidence: number; // 0-100
@@ -86,6 +91,13 @@ export class EnhancedSignalGenerator {
     // Calculate support/resistance from history
     const srLevels = this.calculateSRLevels(historyLog, pivotSupport, pivotResistance);
 
+    const absorptionAnalysis = this.analyzeAbsorption(
+      historyLog,
+      currentNiftyLtp,
+      sentimentAnalysis.callBuyPressure,
+      sentimentAnalysis.putBuyPressure
+    );
+
     // Combine all signals
     const metrics: EnhancedSignalMetrics = {
       ...trendAnalysis,
@@ -93,6 +105,7 @@ export class EnhancedSignalGenerator {
       ...momentumAnalysis,
       ...optionsAnalysis,
       ...volatilityAnalysis,
+      ...absorptionAnalysis,
       support: srLevels.support,
       resistance: srLevels.resistance,
       overallConfidence: 0, // Will calculate below
@@ -383,6 +396,59 @@ export class EnhancedSignalGenerator {
   }
 
   /**
+   * Analyze institutional order flow absorption and liquidity sweeps
+   */
+  private static analyzeAbsorption(
+    history: MarketSnapshot[],
+    currentSpot: number,
+    callBuyPressure: number,
+    putBuyPressure: number
+  ): {
+    absorptionScore: number;
+    liquiditySweep: 'BEAR_TRAP' | 'BULL_TRAP' | 'NONE';
+    sweepLevel?: number;
+  } {
+    if (history.length < 5) {
+      return { absorptionScore: 0, liquiditySweep: 'NONE' };
+    }
+
+    const recentSnaps = history.slice(0, 15);
+    const prices = recentSnaps.map(s => s.niftyLtp || 0).filter(p => p > 0);
+    if (prices.length < 3) {
+      return { absorptionScore: 0, liquiditySweep: 'NONE' };
+    }
+
+    const priorPrices = prices.slice(1);
+    const swingHigh = Math.max(...priorPrices);
+    const swingLow = Math.min(...priorPrices);
+    const latestPrice = prices[0];
+
+    // Bear trap: swept below recent swing low but recovered and call pressure dominant
+    if (latestPrice >= swingLow && (latestPrice - swingLow <= 4) && callBuyPressure > 15) {
+      return {
+        absorptionScore: Math.min(100, Math.round(50 + callBuyPressure * 0.5)),
+        liquiditySweep: 'BEAR_TRAP',
+        sweepLevel: swingLow
+      };
+    }
+
+    // Bull trap: swept above recent swing high but closed back below and put pressure dominant
+    if (latestPrice <= swingHigh && (swingHigh - latestPrice <= 4) && putBuyPressure > 15) {
+      return {
+        absorptionScore: Math.max(-100, Math.round(-50 - putBuyPressure * 0.5)),
+        liquiditySweep: 'BULL_TRAP',
+        sweepLevel: swingHigh
+      };
+    }
+
+    const baseAbsorption = Math.max(-100, Math.min(100, Math.round(callBuyPressure - putBuyPressure)));
+    return {
+      absorptionScore: baseAbsorption,
+      liquiditySweep: 'NONE'
+    };
+  }
+
+  /**
    * Make final signal decision
    * Balanced weights across 4 pillars: Trend 25%, Sentiment 25%, Options Flow 25%, Momentum 25%
    */
@@ -429,6 +495,15 @@ export class EnhancedSignalGenerator {
     } else if (metrics.momentumScore < -5) {
       bearishScore += (Math.abs(metrics.momentumScore) / 100) * 25;
       reasons.push(`Negative momentum (${metrics.momentumScore.toFixed(0)})`);
+    }
+
+    // Liquidity sweep bonus
+    if (metrics.liquiditySweep === 'BEAR_TRAP') {
+      bullishScore += 12;
+      reasons.push('Liquidity sweep / Bear trap: Sellers absorbed at support');
+    } else if (metrics.liquiditySweep === 'BULL_TRAP') {
+      bearishScore += 12;
+      reasons.push('Liquidity sweep / Bull trap: Buyers absorbed at resistance');
     }
 
     // Price near support/resistance
@@ -536,6 +611,8 @@ export class EnhancedSignalGenerator {
       resistance: 0,
       volatility: 0,
       volatilityTrend: 'STABLE',
+      absorptionScore: 0,
+      liquiditySweep: 'NONE',
       overallConfidence: 0,
       signalStrength: 'WEAK',
     };
