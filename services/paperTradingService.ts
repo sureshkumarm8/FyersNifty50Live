@@ -437,7 +437,11 @@ class PaperTradingEngine {
     }
     this.loaded = true;
     // Heal records written before `source`/`strategy` existed, once, on the way in.
-    if (backfillOwnership([...this.book.positions, ...this.book.trades])) this.persist();
+    let needsPersist = backfillOwnership([...this.book.positions, ...this.book.trades]);
+    if (this.pruneDuplicateTrades()) {
+      needsPersist = true;
+    }
+    if (needsPersist) this.persist();
     this.emit();
     return this.book;
   }
@@ -473,6 +477,92 @@ class PaperTradingEngine {
   private commit() {
     this.emit();
     this.persist();
+  }
+
+  /**
+   * Remove phantom duplicate trades caused by order reconciliation races.
+   *
+   * If a trade was recovered from the order book and inserted alongside its
+   * original live-recorded fill (or identical fill within 60 seconds), remove
+   * the recovered duplicate and reconcile realized P&L and charges.
+   */
+  public pruneDuplicateTrades(): boolean {
+    const trades = this.book.trades;
+    const toRemove = new Set<string>();
+
+    for (let i = 0; i < trades.length; i++) {
+      const t1 = trades[i];
+      if (toRemove.has(t1.id)) continue;
+
+      for (let j = i + 1; j < trades.length; j++) {
+        const t2 = trades[j];
+        if (toRemove.has(t2.id)) continue;
+
+        if (t1.symbol === t2.symbol) {
+          const entryDiff = Math.abs(t1.entryTime - t2.entryTime);
+          const exitDiff = Math.abs(t1.exitTime - t2.exitTime);
+          const samePrices =
+            Math.abs(t1.entryPrice - t2.entryPrice) < 0.05 &&
+            Math.abs(t1.exitPrice - t2.exitPrice) < 0.05;
+
+          // If entry is within 60s or exit is within 60s, and prices match
+          if ((entryDiff < 60_000 || exitDiff < 60_000) && samePrices) {
+            const t1Recovered = Boolean(
+              t1.tags?.includes('RECOVERED') ||
+              t1.notes?.includes('Recovered') ||
+              t1.entryReason?.includes('Recovered')
+            );
+            const t2Recovered = Boolean(
+              t2.tags?.includes('RECOVERED') ||
+              t2.notes?.includes('Recovered') ||
+              t2.entryReason?.includes('Recovered')
+            );
+
+            if (t1Recovered && !t2Recovered) {
+              toRemove.add(t1.id);
+            } else if (t2Recovered && !t1Recovered) {
+              toRemove.add(t2.id);
+            } else if (t1.id !== t2.id) {
+              // Prefer keeping the one with richer exit metadata
+              if (t1.exitReason === 'MANUAL' && t2.exitReason !== 'MANUAL') {
+                toRemove.add(t1.id);
+              } else if (t2.exitReason === 'MANUAL' && t1.exitReason !== 'MANUAL') {
+                toRemove.add(t2.id);
+              } else if (
+                t1.maxFavourable === 0 &&
+                t1.maxAdverse === 0 &&
+                (t2.maxFavourable !== 0 || t2.maxAdverse !== 0)
+              ) {
+                toRemove.add(t1.id);
+              } else if (
+                t2.maxFavourable === 0 &&
+                t2.maxAdverse === 0 &&
+                (t1.maxFavourable !== 0 || t1.maxAdverse !== 0)
+              ) {
+                toRemove.add(t2.id);
+              } else {
+                toRemove.add(t2.id);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (toRemove.size > 0) {
+      this.book.trades = this.book.trades.filter((t) => !toRemove.has(t.id));
+      this.book.realizedPnl = this.book.trades.reduce((s, t) => s + t.netPnl, 0);
+      const openCharges = this.book.positions.reduce(
+        (s, p) =>
+          s +
+          computeCharges(p.entryPrice, p.quantity, 'BUY', this.book.settings.brokeragePerOrder).total,
+        0
+      );
+      this.book.totalCharges =
+        this.book.trades.reduce((s, t) => s + t.charges, 0) + openCharges;
+      return true;
+    }
+    return false;
   }
 
   // --- settings ------------------------------------------------------------
@@ -723,6 +813,15 @@ class PaperTradingEngine {
     // effect can re-run on a re-render.
     if (this.book.positions.some((p) => p.symbol === symbol && isAutoTrade(p))) {
       return { ok: false, message: 'That auto-trade is already on the book.' };
+    }
+    const entryTimeToCheck = params.entryTime ?? Date.now();
+    if (
+      params.tags?.includes('RECOVERED') &&
+      this.book.trades.some(
+        (t) => t.symbol === symbol && Math.abs(t.entryTime - entryTimeToCheck) < 60_000
+      )
+    ) {
+      return { ok: false, message: 'That fill is already recorded in the paper ledger.' };
     }
 
     const lotSize = params.lotSize && params.lotSize > 0 ? params.lotSize : this.book.settings.lotSize;

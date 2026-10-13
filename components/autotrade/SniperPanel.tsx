@@ -734,7 +734,7 @@ export const SniperPanel: React.FC<Props> = ({
   tradingModeRef.current = tradingMode;
 
   const journalEntry = useCallback(
-    (setup: SniperSetup, premium: number) => {
+    (setup: SniperSetup, premium: number, entryTime?: number) => {
       if (tradingModeRef.current !== 'PAPER') {
         addLog('📒 Live fill — not written to the paper ledger (it tracks simulated capital only).', 'info');
         return;
@@ -768,6 +768,7 @@ export const SniperPanel: React.FC<Props> = ({
           expiry: setup.expiry,
           lots,
           entryPrice: premium,
+          entryTime: entryTime ?? Date.now(),
           spot: setup.entrySpot,
           tags,
           strategy: 'SNIPER',
@@ -948,7 +949,8 @@ export const SniperPanel: React.FC<Props> = ({
           `🎯 ENTERED ${setup.symbol} · ${qty} qty · spot ${fmt(setup.entrySpot)} → target ${fmt(setup.targetSpot)} / stop ${fmt(setup.stopSpot)}`,
           'good'
         );
-        journalEntry(setup, fill);
+        const order = om.getOrders().find(o => o.id === res.orderId);
+        journalEntry(setup, fill, order?.timestamp);
       } else {
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }

@@ -693,6 +693,29 @@ const App: React.FC = () => {
      initPivots();
   }, [credentials]);
 
+  // Fallback pivot derivation for Paytm provider using Nifty index price
+  useEffect(() => {
+    if (pivots || !niftyLtp || niftyLtp <= 0) return;
+    const estRange = niftyLtp * 0.007; // ~0.7% daily range (~150 pts)
+    const h = niftyLtp + estRange * 0.5;
+    const l = niftyLtp - estRange * 0.5;
+    const c = niftyLtp;
+    const p = (h + l + c) / 3;
+    const bc = (h + l) / 2;
+    const tc = (p - bc) + p;
+    setPivots({
+      pivot: Math.round(p * 100) / 100,
+      r1: Math.round(((2 * p) - l) * 100) / 100,
+      s1: Math.round(((2 * p) - h) * 100) / 100,
+      r2: Math.round((p + (h - l)) * 100) / 100,
+      s2: Math.round((p - (h - l)) * 100) / 100,
+      cpr_bc: Math.round(bc * 100) / 100,
+      cpr_tc: Math.round(tc * 100) / 100,
+      dayHigh: Math.round(h * 100) / 100,
+      dayLow: Math.round(l * 100) / 100
+    });
+  }, [niftyLtp, pivots]);
+
   // --- 1b. Restore today's snapshots from IndexedDB -------------------------
   // Every snapshot is written to IndexedDB below, but nothing ever read it back,
   // so a mid-session reload started from an empty history. The trading engines

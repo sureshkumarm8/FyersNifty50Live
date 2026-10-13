@@ -902,6 +902,87 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
       }
     });
   }
+  // Fyers Order Placement Proxy
+  else if (reqUrl.pathname === '/api/fyers/place-order' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const creds = payload.credentials || {};
+        const orderData = payload.order || {};
+        const appId = creds.appId || process.env.FYERS_CLIENT_ID;
+        const token = creds.accessToken || process.env.FYERS_ACCESS_TOKEN;
+
+        console.log(`[Fyers Order] Received order request: ${orderData.symbol} ${orderData.side === 1 ? 'BUY' : 'SELL'} ${orderData.qty} qty`);
+
+        if (!appId || !token) {
+          // If no live Fyers credentials, return simulated fill confirmation
+          const simId = `SIM-FY-${Date.now()}`;
+          console.log(`[Fyers Order] No credentials configured. Providing simulated fill ID: ${simId}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ s: 'ok', id: simId, message: 'Simulated broker placement (credentials absent)' }));
+          return;
+        }
+
+        const fyersResponse = await fetch('https://api-t1.fyers.in/api/v3/orders/sync', {
+          method: 'POST',
+          headers: {
+            'Authorization': `${appId.trim()}:${token.trim()}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(orderData)
+        });
+
+        const fyersResult = await fyersResponse.json();
+        console.log(`[Fyers Order] Broker response:`, fyersResult);
+        res.writeHead(fyersResponse.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(fyersResult));
+      } catch (err) {
+        console.error('[Fyers Order] Error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ s: 'error', message: err.message }));
+      }
+    });
+  }
+  // Paytm Order Placement Proxy
+  else if (reqUrl.pathname === '/api/paytm/place-order' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const token = process.env.PAYTM_ACCESS_TOKEN;
+        console.log(`[Paytm Order] Received order request:`, payload);
+
+        if (!token) {
+          const simId = `SIM-PM-${Date.now()}`;
+          console.log(`[Paytm Order] No token configured. Simulated fill ID: ${simId}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, order_id: simId, message: 'Simulated broker placement' }));
+          return;
+        }
+
+        const pmResponse = await fetch('https://developer.paytmmoney.com/orders/v1/place/regular', {
+          method: 'POST',
+          headers: {
+            'x-jwt-token': token,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const pmResult = await pmResponse.json();
+        console.log(`[Paytm Order] Broker response:`, pmResult);
+        res.writeHead(pmResponse.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(pmResult));
+      } catch (err) {
+        console.error('[Paytm Order] Error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: err.message }));
+      }
+    });
+  }
 
   /**
    * NOTHING MATCHED.

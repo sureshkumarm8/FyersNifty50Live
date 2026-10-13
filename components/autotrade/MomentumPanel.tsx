@@ -21,7 +21,7 @@ import { isMarketLive } from '../../services/marketSession';
 import { estimateOptionPremium } from '../../services/optionPricing';
 import { istDayKey, istMinutesOf } from '../../services/sniperEngine';
 import { computeCharges, PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
-import { evaluateMomentumEntry, MOMENTUM_POLICY, MomentumCandidate, pairRoundTrips } from '../../services/momentumEntryGuard';
+import { evaluateMomentumEntry, MOMENTUM_POLICY, MomentumCandidate, pairRoundTrips, findMissingRoundTrips } from '../../services/momentumEntryGuard';
 import { evaluateTrailingStop, isTrailingStopTriggered } from '../../services/trailingStopEngine';
 import { playOrderFilledChime, playGateArmedChime } from '../../utils/audioChimes';
 import { scheduleBackground } from '../../services/heartbeat';
@@ -29,7 +29,7 @@ import { visionService } from '../../services/visionService';
 import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
 import AutoTradeHistory from './AutoTradeHistory';
 
-export { pairRoundTrips } from '../../services/momentumEntryGuard';
+export { pairRoundTrips, findMissingRoundTrips } from '../../services/momentumEntryGuard';
 export type { RoundTrip } from '../../services/momentumEntryGuard';
 
 const LOT_SIZE = 75;
@@ -580,10 +580,7 @@ export const MomentumPanel: React.FC<Props> = ({
     if (pairs.length === 0) return;
 
     const book = await paperTradingEngine.load();
-    // Matched on the entry timestamp rather than the symbol: this engine re-enters
-    // the same strike repeatedly, so a symbol match would hide every re-entry.
-    const known = new Set(book.trades.map(t => `${t.symbol}@${t.entryTime}`));
-    const missing = pairs.filter(p => !known.has(`${p.symbol}@${p.at}`));
+    const missing = findMissingRoundTrips(pairs, book.trades, book.positions);
     if (missing.length === 0) return;
 
     let recovered = 0;
@@ -646,7 +643,8 @@ export const MomentumPanel: React.FC<Props> = ({
       optionType: 'CE' | 'PE',
       fill: number,
       spot: number,
-      s: EnhancedSignal
+      s: EnhancedSignal,
+      entryTime?: number
     ) => {
       if (tradingModeRef.current !== 'PAPER') {
         addLog('📒 Live fill — not written to the paper ledger (it tracks simulated capital only).', 'info');
@@ -685,6 +683,7 @@ export const MomentumPanel: React.FC<Props> = ({
           optionType,
           lots,
           entryPrice: fill,
+          entryTime: entryTime ?? Date.now(),
           spot,
           tags,
           strategy: 'MOMENTUM',
@@ -784,6 +783,7 @@ export const MomentumPanel: React.FC<Props> = ({
           addLog('Broker acknowledged the order; fill is unconfirmed. Further entries are blocked pending reconciliation.', 'warn');
           return;
         }
+        const orderTimestamp = order?.timestamp || Date.now();
         entryRef.current[proposed.symbol] = {
           entry: spot,
           direction: s.direction,
@@ -792,14 +792,14 @@ export const MomentumPanel: React.FC<Props> = ({
           confidence: s.confidence,
           strength: s.metrics.signalStrength,
           fill,
-          at: Date.now(),
+          at: orderTimestamp,
           ...plan
         };
         setPositions(om.getPositions());
         setStats(p => ({ ...p, trades: p.trades + 1 }));
         addLog(`✅ Bought ${proposed.symbol} × ${proposed.qty} at spot ${fmt(spot)}`, 'good');
         playOrderFilledChime();
-        journalEntry(proposed.symbol, proposed.strike, proposed.optionType, fill, spot, s);
+        journalEntry(proposed.symbol, proposed.strike, proposed.optionType, fill, spot, s, orderTimestamp);
       } else {
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }

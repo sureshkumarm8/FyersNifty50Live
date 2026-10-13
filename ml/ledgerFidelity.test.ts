@@ -12,7 +12,7 @@
  *    panel now does on mount, and what the pairing logic here is modelled on.
  */
 import { paperTradingEngine } from '../services/paperTradingService';
-import { pairRoundTrips } from '../components/autotrade/MomentumPanel';
+import { pairRoundTrips, findMissingRoundTrips } from '../components/autotrade/MomentumPanel';
 import { istDayKey } from '../services/sniperEngine';
 import { OrderManager } from '../services/orderManager';
 
@@ -110,15 +110,19 @@ async function run() {
   check('it is attributed to Momentum', lost.strategy === 'MOMENTUM' && lost.source === 'AUTOTRADE');
   check('and marked as recovered', lost.tags?.includes('RECOVERED') === true, String(lost.tags));
 
-  // The reconciler keys on symbol+entryTime so a re-entry into the same strike
-  // is never mistaken for an already-journaled trade.
-  const key = (t: { symbol: string; entryTime: number }) => `${t.symbol}@${t.entryTime}`;
-  const known = new Set(paperTradingEngine.getBook().trades.map(key));
-  check('an already-journaled pair is recognised', known.has(`${LOST}@${ENTRY_AT}`));
-  check(
-    'a later re-entry into the same strike is not',
-    !known.has(`${LOST}@${ENTRY_AT + 60_000}`)
+  // The reconciler matches with 60s tolerance so latency between order placement
+  // and ledger write does not cause duplicate phantom recoveries.
+  const matchedMissing = findMissingRoundTrips(
+    [{ symbol: LOST, entry: 80, exit: 92, qty: 75, at: ENTRY_AT - 1500, closedAt: EXIT_AT }],
+    paperTradingEngine.getBook().trades
   );
+  check('trade with 1.5s order latency is recognised as already journaled', matchedMissing.length === 0);
+
+  const trulyMissing = findMissingRoundTrips(
+    [{ symbol: 'NIFTY26091523900CE', entry: 50, exit: 60, qty: 75, at: ENTRY_AT, closedAt: EXIT_AT }],
+    paperTradingEngine.getBook().trades
+  );
+  check('a truly missing round trip is identified', trulyMissing.length === 1);
 
   // --- rebuilding the day from the order book -------------------------------
   const t0 = Date.now() - 60 * 60_000;
@@ -189,6 +193,61 @@ async function run() {
     check('reload preserves a priced exit, not a zero-price fill',
       restoredTrips.length === 1 && restoredTrips[0].entry === 80 && restoredTrips[0].exit === 100);
     check('the restored round trip keeps the cooldown timestamp', restoredTrips[0]?.closedAt > 0);
+
+    // --- duplicate pruning and prevention ---
+    const DUP_SYM = 'NIFTY26091522500CE';
+    const nowTs = Date.now();
+    await paperTradingEngine.openExternal({
+      symbol: DUP_SYM,
+      displayName: 'NIFTY 22500 CE',
+      strike: 22500,
+      optionType: 'CE',
+      lots: 1,
+      lotSize: 75,
+      entryPrice: 79.4,
+      entryTime: nowTs,
+      spot: 22500,
+      strategy: 'MOMENTUM',
+      tags: ['AUTOTRADE', 'MOMENTUM']
+    });
+    await paperTradingEngine.closeExternal(DUP_SYM, 116.48, 'TARGET', 22550, 'target', nowTs + 600_000);
+
+    // Defense-in-depth: openExternal blocks recovering a trade that is already recorded
+    const duplicateAttempt = await paperTradingEngine.openExternal({
+      symbol: DUP_SYM,
+      displayName: 'NIFTY 22500 CE',
+      strike: 22500,
+      optionType: 'CE',
+      lots: 1,
+      lotSize: 75,
+      entryPrice: 79.4,
+      entryTime: nowTs - 1000,
+      spot: null,
+      strategy: 'MOMENTUM',
+      tags: ['AUTOTRADE', 'MOMENTUM', 'RECOVERED']
+    });
+    check('openExternal blocks duplicate recovery when fill is already recorded', !duplicateAttempt.ok);
+
+    // Test pruning if a duplicate was previously persisted in the book
+    const originalTrade = paperTradingEngine.getBook().trades.find(t => t.symbol === DUP_SYM)!;
+    const fakeDuplicate = {
+      ...originalTrade,
+      id: 'fake-dup-id',
+      entryTime: nowTs - 1000,
+      exitTime: nowTs + 599_000,
+      exitReason: 'MANUAL' as const,
+      tags: ['AUTOTRADE', 'MOMENTUM', 'RECOVERED'],
+      notes: 'Recovered from the order book',
+      maxFavourable: 0,
+      maxAdverse: 0
+    };
+    paperTradingEngine.getBook().trades.push(fakeDuplicate);
+    const beforeCount = paperTradingEngine.getBook().trades.length;
+    const pruned = paperTradingEngine.pruneDuplicateTrades();
+    check('pruneDuplicateTrades identifies and removes the phantom duplicate', pruned);
+    check('trade count decreases by 1', paperTradingEngine.getBook().trades.length === beforeCount - 1);
+    check('the retained trade is the genuine TARGET exit',
+      paperTradingEngine.getBook().trades.find(t => t.symbol === DUP_SYM)?.exitReason === 'TARGET');
   } finally {
     Math.random = originalRandom;
     if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage);

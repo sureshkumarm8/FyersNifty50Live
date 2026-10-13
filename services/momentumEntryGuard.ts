@@ -106,6 +106,44 @@ export function pairRoundTrips(
   return pairs;
 }
 
+/**
+ * Identify completed round trips from the order book that have not reached the ledger.
+ *
+ * Rather than brittle exact-millisecond timestamp equality (which breaks when
+ * broker simulation latency delays the ledger write relative to the order timestamp),
+ * this uses a 60-second tolerance window and a 1-to-1 claiming pattern so multiple
+ * re-entries on the same symbol across the day are correctly distinguished.
+ */
+export function findMissingRoundTrips(
+  pairs: RoundTrip[],
+  ledgerTrades: Array<{ id?: string; symbol: string; entryTime: number; exitTime?: number }>,
+  openPositions: Array<{ symbol: string; entryTime: number }> = []
+): RoundTrip[] {
+  const claimedTradeIds = new Set<string>();
+  return pairs.filter(p => {
+    const match = ledgerTrades.find(t => {
+      const idKey = t.id || `${t.symbol}@${t.entryTime}`;
+      if (claimedTradeIds.has(idKey)) return false;
+      if (t.symbol !== p.symbol) return false;
+      const entryClose = Math.abs(t.entryTime - p.at) < 60_000;
+      const exitClose = t.exitTime != null && Math.abs(t.exitTime - p.closedAt) < 60_000;
+      return entryClose || exitClose;
+    });
+    if (match) {
+      claimedTradeIds.add(match.id || `${match.symbol}@${match.entryTime}`);
+      return false;
+    }
+    const openMatch = openPositions.find(pos =>
+      pos.symbol === p.symbol &&
+      Math.abs(pos.entryTime - p.at) < 60_000
+    );
+    if (openMatch) {
+      return false;
+    }
+    return true;
+  });
+}
+
 export interface MomentumCandidate {
   direction: 'LONG' | 'SHORT';
   firstAt: number;
