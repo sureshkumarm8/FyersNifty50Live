@@ -693,6 +693,29 @@ const App: React.FC = () => {
      initPivots();
   }, [credentials]);
 
+  // Fallback pivot derivation for Paytm provider using Nifty index price
+  useEffect(() => {
+    if (pivots || !niftyLtp || niftyLtp <= 0) return;
+    const estRange = niftyLtp * 0.007; // ~0.7% daily range (~150 pts)
+    const h = niftyLtp + estRange * 0.5;
+    const l = niftyLtp - estRange * 0.5;
+    const c = niftyLtp;
+    const p = (h + l + c) / 3;
+    const bc = (h + l) / 2;
+    const tc = (p - bc) + p;
+    setPivots({
+      pivot: Math.round(p * 100) / 100,
+      r1: Math.round(((2 * p) - l) * 100) / 100,
+      s1: Math.round(((2 * p) - h) * 100) / 100,
+      r2: Math.round((p + (h - l)) * 100) / 100,
+      s2: Math.round((p - (h - l)) * 100) / 100,
+      cpr_bc: Math.round(bc * 100) / 100,
+      cpr_tc: Math.round(tc * 100) / 100,
+      dayHigh: Math.round(h * 100) / 100,
+      dayLow: Math.round(l * 100) / 100
+    });
+  }, [niftyLtp, pivots]);
+
   // --- 1b. Restore today's snapshots from IndexedDB -------------------------
   // Every snapshot is written to IndexedDB below, but nothing ever read it back,
   // so a mid-session reload started from an empty history. The trading engines
@@ -1959,6 +1982,25 @@ const App: React.FC = () => {
            </div>
         </div>
       </header>
+
+      {/* --- Sticky Top Institutional HUD Ribbon --- */}
+      {niftyLtp !== null && niftyLtp > 0 && (
+        <div className="flex-none bg-slate-900/95 border-y border-white/10 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono shadow-inner z-10 backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            <span className="font-bold text-white flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+              NIFTY: <span className={(historyLog[0]?.ptsChg ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{niftyLtp.toFixed(2)} ({(historyLog[0]?.ptsChg ?? 0) >= 0 ? '+' : ''}{(historyLog[0]?.ptsChg ?? 0).toFixed(1)})</span>
+            </span>
+            <span className="text-slate-400 hidden sm:inline">PCR: <span className="text-amber-400 font-semibold">{historyLog[0]?.pcr?.toFixed(2) || '—'}</span></span>
+            <span className="text-slate-400 hidden md:inline">A/D: <span className="text-emerald-400 font-semibold">{historyLog[0]?.adv || 0}</span> / <span className="text-rose-400 font-semibold">{historyLog[0]?.dec || 0}</span></span>
+            <span className="text-slate-400 hidden lg:inline">Sentiment: <span className={(historyLog[0]?.overallSent ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{historyLog[0]?.overallSent?.toFixed(0) || 0}%</span></span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-slate-400">Desk: <span className="text-sky-300 font-semibold">Active Monitoring</span></span>
+            <span className="text-slate-400 hidden sm:inline">Mode: <span className="text-amber-300 font-semibold">PAPER (Zero Risk)</span></span>
+          </div>
+        </div>
+      )}
 
       {/* --- Main Content Area --- */}
       <main className="flex-1 overflow-hidden relative flex flex-col">

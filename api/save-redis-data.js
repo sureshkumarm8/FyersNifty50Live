@@ -39,14 +39,37 @@ export default async function handler(req, res) {
       });
     }
 
+    let finalOptions = options || [];
+    // If incoming snapshot has valid options, update the dedicated options cache
+    if (Array.isArray(finalOptions) && finalOptions.length > 0) {
+      try {
+        await redis.set('options:latest', JSON.stringify(finalOptions), { ex: 300 }); // 5 min TTL
+      } catch (err) {
+        console.warn('[Save Redis] Could not update options:latest cache:', err.message);
+      }
+    } else {
+      // If incoming options is empty, recover from dedicated cache
+      try {
+        const cachedOpts = await redis.get('options:latest');
+        if (cachedOpts) {
+          const parsed = typeof cachedOpts === 'string' ? JSON.parse(cachedOpts) : cachedOpts;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            finalOptions = parsed;
+          }
+        }
+      } catch (err) {
+        console.warn('[Save Redis] Could not fallback to options:latest:', err.message);
+      }
+    }
+
     const snapshot = {
       timestamp: Date.now(),
       istTime: new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
       niftyLTP: niftyLTP || 0,
       stocks,
-      options: options || [],
+      options: finalOptions,
       stockCount: stocks.length,
-      optionsCount: options?.length || 0,
+      optionsCount: finalOptions.length,
       source: 'frontend'
     };
 

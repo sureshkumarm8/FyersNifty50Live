@@ -938,7 +938,7 @@ const AILab: React.FC<AILabProps> = ({ currentSnapshot, niftyLtp, stocks, histor
         }
 
         // Convert CSV to snapshots with proper field mapping
-        const snapshots: MarketSnapshot[] = data.map((row: any, idx: number) => {
+        const snapshots: any[] = data.map((row: any, idx: number) => {
           let timestamp: number;
           const timeStr = row.timestamp || row.time;
           

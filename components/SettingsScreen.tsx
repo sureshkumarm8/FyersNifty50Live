@@ -287,7 +287,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     setClearMessage(null);
 
     try {
-      const apiUrl = import.meta.env.PROD 
+      const apiUrl = (import.meta as any).env?.PROD 
         ? 'https://fyers-nifty50-live.vercel.app/api/clear-history'
         : '/api/clear-history';
       

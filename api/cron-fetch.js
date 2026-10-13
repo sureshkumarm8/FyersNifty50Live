@@ -152,8 +152,8 @@ export default async function handler(req, res) {
     const timeVal = hour * 100 + min;
 
     const isWeekday = day >= 1 && day <= 5;
-    // Fetch right through to the 15:30 IST closing bell.
-    const isMarketHours = timeVal >= 917 && timeVal <= 1530;
+    // Fetch from pre-market (09:00 IST) through the 15:30 IST closing bell.
+    const isMarketHours = timeVal >= 900 && timeVal <= 1530;
 
     // Allow bypass for testing
     const bypassMarketHours = process.env.BYPASS_MARKET_HOURS === 'true';

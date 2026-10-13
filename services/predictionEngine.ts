@@ -191,7 +191,7 @@ export class PredictionEngine {
     // Filter similar trades
     const similarTrades = allTrades.filter(trade => {
       // Same direction
-      if (trade.direction !== tradeSetup.direction) return false;
+      if (trade.side !== tradeSetup.direction) return false;
       
       // Similar market conditions
       const priceDiff = Math.abs(trade.entryPrice - tradeSetup.entryPrice);

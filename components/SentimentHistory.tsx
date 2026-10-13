@@ -1,11 +1,12 @@
 
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { FyersCredentials, MarketSnapshot } from '../types';
 import { callAI } from '../services/aiProvider';
 import { GoogleGenAI } from "@google/genai";
 import { Clock, Activity, Bot, Send, X, MessageSquare, Loader2, Sparkles, ChevronRight, ChevronLeft, Download, Trash2 } from 'lucide-react';
 import { downloadCSV } from '../services/csv';
+import { dbService } from '../services/db';
 
 interface SentimentHistoryProps {
   history: MarketSnapshot[];
@@ -166,6 +167,26 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
       }
   };
 
+  const handlePurgeHistory = async () => {
+    if (!confirm("Purge pre-09:17 snapshot history and start clean?")) return;
+    try {
+      await fetch('/api/clear-history?action=all');
+      await dbService.clearTodayStores();
+      window.location.reload();
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  };
+
+  // Enforce session thumb rule: Day Sentiment starts from the 09:17 AM baseline anchor
+  const sessionHistory = useMemo(() => {
+    return history.filter(snap => {
+      if (!snap.time) return true;
+      const [h, m] = snap.time.split(':').map(Number);
+      return (h * 60 + m) >= (9 * 60 + 17);
+    });
+  }, [history]);
+
   return (
     <div className="flex h-full gap-4 overflow-hidden relative">
       
@@ -183,12 +204,21 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
                      {readOnly ? 'Shared minute history' : 'Live Feed (1 min)'}
                   </div>
                   <button 
-                      onClick={() => downloadCSV(history, 'market_history_log')}
+                      onClick={() => downloadCSV(sessionHistory, 'market_history_log')}
                       className="p-1.5 sm:p-2 rounded-lg bg-slate-800 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
                       title="Export CSV"
                   >
                       <Download size={14} className="sm:w-4 sm:h-4" />
                   </button>
+                  {!readOnly && (
+                    <button 
+                        onClick={handlePurgeHistory}
+                        className="p-1.5 sm:p-2 rounded-lg bg-slate-800 border border-white/10 text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                        title="Purge Pre-Market History"
+                    >
+                        <Trash2 size={14} className="sm:w-4 sm:h-4" />
+                    </button>
+                  )}
                   {!readOnly && <button
                     onClick={() => setIsAiOpen(!isAiOpen)}
                     disabled={aiEnabled === false}
@@ -222,7 +252,7 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
                    </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5 bg-slate-900/20">
-                   {history.map((snap, idx) => (
+                   {sessionHistory.map((snap, idx) => (
                      <tr key={idx} className="hover:bg-white/5 transition-colors group">
                         <td className="px-2 sm:px-4 py-2 sm:py-3 text-left font-bold text-slate-300 text-[10px] sm:text-sm font-mono border-r border-white/5 bg-slate-900/30 group-hover:text-blue-400">{snap.time}</td>
                         <td className="px-1 sm:px-2 py-2 sm:py-3 font-mono text-[10px] sm:text-sm text-slate-400 group-hover:text-white">{formatNumber(snap.niftyLtp)}</td>
@@ -249,9 +279,11 @@ export const SentimentHistory: React.FC<SentimentHistoryProps> = ({ history, cre
                         </td>
                      </tr>
                    ))}
-                   {history.length === 0 && (
+                   {sessionHistory.length === 0 && (
                       <tr>
-                         <td colSpan={12} className="py-12 sm:py-24 text-slate-600 font-mono uppercase tracking-widest text-[10px] sm:text-xs">Waiting for Market Snapshot...</td>
+                         <td colSpan={12} className="py-12 sm:py-24 text-slate-500 font-mono uppercase tracking-widest text-[10px] sm:text-xs">
+                           Waiting for Session Anchoring (Live ticks from 09:17 AM IST)...
+                         </td>
                       </tr>
                    )}
                 </tbody>
