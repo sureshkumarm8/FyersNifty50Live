@@ -291,8 +291,8 @@ const App: React.FC = () => {
                   // Build initial totals from oldest snapshot
                   let initialStockBuy = 0, initialStockSell = 0;
                   oldestStocks.forEach((s: any) => {
-                    initialStockBuy += s.total_buy_quantity || 0;
-                    initialStockSell += s.total_sell_quantity || 0;
+                    initialStockBuy += s.total_buy_qty || 0;
+                    initialStockSell += s.total_sell_qty || 0;
                   });
                   
                   let initialCallBuy = 0, initialCallSell = 0, initialPutBuy = 0, initialPutSell = 0;
@@ -300,11 +300,11 @@ const App: React.FC = () => {
                     const isCE = (opt.symbol || '').includes('CE');
                     const isPE = (opt.symbol || '').includes('PE');
                     if (isCE) {
-                      initialCallBuy += opt.total_buy_quantity || 0;
-                      initialCallSell += opt.total_sell_quantity || 0;
+                      initialCallBuy += opt.total_buy_qty || 0;
+                      initialCallSell += opt.total_sell_qty || 0;
                     } else if (isPE) {
-                      initialPutBuy += opt.total_buy_quantity || 0;
-                      initialPutSell += opt.total_sell_quantity || 0;
+                      initialPutBuy += opt.total_buy_qty || 0;
+                      initialPutSell += opt.total_sell_qty || 0;
                     }
                   });
                   
@@ -325,8 +325,8 @@ const App: React.FC = () => {
                     // Calculate CURRENT stock totals
                     let totalBuyQty = 0, totalSellQty = 0;
                     stocks.forEach((s: any) => {
-                      totalBuyQty += s.total_buy_quantity || 0;
-                      totalSellQty += s.total_sell_quantity || 0;
+                      totalBuyQty += s.total_buy_qty || 0;
+                      totalSellQty += s.total_sell_qty || 0;
                     });
                     
                     const stockSent = dayStrength(totalBuyQty, initialStockBuy, totalSellQty, initialStockSell);
@@ -340,12 +340,12 @@ const App: React.FC = () => {
                       const isPE = (opt.symbol || '').includes('PE');
                       
                       if (isCE) {
-                        callsBuyQty += opt.total_buy_quantity || 0;
-                        callsSellQty += opt.total_sell_quantity || 0;
+                        callsBuyQty += opt.total_buy_qty || 0;
+                        callsSellQty += opt.total_sell_qty || 0;
                         callsOI += opt.oi || 0;
                       } else if (isPE) {
-                        putsBuyQty += opt.total_buy_quantity || 0;
-                        putsSellQty += opt.total_sell_quantity || 0;
+                        putsBuyQty += opt.total_buy_qty || 0;
+                        putsSellQty += opt.total_sell_qty || 0;
                         putsOI += opt.oi || 0;
                       }
                     });
