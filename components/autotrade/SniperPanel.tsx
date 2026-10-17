@@ -148,6 +148,7 @@ export const SniperPanel: React.FC<Props> = ({
   latest.current = { niftyLtp, historyLog, pivots };
   const setupRef = useRef<SniperSetup | null>(null);
   setupRef.current = activeSetup;
+  const peakPointsRef = useRef<number>(0);
   const dayRef = useRef(dayState);
   dayRef.current = dayState;
 
@@ -577,6 +578,7 @@ export const SniperPanel: React.FC<Props> = ({
         hasOpenPosition: positions.length > 0,
         dailyTradeDone: dayState.tradeTaken,
         expiry,
+        pcr: historyLog[0]?.pcr ?? null,
         thesis: {
           support: thesis.support,
           resistance: thesis.resistance,
@@ -801,7 +803,7 @@ export const SniperPanel: React.FC<Props> = ({
     (symbol: string, premium: number, reason: string, pnl?: number) => {
       if (tradingModeRef.current !== 'PAPER') return;
       const r = reason.toLowerCase();
-      const mapped: PaperExitReason = r.includes('target')
+      const mapped: PaperExitReason = r.includes('target') || r.includes('trailing')
         ? 'TARGET'
         : r.includes('stop -') || r.includes('stop −') || r.includes('stoploss') || r.includes('stop loss')
           ? 'STOPLOSS'
@@ -899,22 +901,26 @@ export const SniperPanel: React.FC<Props> = ({
     // protocol's +30 / -30 decision, exactly as the manual system does.
     const setup = setupRef.current;
     if (setup && niftyLtp) {
+      const pointsMoved = Math.round((niftyLtp - setup.entrySpot) * (setup.direction === 'LONG' ? 1 : -1));
+      peakPointsRef.current = Math.max(peakPointsRef.current, pointsMoved);
       const premium = Math.max(
         1,
-        open[0].avgPrice + (niftyLtp - setup.entrySpot) * (setup.direction === 'LONG' ? 1 : -1) * SNIPER.itmDelta
+        open[0].avgPrice + pointsMoved * SNIPER.itmDelta
       );
       open.forEach(p => om.updatePositionPnL(p.symbol, premium));
       // Keep the paper ledger's unrealised P&L, high-water and low-water marks
       // in step. It never exits on these - the protocol's spot rules do.
       if (tradingModeRef.current === 'PAPER') paperTradingEngine.markExternal(open[0].symbol, premium);
-      const verdict = checkExit({ setup, spot: niftyLtp, now: new Date(tick) });
+      const verdict = checkExit({ setup, spot: niftyLtp, now: new Date(tick), peakPoints: peakPointsRef.current });
       if (verdict.exit) {
         const label =
           verdict.reason === 'TARGET'
             ? `target +${SNIPER.targetPoints} hit`
             : verdict.reason === 'STOP'
               ? `stop -${SNIPER.stopPoints} hit`
-              : `${SNIPER.hardStop} hard stop`;
+              : verdict.reason === 'TRAILING_STOP'
+                ? `trailing stop hit (+${verdict.pointsMoved} pts locked)`
+                : `${SNIPER.hardStop} hard stop`;
         closeSymbol(open[0].symbol, label);
         return;
       }
