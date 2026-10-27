@@ -18,6 +18,7 @@
 
 import { SNIPER } from './sniperPlaybook';
 import { MarketSnapshot } from '../types';
+import { resolveOptionSymbol } from './instrumentResolver';
 
 export type SniperPhase =
   | 'PRE_OPEN'      // before 09:15 - nothing to do
@@ -366,7 +367,18 @@ export function buildSetup(params: {
       ...reasons
     ],
     expiry,
-    symbol: `NIFTY${expiry}${strike}${isLong ? 'CE' : 'PE'}`,
+    symbol: (() => {
+      try {
+        return resolveOptionSymbol({
+          broker: 'FYERS',
+          expiry,
+          strike,
+          side: isLong ? 'CE' : 'PE'
+        }).tradableSymbol;
+      } catch {
+        return `NSE:NIFTY${expiry}${strike}${isLong ? 'CE' : 'PE'}`;
+      }
+    })(),
     createdAt: now.getTime()
   };
 }

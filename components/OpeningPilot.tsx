@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Download, Pause, Play, ShieldCheck } from 'lucide-react';
+import { BarChart3, Compass, Download, Gauge, History, Layers, Pause, Play, ShieldCheck } from 'lucide-react';
 import { FyersCredentials, FyersQuote, MarketSnapshot } from '../types';
 import { istDayKey, istMinutesOf } from '../services/sniperEngine';
 import { isMarketLive } from '../services/marketSession';
@@ -19,6 +19,16 @@ import { usePilotSources } from './openingPilot/usePilotSources';
 import { derivePilotSources, PilotSourceUpdate } from '../services/openingPilotSources';
 import { PilotSourceBoard } from './openingPilot/PilotSourceBoard';
 import { SentimentHistory } from './SentimentHistory';
+import { PilotCockpit, PilotTrackRecord } from './openingPilot/PilotCockpit';
+import { pilotPhase, pilotSignals, pilotTrackRecord } from '../services/openingPilotInsights';
+
+type PilotTab = 'cockpit' | 'evidence' | 'journal' | 'replay';
+const TABS: { key: PilotTab; label: string; icon: typeof Gauge }[] = [
+  { key: 'cockpit', label: 'Cockpit', icon: Gauge },
+  { key: 'evidence', label: 'Evidence', icon: Layers },
+  { key: 'journal', label: 'Accuracy & journal', icon: BarChart3 },
+  { key: 'replay', label: 'Replay', icon: History }
+];
 
 interface OpeningPilotProps {
   history: MarketSnapshot[];
@@ -77,7 +87,8 @@ export default function OpeningPilot({ history, quotes, active, feedPaused, refr
   const { book, loaded, writer, error, lockMessage, mutate } = usePilotBook();
   const [now, setNow] = useState(Date.now);
   const [recording, setRecording] = useState(false);
-  const [mode, setMode] = useState<'live' | 'replay'>('live');
+  const [tab, setTab] = useState<PilotTab>('cockpit');
+  const mode: 'live' | 'replay' = tab === 'replay' ? 'replay' : 'live';
   const [replayDay, setReplayDay] = useState('');
   const [journalDay, setJournalDay] = useState('');
   const [replayIndex, setReplayIndex] = useState(0);
@@ -151,6 +162,10 @@ export default function OpeningPilot({ history, quotes, active, feedPaused, refr
   const latestGift = book.observations.filter(o => o.day === today && o.recordedAt <= now && o.observedAt <= now && o.giftChange != null).at(-1);
   const indicativeScenario = latestPreOpen?.preOpen && context.plan
     ? classifyPilotGap(latestPreOpen.preOpen - context.plan.previousClose, context.plan) : null;
+  const phase = pilotPhase(now);
+  const signals = useMemo(() => pilotSignals(book.frames, now), [book.frames, now]);
+  const buckets = useMemo(() => pilotTrackRecord(signals), [signals]);
+  const readyRecord = buckets.find(b => b.status === 'PAPER ENTRY READY') ?? null;
   const disabled = !loaded || !writer;
   const entryDisabled = disabled || feedPaused || !isMarketLive(new Date(now)) || istMinutesOf(new Date(now)) < 565;
   const runAction = async (action: () => Promise<void>, message: string) => {
@@ -213,95 +228,124 @@ export default function OpeningPilot({ history, quotes, active, feedPaused, refr
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  const scenarioCard = displayedPlan && assessment.scenario && assessment.scenario !== 'OUTSIDE' ? <section className={panel}>
+    <h2 className="text-xs font-bold text-cyan-300">Your plan for {scenarioLabel[assessment.scenario]} / saved {clock(displayedPlan.savedAt)}</h2>
+    {displayedPlan.scenarios.filter(s => s.scenario === assessment.scenario).map(s => <div key={s.scenario} className="mt-2 space-y-1 text-xs">
+      <p className="text-slate-300">Expected: {s.expectation}</p><p className="text-emerald-300">Confirm: {s.confirmation}</p><p className="text-amber-300">Invalidate: {s.invalidation}</p>
+    </div>)}
+    <p className="mt-2 text-[11px] text-slate-500">Scenario notes are your checklist, not machine-evaluated rules.</p>
+  </section> : null;
+  const chart = <section className={panel}>
+    <div className="mb-2 flex items-baseline justify-between"><h2 className="text-sm font-bold text-white">Nifty / sampled price vs OI walls</h2>
+      <span className="text-[11px] text-slate-500">Range {num(assessment.openingLow)} - {num(assessment.openingHigh)}</span></div>
+    <PriceChart points={sampledPoints} support={assessment.support} resistance={assessment.resistance} />
+    <p className="mt-2 text-[11px] text-slate-500">Line samples, not OHLC candles. Gaps are not interpolated into trading evidence.</p>
+  </section>;
+
   return <div className="h-full overflow-y-auto bg-slate-950/40 p-3 md:p-5">
     <div className="mx-auto max-w-screen-2xl space-y-4">
-      <header className={`${panel} bg-gradient-to-r from-cyan-950/70 to-slate-900`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><h1 className="flex items-center gap-2 text-xl font-black text-white"><Compass className="text-cyan-400" size={24} /> Opening Pilot <span className="rounded-full bg-cyan-500/15 px-2 py-1 text-[10px] tracking-wider text-cyan-300">EXPERIMENT</span></h1>
-            <p className="mt-1 text-xs text-slate-400">Your existing PreMkt analysis + minute history + Vision, connected into one opening workflow.</p></div>
-          <div className="flex flex-wrap gap-2">
-            <button className={buttonClass} disabled={disabled} onClick={() => setRecording(v => !v)}>{recording ? <Pause size={12} className="mr-1 inline" /> : <Play size={12} className="mr-1 inline" />}{recording ? 'Pause evidence recording' : 'Record live evidence'}</button>
-            <button className={buttonClass} disabled={!loaded} onClick={exportJournal}><Download size={12} className="mr-1 inline" />Export journal</button>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-xl font-black text-white"><Compass className="text-cyan-400" size={24} /> Opening Pilot <span className="rounded-full bg-cyan-500/15 px-2 py-1 text-[10px] tracking-wider text-cyan-300">EXPERIMENT</span></h1>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+            <span className="flex items-center gap-1 text-emerald-300"><ShieldCheck size={12} />Paper only / no broker orders</span>
+            <span className={feedPaused ? 'text-amber-300' : 'text-slate-400'}>{feedPaused ? 'Shared feed paused' : `Feed ${num(refreshInterval / 1000, 0)}s / evidence 1/min`}</span>
+            <span className="text-slate-400">{today} / {clock(now)} IST</span>
+            <span className={recording && writer ? 'text-cyan-300' : 'text-slate-500'}>{recording && writer ? '● Recording' : '○ Not recording'}</span>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
-          <span className="flex items-center gap-1 text-emerald-300"><ShieldCheck size={13} />Paper only / no broker orders</span>
-          <span className={feedPaused ? 'text-amber-300' : 'text-slate-400'}>{feedPaused ? 'Shared feed paused' : `Shared refresh: ${num(refreshInterval / 1000, 0)}s / evidence: once per minute`}</span>
-          <span className="text-slate-400">{mode === 'live' ? `${today} / ${clock(now)} IST` : 'REPLAY / frozen evidence only'}</span>
+        <div className="flex flex-wrap gap-2">
+          <button className={buttonClass} disabled={disabled} onClick={() => setRecording(v => !v)}>{recording ? <Pause size={12} className="mr-1 inline" /> : <Play size={12} className="mr-1 inline" />}{recording ? 'Pause evidence recording' : 'Record live evidence'}</button>
+          <button className={buttonClass} disabled={!loaded} onClick={exportJournal}><Download size={12} className="mr-1 inline" />Export journal</button>
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-slate-500">Sampled-price simulator: provider timestamps can be approximations; quotes are not verified executable fills. Monitoring continues across app tabs, not while the browser is closed or suspended. Missing samples cannot establish which intraminute exit happened first. No automatic 20-minute exit.</p>
       </header>
       {lockMessage && <p role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">{lockMessage}</p>}
       {error && <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">{error} No failed transaction is treated as a saved fill.</p>}
       {notice && <p role="status" className="rounded-xl border border-white/10 bg-slate-900 p-3 text-sm text-slate-200">{notice}</p>}
       {!loaded ? <p className="p-4 text-sm text-slate-400">{error ? 'Pilot data could not be loaded. Existing storage has been preserved.' : 'Loading the isolated pilot journal...'}</p> : <>
-        <nav className="flex flex-wrap items-center gap-2">
-          <button className={`${buttonClass} ${mode === 'live' ? 'border-cyan-500 text-cyan-300' : ''}`} onClick={() => setMode('live')}>Live workspace</button>
-          <button className={`${buttonClass} ${mode === 'replay' ? 'border-cyan-500 text-cyan-300' : ''}`} onClick={() => { setMode('replay'); setReplayIndex(0); }}>Evidence replay</button>
-          <span className="text-xs text-slate-500">Recording: {recording && writer ? 'on' : 'off'}. Position exits are monitored independently of recording.</span>
+        <nav className="flex gap-1 overflow-x-auto rounded-xl border border-white/10 bg-slate-900/70 p-1" role="tablist">
+          {TABS.map(({ key, label, icon: Icon }) => <button key={key} role="tab" aria-selected={tab === key}
+            className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition ${tab === key ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+            onClick={() => { setTab(key); if (key === 'replay') setReplayIndex(0); }}>
+            <Icon size={14} />{label}{key === 'journal' && readyRecord?.signals ? <span className="rounded-full bg-slate-950/60 px-1.5 font-mono text-[10px]">{readyRecord.signals}</span> : null}
+          </button>)}
         </nav>
-        {mode === 'live' ? <>
-          <div className="grid gap-2 sm:grid-cols-4">{[['08:55', 'Prepare five scenarios'], ['09:10', 'Observe pre-open + GIFT'], ['09:15', 'Read price + sentiment'], ['09:25+', 'Confirm or stand aside']].map(([time, label]) => <div key={time} className="rounded-xl border border-white/10 bg-slate-900 p-3"><b className="text-xs text-cyan-300">{time} IST</b><p className="text-xs text-slate-400">{label}</p></div>)}</div>
+
+        {tab === 'cockpit' && <>
+          <PilotCockpit assessment={liveAssessment} phase={phase} live readyRecord={readyRecord} positionOpen={!!book.position} />
+          <div className="grid gap-4 xl:grid-cols-3">
+            <div className="space-y-4 xl:col-span-2">{chart}{scenarioCard}</div>
+            <div className="space-y-4">
+              {book.position
+                ? <PilotPositionCard key={book.position.id} position={book.position} now={now} disabled={disabled} onClose={close} onReconcile={reconcile} />
+                : <PilotTicket quotes={quotes} assessment={liveAssessment} now={now} disabled={entryDisabled} onBuy={buy} onSkip={skip} />}
+              {entryDisabled && !book.position && <p className="text-xs text-amber-300">Paper entries require the active shared feed, this tab's writer lock, and market hours from 09:25 IST. Freshness and sizing checks still apply.</p>}
+            </div>
+          </div>
+        </>}
+
+        {tab === 'evidence' && <>
           <PilotSourceBoard shared={shared} update={sourceUpdate} plan={context.plan} observation={context.observation}
             history={history} now={now} onNavigate={onNavigate} />
-          <details className={panel}><summary className="cursor-pointer text-xs text-slate-500">Optional manual fallback / only for missing source data</summary>
-            <p className="my-3 text-xs text-slate-500">No re-entry is needed when the source screens have data. A shared PreMkt plan takes priority over a manual plan. A newer manual wall observation is explicitly journalled as manual.</p>
-            <PlanEditor key={`${today}:${context.plan?.id ?? 'draft'}`} day={today} initial={context.plan} disabled={disabled || context.plan?.source?.kind === 'PREMARKET'} onSave={savePlan} />
-            <div className="mt-3"><ObservationEditor key={today} day={today} initial={context.observation} disabled={disabled} onSave={saveObservation} /></div>
-          </details>
           <div className={`${panel} grid gap-3 text-xs sm:grid-cols-3`}>
             <div className="text-slate-400">Indicative pre-open: <b className="text-white">{num(latestPreOpen?.preOpen)}</b><p>{indicativeScenario ? scenarioLabel[indicativeScenario] : 'No saved pre-open comparison'}{latestPreOpen ? ` / observed ${clock(latestPreOpen.observedAt)}` : ''}</p></div>
             <div className="text-slate-400">GIFT reported change: <b className="text-white">{signed(latestGift?.giftChange)} pts</b><p>{latestGift ? `Observed ${clock(latestGift.observedAt)} IST / supporting context only` : sourceUpdate.giftStatus}</p></div>
             <div className="text-slate-400">Opening scenario: <b className="text-cyan-300">{assessment.scenario ? scenarioLabel[assessment.scenario] : 'Waiting for opening evidence'}</b><p>Not a guarantee of direction.</p></div>
           </div>
-        </> : <section className={panel}>
-          <h2 className="text-sm font-bold text-cyan-300">Replay only what was recorded at the time</h2>
-          <p className="my-2 text-xs text-slate-500">No backfilled decisions, future price samples or paper orders in replay. An existing live position still monitors in the background.</p>
-          <Field label="Recorded session"><select className={inputClass} value={selectedReplayDay} onChange={e => { setReplayDay(e.target.value); setReplayIndex(0); }}>{!replayDays.length && <option value={today}>No recorded sessions</option>}{replayDays.map(day => <option key={day}>{day}</option>)}</select></Field>
-          {!!sessionFrames.length && <div className="mt-3 flex items-center gap-3">
-            <button className={buttonClass} disabled={index === 0} onClick={() => setReplayIndex(index - 1)}>Previous</button>
-            <input aria-label="Replay evidence minute" type="range" min={0} max={sessionFrames.length - 1} value={index} onChange={e => setReplayIndex(Number(e.target.value))} className="min-w-0 flex-1 accent-cyan-500" />
-            <button className={buttonClass} disabled={index === sessionFrames.length - 1} onClick={() => setReplayIndex(index + 1)}>Next</button>
-            <span className="text-xs text-slate-300">{replayFrame ? clock(replayFrame.at) : '--'} IST / {index + 1} of {sessionFrames.length}</span>
-          </div>}
-          {!sessionFrames.length && <p className="mt-3 text-sm text-slate-400">Open the live workspace during a session to begin recording.</p>}
-        </section>}
-        {(mode === 'live' || replayFrame) && <>
           <EvidenceMetrics assessment={assessment} />
           <div className="grid gap-4 xl:grid-cols-3">
             <div className="space-y-4 xl:col-span-2">
-              <section className={panel}><h2 className="mb-3 text-sm font-bold text-white">Nifty / sampled price structure</h2>
-                <PriceChart points={sampledPoints} support={assessment.support} resistance={assessment.resistance} />
-                <p className="mt-2 text-xs text-slate-500">Line samples, not OHLC candles. Gaps are not interpolated into trading evidence.</p>
-              </section>
-              {mode === 'live' && credentials && <section className={panel}>
+              <WallPanel observation={displayedObservation} assessment={assessment} at={now} />
+              {credentials && <section className={panel}>
                 <p className="mb-3 text-xs text-slate-500">The existing History table, using every available current-session minute, including data received before you opened the pilot. No duplicate AI chat or history writes.</p>
                 <div className="h-96"><SentimentHistory history={history.filter(s => Number.isFinite(s.timestamp) && s.timestamp! <= now && istDayKey(s.timestamp!) === today).sort((a, b) => b.timestamp! - a.timestamp!)}
                   credentials={credentials} aiEnabled={false} readOnly /></div>
               </section>}
-              <WallPanel observation={displayedObservation} assessment={assessment} at={replayFrame?.at ?? now} />
-              {displayedPlan && assessment.scenario && assessment.scenario !== 'OUTSIDE' && <section className={panel}>
-                <h2 className="text-xs font-bold text-cyan-300">{scenarioLabel[assessment.scenario]} / plan saved {clock(displayedPlan.savedAt)}</h2>
-                {displayedPlan.scenarios.filter(s => s.scenario === assessment.scenario).map(s => <div key={s.scenario} className="mt-2 space-y-1 text-xs text-slate-400">
-                  <p>Expected: {s.expectation}</p><p>Confirm: {s.confirmation}</p><p>Invalidate: {s.invalidation}</p>
-                </div>)}
-                <p className="mt-2 text-xs text-slate-500">Scenario notes are your checklist, not machine-evaluated rules.</p>
-              </section>}
               <section className={panel}><h2 className="mb-2 text-sm font-bold text-white">What changed? / frozen minute timeline</h2><FrameTimeline frames={visibleFrames} /></section>
             </div>
-            <div className="space-y-4">
-              <AssessmentPanel value={assessment} />
-              {mode === 'live' && (book.position
-                ? <PilotPositionCard key={book.position.id} position={book.position} now={now} disabled={disabled} onClose={close} onReconcile={reconcile} />
-                : <PilotTicket quotes={quotes} assessment={liveAssessment} now={now} disabled={entryDisabled} onBuy={buy} onSkip={skip} />)}
-              {mode === 'live' && entryDisabled && !book.position && <p className="text-xs text-amber-300">Paper entries require the active shared feed, this tab's writer lock, and market hours from 09:25 IST. Freshness and sizing checks still apply.</p>}
-            </div>
+            <AssessmentPanel value={assessment} />
           </div>
+          <details className={panel}><summary className="cursor-pointer text-xs text-slate-500">Optional manual fallback / only for missing source data</summary>
+            <p className="my-3 text-xs text-slate-500">No re-entry is needed when the source screens have data. A shared PreMkt plan takes priority over a manual plan. A newer manual wall observation is explicitly journalled as manual.</p>
+            <PlanEditor key={`${today}:${context.plan?.id ?? 'draft'}`} day={today} initial={context.plan} disabled={disabled || context.plan?.source?.kind === 'PREMARKET'} onSave={savePlan} />
+            <div className="mt-3"><ObservationEditor key={today} day={today} initial={context.observation} disabled={disabled} onSave={saveObservation} /></div>
+          </details>
         </>}
-        {mode === 'live' && <div className="space-y-3">
+
+        {tab === 'journal' && <>
+          <PilotTrackRecord buckets={buckets} signals={signals} trades={book.trades} />
           <div className="max-w-xs"><Field label="Review journal session"><select className={inputClass} value={selectedJournalDay} onChange={e => setJournalDay(e.target.value)}>{journalDays.map(day => <option key={day}>{day}</option>)}</select></Field></div>
           <PilotJournal trades={book.trades.filter(t => t.day === selectedJournalDay)} decisions={book.decisions.filter(d => d.day === selectedJournalDay)} />
-        </div>}
+        </>}
+
+        {tab === 'replay' && <>
+          <section className={panel}>
+            <h2 className="text-sm font-bold text-cyan-300">Replay only what was recorded at the time</h2>
+            <p className="my-2 text-xs text-slate-500">No backfilled decisions, future price samples or paper orders in replay. An existing live position still monitors in the background.</p>
+            <Field label="Recorded session"><select className={inputClass} value={selectedReplayDay} onChange={e => { setReplayDay(e.target.value); setReplayIndex(0); }}>{!replayDays.length && <option value={today}>No recorded sessions</option>}{replayDays.map(day => <option key={day}>{day}</option>)}</select></Field>
+            {!!sessionFrames.length && <div className="mt-3 flex items-center gap-3">
+              <button className={buttonClass} disabled={index === 0} onClick={() => setReplayIndex(index - 1)}>Previous</button>
+              <input aria-label="Replay evidence minute" type="range" min={0} max={sessionFrames.length - 1} value={index} onChange={e => setReplayIndex(Number(e.target.value))} className="min-w-0 flex-1 accent-cyan-500" />
+              <button className={buttonClass} disabled={index === sessionFrames.length - 1} onClick={() => setReplayIndex(index + 1)}>Next</button>
+              <span className="text-xs text-slate-300">{replayFrame ? clock(replayFrame.at) : '--'} IST / {index + 1} of {sessionFrames.length}</span>
+            </div>}
+            {!sessionFrames.length && <p className="mt-3 text-sm text-slate-400">Open the live workspace during a session to begin recording.</p>}
+          </section>
+          {replayFrame && <>
+            <PilotCockpit assessment={replayFrame.assessment} phase={pilotPhase(replayFrame.at)} live={false} />
+            <div className="grid gap-4 xl:grid-cols-3">
+              <div className="space-y-4 xl:col-span-2">{chart}<WallPanel observation={displayedObservation} assessment={assessment} at={replayFrame.at} />{scenarioCard}
+                <section className={panel}><h2 className="mb-2 text-sm font-bold text-white">What changed? / frozen minute timeline</h2><FrameTimeline frames={visibleFrames} /></section>
+              </div>
+              <AssessmentPanel value={assessment} />
+            </div>
+          </>}
+        </>}
+
+        <details className="rounded-xl border border-white/5 bg-slate-900/40 p-3 text-xs text-slate-500">
+          <summary className="cursor-pointer">How the pilot works and its limits</summary>
+          <p className="mt-2 leading-relaxed">Your existing PreMkt analysis, minute history and Vision are connected into one opening workflow. Sampled-price simulator: provider timestamps can be approximations; quotes are not verified executable fills. Monitoring continues across app tabs, not while the browser is closed or suspended. Missing samples cannot establish which intraminute exit happened first. No automatic 20-minute exit. Position exits are monitored independently of recording. The verdict is a rules check, not a win probability; the Accuracy tab measures how its recorded signals actually played out.</p>
+        </details>
       </>}
     </div>
   </div>;

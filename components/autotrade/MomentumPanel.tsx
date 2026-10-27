@@ -28,11 +28,13 @@ import { scheduleBackground } from '../../services/heartbeat';
 import { visionService } from '../../services/visionService';
 import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
 import AutoTradeHistory from './AutoTradeHistory';
+import { NIFTY_LOT_SIZE } from '../../constants/lotSize';
+import { resolveOptionSymbol } from '../../services/instrumentResolver';
 
 export { pairRoundTrips, findMissingRoundTrips } from '../../services/momentumEntryGuard';
 export type { RoundTrip } from '../../services/momentumEntryGuard';
 
-const LOT_SIZE = 75;
+const LOT_SIZE = NIFTY_LOT_SIZE;
 const SETTINGS_KEY = 'momentum_settings';
 const SESSION_KEY = 'momentum_session';
 const OM_KEY = 'momentum_orderbook';
@@ -196,10 +198,26 @@ function makeProposal(s: EnhancedSignal | null, spot: number | null, settings: M
   const isLong = s.direction === 'LONG';
   const atm = Math.round(spot / 50) * 50;
   const strike = isLong ? atm - settings.itmOffset : atm + settings.itmOffset;
+  const side = isLong ? ('CE' as const) : ('PE' as const);
+
+  let symbol: string;
+  try {
+    const resolved = resolveOptionSymbol({
+      broker: 'FYERS',
+      expiry,
+      strike,
+      side
+    });
+    symbol = resolved.tradableSymbol;
+  } catch {
+    // Refuse order with unknown strike/expiry instead of sending guessed symbol
+    return null;
+  }
+
   return {
     strike,
-    optionType: isLong ? ('CE' as const) : ('PE' as const),
-    symbol: `NIFTY${expiry}${strike}${isLong ? 'CE' : 'PE'}`,
+    optionType: side,
+    symbol,
     qty: settings.lots * LOT_SIZE
   };
 }
@@ -957,15 +975,15 @@ export const MomentumPanel: React.FC<Props> = ({
   const gatesPassed = entryGate.checks.filter(c => c.status === 'pass').length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* ---- header ---- */}
-      <div className="rounded-2xl border border-sky-500/30 bg-gradient-to-br from-sky-500/10 via-indigo-500/5 to-transparent p-5">
+      <div className="relative overflow-hidden rounded-2xl border border-sky-500/30 bg-gradient-to-br from-sky-500/10 via-indigo-500/5 to-transparent p-4 shadow-[0_0_50px_-24px_rgba(14,165,233,0.8)]">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.2em] text-sky-300/70">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-sky-300/70">
               <Waves className="h-3.5 w-3.5" /> Multi-factor momentum
             </div>
-            <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-100">
+            <h2 className="mt-0.5 text-2xl font-black tracking-tight text-slate-100 sm:text-3xl">
               {signal ? (
                 <span className={signal.direction === 'LONG' ? 'text-emerald-300' : signal.direction === 'SHORT' ? 'text-rose-300' : 'text-slate-400'}>
                   {signal.direction}
@@ -974,7 +992,7 @@ export const MomentumPanel: React.FC<Props> = ({
                 <span className="text-slate-500">NO SIGNAL</span>
               )}
             </h2>
-            <p className="mt-1 max-w-xl text-xs text-slate-400">
+            <p className="max-w-xl text-[11px] leading-snug text-slate-400">
               Selective entries from 09:30–15:00 IST after fresh 1m/5m/15m alignment and sustained confirmation.
               Independent of Sniper. Fewer trades are intentional; profitable outcomes are not guaranteed.
             </p>
@@ -1022,7 +1040,7 @@ export const MomentumPanel: React.FC<Props> = ({
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
           <Stat label="Signal score" value={signal ? `${signal.confidence.toFixed(0)}/100` : '—'} sub="Not a win probability" />
           <Stat label="Net reward / risk" value={entryGate.netRiskReward?.toFixed(2) ?? '—'} sub="Estimated fees + slippage" />
           <Stat label="Open" value={positions.length} sub={`${settings.lots} lot${settings.lots > 1 ? 's' : ''} per entry`} />
@@ -1221,9 +1239,9 @@ export const MomentumPanel: React.FC<Props> = ({
         </Card>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2">
         {/* ---- factor breakdown ---- */}
-        <Card title="Factor breakdown" icon={<BarChart3 className="h-4 w-4 text-sky-400" />}>
+        <Card title="Factor breakdown" icon={<BarChart3 className="h-4 w-4 text-sky-400" />} collapsible storageKey="momentum_factors">
           {!m ? (
             <p className="py-8 text-center text-xs text-slate-500">Start the engine to score the market.</p>
           ) : (
@@ -1308,7 +1326,7 @@ export const MomentumPanel: React.FC<Props> = ({
               <button
                 onClick={execute}
                 disabled={busy || !running || !qualifies || positions.length > 0}
-                className="w-full rounded-xl bg-sky-500 py-3.5 text-sm font-bold text-sky-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                className="w-full rounded-xl bg-sky-500 py-3 text-sm font-bold text-sky-950 shadow-[0_0_24px_-6px_rgba(14,165,233,0.8)] transition hover:bg-sky-400 disabled:shadow-none disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
               >
                 {!running
                   ? 'Start the engine to enable execution'
@@ -1329,7 +1347,8 @@ export const MomentumPanel: React.FC<Props> = ({
 
       <AutoTradeHistory strategy="MOMENTUM" tradingMode={tradingMode} />
 
-      <Card title="Momentum log" icon={<Waves className="h-4 w-4 text-sky-400" />}>
+      <Card title="Momentum log" icon={<Waves className="h-4 w-4 text-sky-400" />} collapsible storageKey="momentum_log"
+        right={<span className="font-mono text-[10px] text-slate-500">{log.length}</span>}>
         <LogFeed entries={log} emptyHint="Start the engine to begin scanning." />
       </Card>
     </div>

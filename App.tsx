@@ -29,6 +29,7 @@ import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 import { istMinutesOf } from './services/sniperEngine';
 import { dayStrength, isUsableBaseline, shouldAnchorSymbol } from './services/marketStrength';
+import { startNewTradingDay } from './services/tradingDayManager';
 
 // Declare global window cache for PayTM options
 declare global {
@@ -191,6 +192,16 @@ const App: React.FC = () => {
   useEffect(() => {
     const initData = async () => {
         try {
+            // Check for new trading day transition (idempotent, preserves credentials)
+            try {
+              const dayResult = await startNewTradingDay();
+              if (dayResult.transitioned) {
+                console.log(`[TradingDay] Day transition detected: ${dayResult.tradingDay}. Cleared ${dayResult.clearedKeys.length} day-scoped keys.`);
+              }
+            } catch (dayErr) {
+              console.warn('[TradingDay] Transition check error:', dayErr);
+            }
+
             // Try to load encrypted config from backend first
             if (!credentials.paytmAccessToken) {
               setIsLoadingConfig(true);

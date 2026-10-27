@@ -15,7 +15,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { History, Trophy } from 'lucide-react';
+import { ChevronDown, History, Trophy } from 'lucide-react';
 import {
   belongsToStrategy,
   paperTradingEngine,
@@ -24,6 +24,7 @@ import {
   PaperTrade
 } from '../../services/paperTradingService';
 import { TradeHistoryTable } from '../ui/TradeHistoryTable';
+import { usePersistentOpen } from '../ui/panels';
 
 const inr = (n: number) =>
   `${n < 0 ? '-' : ''}₹${Math.abs(Math.round(n)).toLocaleString('en-IN')}`;
@@ -50,6 +51,7 @@ const Metric: React.FC<{ label: string; value: string; tone?: string }> = ({ lab
 export const AutoTradeHistory: React.FC<AutoTradeHistoryProps> = ({ strategy, tradingMode }) => {
   const [book, setBook] = useState<PaperBook>(paperTradingEngine.getBook());
   const [scope, setScope] = useState<'today' | 'all'>('today');
+  const [open, setOpen] = usePersistentOpen(`history_${strategy}`, true);
 
   useEffect(() => {
     // The engines call load() before their first write, but this view can render
@@ -101,15 +103,21 @@ export const AutoTradeHistory: React.FC<AutoTradeHistoryProps> = ({ strategy, tr
   const label = strategy === 'SNIPER' ? 'Sniper' : 'Momentum';
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 px-4 py-3">
-        <div className="flex items-center gap-2">
+    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/50">
+      <div className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 ${open ? 'border-b border-white/5' : ''}`}>
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="flex items-center gap-2 text-left">
+          <ChevronDown className={`h-3.5 w-3.5 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
           <History className="h-4 w-4 text-slate-500" />
-          <h3 className="text-sm font-bold text-slate-200">{label} trade history</h3>
+          <h3 className="text-xs font-bold text-slate-200">{label} trade history</h3>
           <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
             {trades.length}
           </span>
-        </div>
+          {!open && trades.length > 0 && (
+            <span className={`font-mono text-[11px] font-bold ${stats.netPnl > 0 ? 'text-emerald-400' : stats.netPnl < 0 ? 'text-red-400' : 'text-slate-400'}`}>
+              {signed(stats.netPnl)} · {stats.winRate.toFixed(0)}% win
+            </span>
+          )}
+        </button>
 
         <div className="flex rounded-lg border border-slate-800 bg-slate-950 p-0.5">
           {(['today', 'all'] as const).map((s) => (
@@ -126,6 +134,7 @@ export const AutoTradeHistory: React.FC<AutoTradeHistoryProps> = ({ strategy, tr
         </div>
       </div>
 
+      {open && <>
       {tradingMode === 'LIVE' && (
         // Silence here would read as "no trades taken", which is the opposite of
         // the truth when the engine is live and filling at a broker.
@@ -176,6 +185,7 @@ export const AutoTradeHistory: React.FC<AutoTradeHistoryProps> = ({ strategy, tr
           the full ledger lives on the Paper Trading screen.
         </p>
       )}
+      </>}
     </div>
   );
 };

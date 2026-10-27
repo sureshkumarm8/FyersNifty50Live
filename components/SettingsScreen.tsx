@@ -15,6 +15,7 @@ import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
 import { apiCallTracker, APIStats, testOllamaConnection, isBlockedLocalOllama } from '../services/aiProvider';
 import { TokenGeneratorModal } from './TokenGeneratorModal';
+import { startNewTradingDay } from '../services/tradingDayManager';
 
 interface SettingsScreenProps {
   onBack: () => void;
@@ -252,15 +253,28 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       }
   };
 
+  const handleNewDay = async () => {
+    if (confirm("🌅 Start a new trading day? This will clear today's session charts, order logs, and cached snapshots while keeping your API keys, credentials, and settings completely intact.")) {
+      try {
+        const res = await startNewTradingDay({ force: true });
+        alert(`New trading day initialized for ${res.tradingDay}! Cleared ${res.clearedKeys.length} session items.`);
+        window.location.reload();
+      } catch (e: any) {
+        alert("Failed to start new day: " + (e?.message || e));
+      }
+    }
+  };
+
   const handleReset = async () => {
-    if (confirm("⚠️ WARNING: This will permanently delete your API credentials and reset all application data (including database history). Are you sure you want to proceed?")) {
-        try {
-            await dbService.clearAll();
-            localStorage.clear();
-            window.location.reload();
-        } catch (e) {
-            alert("Failed to clear database. Please clear browser data manually.");
-        }
+    const confirmation = prompt("⚠️ FACTORY RESET WARNING: This will permanently delete your API credentials, tokens, saved protocols, and all historical data.\n\nType RESET to confirm:");
+    if (confirmation === "RESET") {
+      try {
+        await dbService.clearAll();
+        localStorage.clear();
+        window.location.reload();
+      } catch (e) {
+        alert("Failed to clear database. Please clear browser data manually.");
+      }
     }
   };
 
@@ -375,6 +389,30 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       try {
         const json = JSON.parse(e.target?.result as string);
         let imported = false;
+
+        const safeSetPaytmToken = (incoming?: string) => {
+          if (!incoming || typeof incoming !== 'string' || !incoming.trim()) return;
+          const token = incoming.trim();
+          if (paytmAccessToken && token !== paytmAccessToken) {
+            if (!confirm("An active Paytm token is already configured in this session. Do you want to replace it with the token from the imported file?")) {
+              return;
+            }
+          }
+          setPaytmAccessToken(token);
+          imported = true;
+        };
+
+        const safeSetFyersToken = (incoming?: string) => {
+          if (!incoming || typeof incoming !== 'string' || !incoming.trim()) return;
+          const token = incoming.trim();
+          if (accessToken && token !== accessToken) {
+            if (!confirm("An active Fyers token is already configured in this session. Do you want to replace it with the token from the imported file?")) {
+              return;
+            }
+          }
+          setAccessToken(token);
+          imported = true;
+        };
         
         // Handle nested structure (paytm, fyers, google, groq, claudeApiKey, config)
         if (json.fyers) {
@@ -383,15 +421,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             imported = true;
           }
           if (json.fyers.accessToken) {
-            setAccessToken(json.fyers.accessToken);
-            imported = true;
+            safeSetFyersToken(json.fyers.accessToken);
           }
         }
         
         if (json.paytm) {
           if (json.paytm.accessToken) {
-            setPaytmAccessToken(json.paytm.accessToken);
-            imported = true;
+            safeSetPaytmToken(json.paytm.accessToken);
           }
         }
         
@@ -472,8 +508,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           imported = true;
         }
         if (json.accessToken) {
-          setAccessToken(json.accessToken);
-          imported = true;
+          safeSetFyersToken(json.accessToken);
         }
         if (json.googleApiKey) {
           setGoogleApiKey(json.googleApiKey);
@@ -520,8 +555,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           imported = true;
         }
         if (json.paytmAccessToken) {
-          setPaytmAccessToken(json.paytmAccessToken);
-          imported = true;
+          safeSetPaytmToken(json.paytmAccessToken);
         }
         if (json.liveOrdersEnabled !== undefined) {
           setLiveOrdersEnabled(json.liveOrdersEnabled);
@@ -581,12 +615,20 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
             <div className="flex items-center gap-3">
                 <button 
+                    onClick={handleNewDay}
+                    className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 rounded-lg transition-colors"
+                    title="Start New Trading Day (Preserves Credentials & Settings)"
+                >
+                    <RefreshCw size={18} />
+                    <span className="hidden sm:inline text-xs font-bold uppercase">New Day</span>
+                </button>
+                <button 
                     onClick={handleReset}
                     className="flex items-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg transition-colors"
-                    title="Reset All Data"
+                    title="Factory Reset (Permanently Deletes Credentials)"
                 >
                     <Trash2 size={18} />
-                    <span className="hidden sm:inline text-xs font-bold uppercase">Reset</span>
+                    <span className="hidden sm:inline text-xs font-bold uppercase">Factory Reset</span>
                 </button>
                 <button
                     onClick={handleSave}

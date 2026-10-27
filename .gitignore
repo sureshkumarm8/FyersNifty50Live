@@ -33,3 +33,7 @@ dist-ssr
 *_tokens_*.json
 paytm_tokens*.json
 Nifty50_AI_config_tokens*.json
+
+# Python bytecode
+__pycache__/
+*.pyc
