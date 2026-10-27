@@ -18,6 +18,7 @@
 
 import { SNIPER } from './sniperPlaybook';
 import { MarketSnapshot } from '../types';
+import { resolveOptionSymbol } from './instrumentResolver';
 
 export type SniperPhase =
   | 'PRE_OPEN'      // before 09:15 - nothing to do
@@ -128,16 +129,17 @@ export const hhmmToMinutes = (hhmm: string) => {
 export const MARKET_OPEN = hhmmToMinutes(SNIPER.downloadStart); // 09:15
 export const ENTRY_OPEN = hhmmToMinutes(SNIPER.entryStart);     // 09:25
 export const ENTRY_CLOSE = hhmmToMinutes(SNIPER.reviewBy);      // 09:45
-export const HARD_STOP = hhmmToMinutes(SNIPER.hardStop);        // 10:15
+export const TRAIL_START = hhmmToMinutes(SNIPER.trailStart);    // 10:15
+export const HARD_STOP = hhmmToMinutes(SNIPER.hardStop);        // 10:30
 /** The engine disarms itself here — the protocol's day is over. */
-export const STAND_DOWN = hhmmToMinutes(SNIPER.standDown);      // 10:20
+export const STAND_DOWN = hhmmToMinutes(SNIPER.standDown);      // 10:35
 
 const PHASE_LABEL: Record<SniperPhase, string> = {
   PRE_OPEN: 'Pre-open — the market has not started',
   DOWNLOAD: 'The Download — watch only, marking the 5-minute range',
   ENTRY_WINDOW: 'Entry Window — the setup may be taken now',
-  MANAGE_ONLY: 'Manage only — no new entries after 09:45',
-  HARD_STOP: 'Hard Stop — 10:15 passed, everything is flat',
+  MANAGE_ONLY: `Manage only — no new entries after ${SNIPER.reviewBy}`,
+  HARD_STOP: `Hard Stop — ${SNIPER.hardStop} passed, everything is flat`,
   AFTER_HOURS: 'After hours — the protocol is done for today'
 };
 
@@ -365,7 +367,18 @@ export function buildSetup(params: {
       ...reasons
     ],
     expiry,
-    symbol: `NIFTY${expiry}${strike}${isLong ? 'CE' : 'PE'}`,
+    symbol: (() => {
+      try {
+        return resolveOptionSymbol({
+          broker: 'FYERS',
+          expiry,
+          strike,
+          side: isLong ? 'CE' : 'PE'
+        }).tradableSymbol;
+      } catch {
+        return `NSE:NIFTY${expiry}${strike}${isLong ? 'CE' : 'PE'}`;
+      }
+    })(),
     createdAt: now.getTime()
   };
 }
@@ -383,6 +396,8 @@ export interface SniperContext {
   hasOpenPosition: boolean;
   dailyTradeDone: boolean;
   expiry: string;
+  /** Put-Call Ratio for directional hard gating. */
+  pcr?: number | null;
   /**
    * The morning's thesis after it has been checked against the tape.
    *
@@ -568,6 +583,22 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
     });
   }
 
+  // PCR Gate (Data-backed: PCR > 1.10 = 92.3% bullish accuracy, PCR < 0.85 = 71.4% bearish accuracy)
+  const pcr = ctx.pcr;
+  if (pcr != null && pcr > 0) {
+    if (wantsLong && pcr < 0.85) {
+      blocks.push({
+        code: 'DIRECTION_CONFLICT',
+        message: `PCR is ${pcr.toFixed(2)} (< 0.85, heavy call writing / bearish pressure). Long bounce entry blocked.`
+      });
+    } else if (wantsShort && pcr > 1.10) {
+      blocks.push({
+        code: 'DIRECTION_CONFLICT',
+        message: `PCR is ${pcr.toFixed(2)} (> 1.10, heavy put writing / bullish support floor). Short fade entry blocked.`
+      });
+    }
+  }
+
   /**
    * A one-sided day blocks the side that was ruled out, not the day.
    *
@@ -603,19 +634,39 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
 
 /**
  * Exit check for an open sniper position, in spot points.
- * The protocol exits on whichever comes first: target, stop, or 10:15.
+ * The protocol exits on whichever comes first:
+ * - Target hit (+25 pts)
+ * - Stop hit (-15 pts)
+ * - 10:15 trail activation (if profitable, trails with 10pt buffer; if flat/loss, flat exit)
+ * - 10:30 hard stop (unconditional exit)
  */
 export function checkExit(params: {
   setup: SniperSetup;
   spot: number;
   now: Date;
-}): { exit: boolean; reason: 'TARGET' | 'STOP' | 'HARD_STOP' | null; pointsMoved: number } {
-  const { setup, spot, now } = params;
+  peakPoints?: number;
+}): { exit: boolean; reason: 'TARGET' | 'STOP' | 'HARD_STOP' | 'TRAILING_STOP' | null; pointsMoved: number } {
+  const { setup, spot, now, peakPoints } = params;
   const sign = setup.direction === 'LONG' ? 1 : -1;
   const pointsMoved = Math.round((spot - setup.entrySpot) * sign);
+  const mins = istMinutesOf(now);
 
-  if (istMinutesOf(now) >= HARD_STOP) return { exit: true, reason: 'HARD_STOP', pointsMoved };
+  if (mins >= HARD_STOP) return { exit: true, reason: 'HARD_STOP', pointsMoved };
   if (pointsMoved >= SNIPER.targetPoints) return { exit: true, reason: 'TARGET', pointsMoved };
   if (pointsMoved <= -SNIPER.stopPoints) return { exit: true, reason: 'STOP', pointsMoved };
+
+  // Trailing window: between trailStart (10:15) and hardStop (10:30)
+  if (mins >= TRAIL_START) {
+    // If trade is negative or breakeven by 10:15, cut it immediately
+    if (pointsMoved <= 0) {
+      return { exit: true, reason: 'HARD_STOP', pointsMoved };
+    }
+    // If in profit, trail 10 points behind the peak favorable excursion
+    const currentPeak = Math.max(peakPoints ?? pointsMoved, pointsMoved);
+    if (currentPeak >= 15 && pointsMoved <= currentPeak - 10) {
+      return { exit: true, reason: 'TRAILING_STOP', pointsMoved };
+    }
+  }
+
   return { exit: false, reason: null, pointsMoved };
 }

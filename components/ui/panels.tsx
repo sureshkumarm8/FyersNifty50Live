@@ -6,8 +6,8 @@
  * can never leak information into each other.
  */
 
-import React from 'react';
-import { AlertTriangle, Ban, CheckCircle2, Inbox } from 'lucide-react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { AlertTriangle, Ban, CheckCircle2, ChevronDown, Inbox } from 'lucide-react';
 import { Position } from '../../services/orderManager';
 
 export type Accent = 'emerald' | 'sky';
@@ -46,26 +46,67 @@ export const ACCENTS: Record<Accent, AccentTheme> = {
 export const inr = (n: number) =>
   `${n < 0 ? '-' : ''}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
+/**
+ * Opt-in compact spacing. AutoTrade wraps itself in <DenseProvider>; screens that
+ * do not (Pre-Market) keep the original roomy layout without any call-site change.
+ */
+const DensityContext = createContext(false);
+export const DenseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <DensityContext.Provider value={true}>{children}</DensityContext.Provider>
+);
+export const useDense = () => useContext(DensityContext);
+
+/** Collapsed/expanded state that survives reloads, keyed per card. */
+export function usePersistentOpen(storageKey: string | undefined, defaultOpen: boolean) {
+  const key = storageKey ? `ui_open_${storageKey}` : null;
+  const [open, setOpen] = useState<boolean>(() => {
+    if (!key || typeof localStorage === 'undefined') return defaultOpen;
+    const saved = localStorage.getItem(key);
+    return saved === null ? defaultOpen : saved === '1';
+  });
+  useEffect(() => {
+    if (key && typeof localStorage !== 'undefined') localStorage.setItem(key, open ? '1' : '0');
+  }, [key, open]);
+  return [open, setOpen] as const;
+}
+
 export const Card: React.FC<{
   title?: React.ReactNode;
   icon?: React.ReactNode;
   right?: React.ReactNode;
   className?: string;
   children: React.ReactNode;
-}> = ({ title, icon, right, className = '', children }) => (
-  <section className={`rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur ${className}`}>
-    {(title || right) && (
-      <header className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
-        <h3 className="flex items-center gap-2 text-sm font-semibold tracking-wide text-slate-200">
-          {icon}
-          {title}
-        </h3>
-        {right}
-      </header>
-    )}
-    <div className="p-4">{children}</div>
-  </section>
-);
+  /** Header toggles the body. Only for secondary content, never for an execute control. */
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+  storageKey?: string;
+}> = ({ title, icon, right, className = '', children, collapsible, defaultOpen = true, storageKey }) => {
+  const dense = useDense();
+  const [stateOpen, setOpen] = usePersistentOpen(collapsible ? storageKey : undefined, defaultOpen);
+  const open = !collapsible || stateOpen;
+  const heading = (
+    <h3 className={`flex items-center gap-2 font-semibold tracking-wide text-slate-200 ${dense ? 'text-xs' : 'text-sm'}`}>
+      {icon}
+      {title}
+    </h3>
+  );
+  return (
+    <section className={`${dense ? 'rounded-xl' : 'rounded-2xl'} border border-slate-800 bg-slate-900/60 backdrop-blur ${className}`}>
+      {(title || right) && (
+        <header className={`flex items-center justify-between gap-3 ${open ? 'border-b border-slate-800' : ''} ${dense ? 'px-3 py-2' : 'px-4 py-3'}`}>
+          {collapsible ? (
+            <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+              <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
+              {heading}
+            </button>
+          ) : heading}
+          {right}
+        </header>
+      )}
+      {open && <div className={dense ? 'p-3' : 'p-4'}>{children}</div>}
+    </section>
+  );
+};
 
 export const Stat: React.FC<{
   label: string;
@@ -81,10 +122,11 @@ export const Stat: React.FC<{
         : tone === 'warn'
           ? 'text-amber-300'
           : 'text-slate-100';
+  const dense = useDense();
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2.5">
+    <div className={`border border-slate-800 bg-slate-950/50 ${dense ? 'rounded-lg px-2.5 py-1.5' : 'rounded-xl px-3 py-2.5'}`}>
       <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{label}</div>
-      <div className={`mt-0.5 text-lg font-semibold tabular-nums ${toneCls}`}>{value}</div>
+      <div className={`mt-0.5 font-semibold tabular-nums ${dense ? 'text-base leading-tight' : 'text-lg'} ${toneCls}`}>{value}</div>
       {sub && <div className="text-[11px] text-slate-500">{sub}</div>}
     </div>
   );

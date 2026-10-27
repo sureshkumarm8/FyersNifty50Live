@@ -13,7 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, CalendarCheck, Crosshair, Lock, Pause, Play, Timer } from 'lucide-react';
+import { Bot, CalendarCheck, Crosshair, Lock, Pause, Play } from 'lucide-react';
 import { FyersCredentials, MarketSnapshot, PivotPoints } from '../../types';
 import { OrderManager, Position } from '../../services/orderManager';
 import { EnhancedSignalGenerator } from '../../services/enhancedSignalGenerator';
@@ -37,6 +37,8 @@ import { BlockList, Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, 
 import AutoTradeHistory from './AutoTradeHistory';
 import { RangeBoard, SetupBoard, ThesisBoard, fmt } from './SniperViews';
 
+import { NIFTY_LOT_SIZE } from '../../constants/lotSize';
+
 const LOTS_KEY = 'sniper_lots';
 const DAY_KEY = 'sniper_day_state';
 const AUTOSTART_KEY = 'sniper_autostart';
@@ -45,7 +47,7 @@ const AUTO_LIVE_KEY = 'sniper_auto_live';
 const ARMED_KEY = 'sniper_armed';
 const LOG_KEY = 'sniper_log';
 const OM_KEY = 'sniper_orderbook';
-const LOT_SIZE = 75;
+const LOT_SIZE = NIFTY_LOT_SIZE;
 
 /**
  * Today's log, read back on mount.
@@ -148,6 +150,7 @@ export const SniperPanel: React.FC<Props> = ({
   latest.current = { niftyLtp, historyLog, pivots };
   const setupRef = useRef<SniperSetup | null>(null);
   setupRef.current = activeSetup;
+  const peakPointsRef = useRef<number>(0);
   const dayRef = useRef(dayState);
   dayRef.current = dayState;
 
@@ -577,6 +580,7 @@ export const SniperPanel: React.FC<Props> = ({
         hasOpenPosition: positions.length > 0,
         dailyTradeDone: dayState.tradeTaken,
         expiry,
+        pcr: historyLog[0]?.pcr ?? null,
         thesis: {
           support: thesis.support,
           resistance: thesis.resistance,
@@ -801,7 +805,7 @@ export const SniperPanel: React.FC<Props> = ({
     (symbol: string, premium: number, reason: string, pnl?: number) => {
       if (tradingModeRef.current !== 'PAPER') return;
       const r = reason.toLowerCase();
-      const mapped: PaperExitReason = r.includes('target')
+      const mapped: PaperExitReason = r.includes('target') || r.includes('trailing')
         ? 'TARGET'
         : r.includes('stop -') || r.includes('stop −') || r.includes('stoploss') || r.includes('stop loss')
           ? 'STOPLOSS'
@@ -899,22 +903,26 @@ export const SniperPanel: React.FC<Props> = ({
     // protocol's +30 / -30 decision, exactly as the manual system does.
     const setup = setupRef.current;
     if (setup && niftyLtp) {
+      const pointsMoved = Math.round((niftyLtp - setup.entrySpot) * (setup.direction === 'LONG' ? 1 : -1));
+      peakPointsRef.current = Math.max(peakPointsRef.current, pointsMoved);
       const premium = Math.max(
         1,
-        open[0].avgPrice + (niftyLtp - setup.entrySpot) * (setup.direction === 'LONG' ? 1 : -1) * SNIPER.itmDelta
+        open[0].avgPrice + pointsMoved * SNIPER.itmDelta
       );
       open.forEach(p => om.updatePositionPnL(p.symbol, premium));
       // Keep the paper ledger's unrealised P&L, high-water and low-water marks
       // in step. It never exits on these - the protocol's spot rules do.
       if (tradingModeRef.current === 'PAPER') paperTradingEngine.markExternal(open[0].symbol, premium);
-      const verdict = checkExit({ setup, spot: niftyLtp, now: new Date(tick) });
+      const verdict = checkExit({ setup, spot: niftyLtp, now: new Date(tick), peakPoints: peakPointsRef.current });
       if (verdict.exit) {
         const label =
           verdict.reason === 'TARGET'
             ? `target +${SNIPER.targetPoints} hit`
             : verdict.reason === 'STOP'
               ? `stop -${SNIPER.stopPoints} hit`
-              : `${SNIPER.hardStop} hard stop`;
+              : verdict.reason === 'TRAILING_STOP'
+                ? `trailing stop hit (+${verdict.pointsMoved} pts locked)`
+                : `${SNIPER.hardStop} hard stop`;
         closeSymbol(open[0].symbol, label);
         return;
       }
@@ -1015,18 +1023,35 @@ export const SniperPanel: React.FC<Props> = ({
   ];
 
   return (
-    <div className="space-y-4">
-      {/* ---- command banner ---- */}
-      <div className={`rounded-2xl border p-5 ${bannerCls}`}>
-        <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="space-y-3">
+      {/* ---- command hero: verdict, arm, countdowns and the protocol clock in one block ---- */}
+      <div className={`relative overflow-hidden rounded-2xl border p-4 ${bannerCls}`}>
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent" />
+        <div className="relative flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.2em] opacity-70">
-              <Crosshair className="h-3.5 w-3.5" /> Office Protocol
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] opacity-70">
+              <Crosshair className="h-3 w-3" /> Office Protocol
+              <span className="font-mono normal-case tracking-normal opacity-80">
+                · {new Date(tick).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST
+              </span>
             </div>
-            <h2 className="mt-1 text-3xl font-black tracking-tight">{banner.text}</h2>
-            <p className="mt-1 max-w-xl text-xs opacity-80">{banner.sub}</p>
+            <h2 className="mt-0.5 text-2xl font-black tracking-tight sm:text-3xl">{banner.text}</h2>
+            <p className="max-w-xl text-xs opacity-80">{banner.sub}</p>
           </div>
           <div className="flex items-center gap-2">
+            <div className="hidden gap-1.5 sm:flex">
+              {[
+                { label: 'Entry in', value: mmss(evaluation?.minutesToEntry ?? null), sub: SNIPER.entryStart, warn: false, bad: false },
+                { label: 'Last entry', value: mmss(evaluation?.minutesToNoNewEntries ?? null), sub: SNIPER.reviewBy, warn: (evaluation?.minutesToNoNewEntries ?? 99) <= 5, bad: false },
+                { label: 'Hard stop', value: mmss(evaluation?.minutesToHardStop ?? null), sub: SNIPER.hardStop, warn: false, bad: (evaluation?.minutesToHardStop ?? 99) <= 10 }
+              ].map(c => (
+                <div key={c.label} className="min-w-[68px] rounded-lg border border-white/10 bg-slate-950/50 px-2 py-1 text-center">
+                  <div className="text-[9px] uppercase tracking-wider text-slate-500">{c.label}</div>
+                  <div className={`font-mono text-sm font-bold tabular-nums ${c.bad ? 'text-rose-300' : c.warn ? 'text-amber-300' : 'text-slate-100'}`}>{c.value}</div>
+                  <div className="text-[9px] text-slate-600">{c.sub}</div>
+                </div>
+              ))}
+            </div>
             <button
               onClick={() => {
                 // Claim today for the manual choice so the auto-arm effect,
@@ -1035,10 +1060,10 @@ export const SniperPanel: React.FC<Props> = ({
                 setArmed(a => !a);
                 addLog(armed ? '⏸️ Sniper monitoring paused.' : '▶️ Sniper monitoring armed.', 'info');
               }}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition ${
                 armed
                   ? 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-                  : 'bg-emerald-500 text-emerald-950 hover:bg-emerald-400'
+                  : 'bg-emerald-500 text-emerald-950 shadow-[0_0_20px_-4px_rgba(16,185,129,0.8)] hover:bg-emerald-400'
               }`}
             >
               {armed ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -1047,52 +1072,53 @@ export const SniperPanel: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* countdowns */}
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Stat label="IST now" value={new Date(tick).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} />
-          <Stat label="Entry opens in" value={mmss(evaluation?.minutesToEntry ?? null)} sub={SNIPER.entryStart} />
-          <Stat
-            label="No new entries in"
-            value={mmss(evaluation?.minutesToNoNewEntries ?? null)}
-            sub={SNIPER.reviewBy}
-            tone={(evaluation?.minutesToNoNewEntries ?? 99) <= 5 ? 'warn' : 'default'}
-          />
-          <Stat
-            label="Hard stop in"
-            value={mmss(evaluation?.minutesToHardStop ?? null)}
-            sub={SNIPER.hardStop}
-            tone={(evaluation?.minutesToHardStop ?? 99) <= 10 ? 'bad' : 'default'}
-          />
+        {/* countdowns on small screens */}
+        <div className="relative mt-3 grid grid-cols-3 gap-1.5 sm:hidden">
+          <Stat label="Entry in" value={mmss(evaluation?.minutesToEntry ?? null)} sub={SNIPER.entryStart} />
+          <Stat label="Last entry" value={mmss(evaluation?.minutesToNoNewEntries ?? null)} sub={SNIPER.reviewBy}
+            tone={(evaluation?.minutesToNoNewEntries ?? 99) <= 5 ? 'warn' : 'default'} />
+          <Stat label="Hard stop" value={mmss(evaluation?.minutesToHardStop ?? null)} sub={SNIPER.hardStop}
+            tone={(evaluation?.minutesToHardStop ?? 99) <= 10 ? 'bad' : 'default'} />
         </div>
-      </div>
 
-      {/* ---- phase timeline ---- */}
-      <Card title="Protocol timeline" icon={<Timer className="h-4 w-4 text-emerald-400" />}>
-        <div className="space-y-3">
+        {/* protocol clock: one segmented bar, widths proportional to each phase */}
+        <div className="relative mt-3 flex gap-1" aria-label="Protocol timeline">
           {timeline.map(t => {
             const active = nowMins >= t.from && nowMins < t.to;
             const done = nowMins >= t.to;
             const pct = active ? ((nowMins - t.from) / (t.to - t.from)) * 100 : done ? 100 : 0;
+            const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
             return (
-              <div key={t.label}>
-                <div className="mb-1 flex items-center justify-between text-[11px]">
-                  <span className={active ? 'font-semibold text-emerald-300' : done ? 'text-slate-500' : 'text-slate-400'}>
-                    {t.label} <span className="text-slate-600">· {t.note}</span>
+              <div key={t.label} style={{ flexGrow: t.to - t.from }} className="min-w-0 basis-0" title={`${t.label} · ${t.note}`}>
+                <Meter value={pct} tone={active ? 'bg-emerald-400' : done ? 'bg-slate-500' : 'bg-slate-800'} height="h-1.5" />
+                <div className="mt-1 flex justify-between gap-1 text-[10px]">
+                  <span className={`truncate ${active ? 'font-semibold text-emerald-300' : done ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {t.label} <span className="hidden text-slate-600 md:inline">· {t.note}</span>
                   </span>
-                  <span className="tabular-nums text-slate-600">
-                    {String(Math.floor(t.from / 60)).padStart(2, '0')}:{String(t.from % 60).padStart(2, '0')} —{' '}
-                    {String(Math.floor(t.to / 60)).padStart(2, '0')}:{String(t.to % 60).padStart(2, '0')}
-                  </span>
+                  <span className="shrink-0 tabular-nums text-slate-600">{hhmm(t.from)}</span>
                 </div>
-                <Meter value={pct} tone={active ? 'bg-emerald-400' : done ? 'bg-slate-600' : 'bg-slate-800'} />
               </div>
             );
           })}
         </div>
-      </Card>
+      </div>
 
-      {/* ---- automation ---- */}
-      <Card title="Automation" icon={<Bot className="h-4 w-4 text-emerald-400" />}>
+      {/* ---- automation (secondary: collapsed, state visible in the header) ---- */}
+      <Card
+        title="Automation"
+        icon={<Bot className="h-4 w-4 text-emerald-400" />}
+        collapsible
+        defaultOpen={false}
+        storageKey="sniper_automation"
+        right={
+          <div className="flex flex-wrap justify-end gap-1">
+            <Pill tone={autoStart ? 'good' : 'muted'}>Auto-arm {autoStart ? 'ON' : 'OFF'}</Pill>
+            <Pill tone={autoExecuteOn ? (tradingMode === 'LIVE' ? 'bad' : 'good') : 'muted'}>
+              Auto-exec {autoExecuteOn ? 'ON' : 'OFF'} · {tradingMode}
+            </Pill>
+          </div>
+        }
+      >
         <div className="space-y-2">
           <Toggle
             label="Auto-arm at market open"
@@ -1123,7 +1149,7 @@ export const SniperPanel: React.FC<Props> = ({
         </p>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2">
         <RangeBoard range={range} spot={niftyLtp} evaluation={evaluation} />
         <ThesisBoard
           playbook={playbook}
@@ -1152,7 +1178,7 @@ export const SniperPanel: React.FC<Props> = ({
         onExecute={execute}
       />
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2">
         <Card title="Sniper positions" icon={<Lock className="h-4 w-4 text-emerald-400" />}>
           <PositionsTable positions={positions} onClose={s => closeSymbol(s, 'manual exit')} busy={busy} />
           {positions.length > 0 && (
@@ -1189,7 +1215,8 @@ export const SniperPanel: React.FC<Props> = ({
 
       <AutoTradeHistory strategy="SNIPER" tradingMode={tradingMode} />
 
-      <Card title="Sniper log" icon={<Crosshair className="h-4 w-4 text-emerald-400" />}>
+      <Card title="Sniper log" icon={<Crosshair className="h-4 w-4 text-emerald-400" />} collapsible storageKey="sniper_log"
+        right={<span className="font-mono text-[10px] text-slate-500">{log.length}</span>}>
         <LogFeed entries={log} emptyHint="Arm the sniper to start the Download." />
       </Card>
     </div>

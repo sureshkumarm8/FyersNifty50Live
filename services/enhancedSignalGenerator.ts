@@ -26,6 +26,8 @@ export interface EnhancedSignalMetrics {
   callBuyPressure: number; // -100 to +100
   putBuyPressure: number;
   oiExpanding: boolean; // True if OI increasing
+  oiDifferential?: number; // Puts OI - Calls OI
+  oiDeltaDifferential?: number; // Put OI Change - Call OI Change
   
   // Support/Resistance Detection
   support: number;
@@ -241,12 +243,10 @@ export class EnhancedSignalGenerator {
     let optionFlowDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
     let optionFlowStrength = Math.min(100, Math.abs(optionFlow));
 
-    // Threshold on the windowed scale. The old >10 was set when optionsSent was
-    // pinned at its ±100 rail by a divide-by-zero; on the corrected scale the
-    // windowed figure spans roughly ±60 on a normal session.
-    if (optionFlow > 3) {
+    // Threshold on the windowed scale. Raised from 3 to 8 to avoid triggering on retail noise
+    if (optionFlow > 8) {
       optionFlowDirection = 'BULLISH';
-    } else if (optionFlow < -3) {
+    } else if (optionFlow < -8) {
       optionFlowDirection = 'BEARISH';
     }
 
@@ -278,8 +278,8 @@ export class EnhancedSignalGenerator {
       };
     }
 
-    // Calculate momentum score based on recent price changes
-    const recent = historyLog.slice(0, 5).reverse();
+    // Calculate momentum score based on 15 snapshots (~1-2 min lookback) to capture genuine intraday movement
+    const recent = historyLog.slice(0, 15).reverse();
     let momentumScore = 0;
     let accelerationRatio = 0;
 
@@ -313,15 +313,19 @@ export class EnhancedSignalGenerator {
     const latest = historyLog[0];
     const prev = historyLog[1];
 
-    // OI expansion detection
+    // OI expansion and differential detection
     const callOIChange = (latest.callsOI || 0) - (prev?.callsOI || 0);
     const putOIChange = (latest.putsOI || 0) - (prev?.putsOI || 0);
     const netOIChange = callOIChange + putOIChange;
 
     const oiExpanding = netOIChange > 0;
+    const oiDifferential = (latest.putsOI || 0) - (latest.callsOI || 0);
+    const oiDeltaDifferential = putOIChange - callOIChange;
 
     return {
       oiExpanding,
+      oiDifferential,
+      oiDeltaDifferential,
     };
   }
 
@@ -519,6 +523,40 @@ export class EnhancedSignalGenerator {
       reasons.push(`Near resistance, potential pullback`);
     }
 
+    // OI Delta differential (Put OI delta - Call OI delta)
+    if (metrics.oiDeltaDifferential != null) {
+      if (metrics.oiDeltaDifferential > 5_000_000) {
+        bullishScore += 15;
+        reasons.push('Put OI expansion outpaces Calls (+15)');
+      } else if (metrics.oiDeltaDifferential < -5_000_000) {
+        bearishScore += 15;
+        reasons.push('Call OI expansion outpaces Puts (+15)');
+      }
+    }
+
+    // PCR directional edge (Data: PCR > 1.10 = 92% bullish, PCR < 0.85 = 71% bearish)
+    if (metrics.callPutRatio > 0) {
+      const pcr = 1 / metrics.callPutRatio;
+      if (pcr > 1.10) {
+        bullishScore += 12;
+        reasons.push(`Bullish PCR (${pcr.toFixed(2)}) put writing floor (+12)`);
+      } else if (pcr < 0.85) {
+        bearishScore += 12;
+        reasons.push(`Bearish PCR (${pcr.toFixed(2)}) call writing ceiling (+12)`);
+      }
+    }
+
+    // Neutral sentiment boost (Data: Neutral breadth |sentiment| <= 15 produces best coiled mean-reversions)
+    if (Math.abs(metrics.broadSentiment) <= 15) {
+      if (bullishScore > bearishScore) {
+        bullishScore += 8;
+        reasons.push('Neutral breadth coiled boost (+8)');
+      } else if (bearishScore > bullishScore) {
+        bearishScore += 8;
+        reasons.push('Neutral breadth coiled boost (+8)');
+      }
+    }
+
     // Determine direction and confidence
     const diff = bullishScore - bearishScore;
     let direction: 'LONG' | 'SHORT' | 'NEUTRAL' = 'NEUTRAL';
@@ -607,6 +645,8 @@ export class EnhancedSignalGenerator {
       callBuyPressure: 0,
       putBuyPressure: 0,
       oiExpanding: false,
+      oiDifferential: 0,
+      oiDeltaDifferential: 0,
       support: 0,
       resistance: 0,
       volatility: 0,

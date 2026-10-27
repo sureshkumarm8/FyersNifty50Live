@@ -49,7 +49,7 @@ const ROOT = join(__dirname, '..');
 const OUT_DIR = join(ROOT, 'constants', 'generated');
 
 /** Sources that a plain-node handler needs to be able to import. */
-const SOURCES = ['constants/paytmMappings.ts', 'constants/niftyWeeklyOptions.ts'];
+const SOURCES = ['constants/paytmMappings.ts', 'constants/niftyWeeklyOptions.ts', 'constants/lotSize.ts'];
 
 const BANNER =
   '// GENERATED FILE - DO NOT EDIT.\n' +

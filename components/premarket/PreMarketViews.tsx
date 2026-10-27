@@ -179,6 +179,7 @@ export const CommandBar: React.FC<{
   hasUnanalyzed: boolean;
   onGenerate: () => void;
   isGenerating: boolean;
+  onPullCharts?: () => void;
   onCopy: () => void;
   /** True exports the screenshots too, making the file a restore point. */
   onExport: (includeImages: boolean) => void;
@@ -188,7 +189,7 @@ export const CommandBar: React.FC<{
   generatedAtStr?: string;
 }> = ({
   visionReady, visionLabel, charts, analyzingSlots, coverage, liveLtp, manualSpot, onManualSpot,
-  onFiles, onAnalyzeRemaining, hasUnanalyzed, onGenerate, isGenerating, onCopy, onExport, onImport,
+  onFiles, onAnalyzeRemaining, hasUnanalyzed, onGenerate, isGenerating, onPullCharts, onCopy, onExport, onImport,
   onReset, hasDecision, generatedAtStr
 }) => {
   const pct = Math.round((coverage / CHART_SLOTS.length) * 100);
@@ -279,6 +280,18 @@ export const CommandBar: React.FC<{
               <Upload size={13} /> Charts
             </span>
           </label>
+
+          {onPullCharts && (
+            <button
+              type="button"
+              onClick={onPullCharts}
+              disabled={busy || isGenerating}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 py-2 text-xs font-semibold text-purple-300 transition hover:bg-purple-500/20 disabled:opacity-40"
+              title="Auto-pull today's captured charts from the vision sidecar engine"
+            >
+              <Download size={13} /> Pull Today's Charts
+            </button>
+          )}
 
           {hasUnanalyzed && (
             <button

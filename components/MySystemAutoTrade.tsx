@@ -17,6 +17,7 @@ import { TradingEngine, TradingSignal } from '../services/tradingEngine';
 import { OrderManager, Position, Order } from '../services/orderManager';
 import { tradeJournal, Trade } from '../services/tradeJournal';
 import { getNextExpiryDate, getFormattedExpiryDate } from '../constants/niftyExpiryDates';
+import { SNIPER } from '../services/sniperPlaybook';
 
 type SystemPhase = 'IDLE' | 'DOWNLOAD' | 'ENTRY_WINDOW' | 'IN_TRADE' | 'CLOSED';
 type TradeMode = 'PAPER' | 'LIVE';
@@ -254,9 +255,9 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
       ? atmStrike - itmAmount 
       : atmStrike + itmAmount;
 
-    // MySystem: Fixed 30 points target and stop loss
-    const targetPoints = 30;
-    const stopLossPoints = 30;
+    // MySystem: Data-optimized 25 points target and 15 points stop loss
+    const targetPoints = SNIPER.targetPoints;
+    const stopLossPoints = SNIPER.stopPoints;
 
     // Get expiry date
     const nextExpiry = getNextExpiryDate();
@@ -270,7 +271,7 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
 
     reasoning.push(...signal.reasons);
     reasoning.push(`ITM: ${itmAmount} points`);
-    reasoning.push(`Target: +30pts, Stop: -30pts`);
+    reasoning.push(`Target: +${targetPoints}pts, Stop: -${stopLossPoints}pts`);
 
     const setup: TradeSetup = {
       strikePrice,
@@ -287,7 +288,7 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
 
     setTradeSetup(setup);
     addLog(`🎯 SETUP READY: ${strikePrice} ${optionType} @ ₹${entryPrice.toFixed(2)}`);
-    addLog(`📊 Confidence: ${signal.confidence}%, R:R = 1:1`);
+    addLog(`📊 Confidence: ${signal.confidence}%, R:R = ${(targetPoints / stopLossPoints).toFixed(2)}:1`);
   }, [zones, niftyLtp, historyLog, stocks, pivots, tradeSetup, activeTrade, addLog]);
 
   // Execute Trade
@@ -366,25 +367,25 @@ const MySystemAutoTrade: React.FC<MySystemAutoTradeProps> = ({
     let shouldExit = false;
     let exitReason: 'TARGET' | 'STOPLOSS' | 'EOD' | 'MANUAL' = 'MANUAL';
 
-    // Target hit (+30 points)
+    // Target hit (+25 points)
     if (currentOptionPrice >= setup.targetPrice) {
       shouldExit = true;
       exitReason = 'TARGET';
-      addLog(`🎯 TARGET HIT! +30 points at ₹${currentOptionPrice.toFixed(2)}`);
+      addLog(`🎯 TARGET HIT! +${SNIPER.targetPoints} points at ₹${currentOptionPrice.toFixed(2)}`);
     }
 
-    // Stop loss hit (-30 points)
+    // Stop loss hit (-15 points)
     if (currentOptionPrice <= setup.stopLossPrice) {
       shouldExit = true;
       exitReason = 'STOPLOSS';
-      addLog(`🛑 STOP LOSS HIT! -30 points at ₹${currentOptionPrice.toFixed(2)}`);
+      addLog(`🛑 STOP LOSS HIT! -${SNIPER.stopPoints} points at ₹${currentOptionPrice.toFixed(2)}`);
     }
 
-    // Hard stop at 10:15 AM
-    if (timeValue >= 1015) {
+    // Hard stop at 10:30 AM
+    if (timeValue >= 1030) {
       shouldExit = true;
       exitReason = 'EOD';
-      addLog(`⏰ HARD STOP (10:15 AM) - Forcing exit at ₹${currentOptionPrice.toFixed(2)}`);
+      addLog(`⏰ HARD STOP (${SNIPER.hardStop} AM) - Forcing exit at ₹${currentOptionPrice.toFixed(2)}`);
     }
 
     if (shouldExit) {

@@ -141,7 +141,7 @@ async function publishPaytmToken(token) {
  * Compare mtimes and say so loudly rather than trusting anyone to remember.
  */
 function warnOnStaleConstantMirrors() {
-  for (const name of ['paytmMappings', 'niftyWeeklyOptions']) {
+  for (const name of ['paytmMappings', 'niftyWeeklyOptions', 'lotSize']) {
     const ts = join(__dirname, 'constants', `${name}.ts`);
     const js = join(__dirname, 'constants', 'generated', `${name}.js`);
     try {
@@ -156,6 +156,25 @@ function warnOnStaleConstantMirrors() {
       console.warn(`⚠️  Could not check constants/${name}: ${err.message}`);
     }
   }
+
+  // Validate configured expiry against NSE calendar
+  try {
+    const expiryFile = join(__dirname, 'constants', 'generated', 'niftyWeeklyOptions.js');
+    if (existsSync(expiryFile)) {
+      const content = readFileSync(expiryFile, 'utf8');
+      const match = /CURRENT_EXPIRY_DATE\s*=\s*['"]([^'"]+)['"]/.exec(content);
+      if (match) {
+        const configured = match[1];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (new Date(configured) < today) {
+          console.error(`🚨 [EXPIRY ALERT] CURRENT_EXPIRY_DATE (${configured}) is in the PAST! Run \`npm run generate:options\` immediately!`);
+        } else {
+          console.log(`✅ [Expiry Check] Configured weekly expiry is active: ${configured}`);
+        }
+      }
+    }
+  } catch (e) {}
 }
 
 const FAILOVER_INTERVAL_MS = 60_000;
@@ -330,8 +349,13 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
   // talk to it same-origin. Everything under /api/vision maps to the sidecar.
   if (reqUrl.pathname.startsWith('/api/vision')) {
     const rest = reqUrl.pathname.replace('/api/vision', '') || '/';
-    // Screenshots are served by the sidecar at /shots/<file>, everything else under /api.
-    const upstreamPath = rest.startsWith('/shots/') ? rest : `/api${rest === '/' ? '/status' : rest}`;
+    // Screenshots are served by the sidecar at /shots/<file> or /snapshots/<file>, everything else under /api.
+    let upstreamPath = `/api${rest === '/' ? '/status' : rest}`;
+    if (rest.startsWith('/shots/') || rest.startsWith('/snapshots/')) {
+      upstreamPath = rest;
+    } else if (rest.startsWith('/snapshots-files/')) {
+      upstreamPath = rest.replace('/snapshots-files', '/snapshots');
+    }
     const targetUrl = `${VISION_SIDECAR_URL}${upstreamPath}${reqUrl.search}`;
     const isEventStream = rest.startsWith('/events');
 
@@ -858,6 +882,11 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
                 readAccessToken: tokenData.read_access_token,
               });
 
+              // Publish token to Redis immediately with TTL until 23:59 IST
+              publishPaytmToken(tokenData.access_token).catch(err => {
+                console.warn('[Paytm Auth] Redis publish error:', err.message);
+              });
+
               console.log(`[Paytm] ✅ Auth complete for session: ${data.sessionId}`);
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
@@ -917,11 +946,9 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
         console.log(`[Fyers Order] Received order request: ${orderData.symbol} ${orderData.side === 1 ? 'BUY' : 'SELL'} ${orderData.qty} qty`);
 
         if (!appId || !token) {
-          // If no live Fyers credentials, return simulated fill confirmation
-          const simId = `SIM-FY-${Date.now()}`;
-          console.log(`[Fyers Order] No credentials configured. Providing simulated fill ID: ${simId}`);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ s: 'ok', id: simId, message: 'Simulated broker placement (credentials absent)' }));
+          console.warn(`[Fyers Order] REJECTED: Missing credentials (appId: ${Boolean(appId)}, token: ${Boolean(token)})`);
+          res.writeHead(412, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ s: 'error', code: 'NO_CREDENTIALS', message: 'Missing live Fyers credentials' }));
           return;
         }
 
@@ -952,14 +979,38 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
     req.on('end', async () => {
       try {
         const payload = JSON.parse(body || '{}');
-        const token = process.env.PAYTM_ACCESS_TOKEN;
-        console.log(`[Paytm Order] Received order request:`, payload);
+
+        // Resolve token in order: request header x-jwt-token, Authorization, Redis paytm:access_token, env
+        let token = req.headers['x-jwt-token'];
+        let tokenSource = 'header:x-jwt-token';
+        if (!token && req.headers['authorization']) {
+          token = req.headers['authorization'].replace(/^Bearer\s+/i, '');
+          tokenSource = 'header:authorization';
+        }
+        if (!token) {
+          try {
+            const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+            const auth = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+            if (url && auth) {
+              const { Redis } = await import('@upstash/redis');
+              token = await new Redis({ url, token: auth }).get('paytm:access_token');
+              if (token) tokenSource = 'redis:paytm:access_token';
+            }
+          } catch (e) {
+            console.warn('[Paytm Order] Redis token lookup failed:', e.message);
+          }
+        }
+        if (!token && process.env.PAYTM_ACCESS_TOKEN) {
+          token = process.env.PAYTM_ACCESS_TOKEN;
+          tokenSource = 'env:PAYTM_ACCESS_TOKEN';
+        }
+
+        console.log(`[Paytm Order] Received order request: ${payload.security_id} ${payload.txn_type} ${payload.quantity} qty (token from ${tokenSource || 'NONE'})`);
 
         if (!token) {
-          const simId = `SIM-PM-${Date.now()}`;
-          console.log(`[Paytm Order] No token configured. Simulated fill ID: ${simId}`);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, order_id: simId, message: 'Simulated broker placement' }));
+          console.warn(`[Paytm Order] REJECTED: Missing live Paytm token`);
+          res.writeHead(412, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, code: 'NO_CREDENTIALS', message: 'Missing live Paytm access token' }));
           return;
         }
 
@@ -980,6 +1031,211 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
         console.error('[Paytm Order] Error:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, message: err.message }));
+      }
+    });
+  }
+  // Fyers Order Book Sync
+  else if (reqUrl.pathname === '/api/fyers/orders' && req.method === 'GET') {
+    const appId = req.headers['x-fyers-app-id'] || process.env.FYERS_CLIENT_ID;
+    const token = req.headers['x-fyers-access-token'] || process.env.FYERS_ACCESS_TOKEN;
+    if (!appId || !token) {
+      res.writeHead(412, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ s: 'error', code: 'NO_CREDENTIALS', message: 'Missing live Fyers credentials' }));
+      return;
+    }
+    try {
+      const resp = await fetch('https://api-t1.fyers.in/api/v3/orders', {
+        headers: { 'Authorization': `${appId.trim()}:${token.trim()}` }
+      });
+      const data = await resp.json();
+      res.writeHead(resp.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ s: 'error', message: err.message }));
+    }
+  }
+  // Paytm Order Book Sync
+  else if (reqUrl.pathname === '/api/paytm/orders' && req.method === 'GET') {
+    let token = req.headers['x-jwt-token'];
+    if (!token && process.env.PAYTM_ACCESS_TOKEN) token = process.env.PAYTM_ACCESS_TOKEN;
+    if (!token) {
+      res.writeHead(412, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, code: 'NO_CREDENTIALS', message: 'Missing live Paytm access token' }));
+      return;
+    }
+    try {
+      const resp = await fetch('https://developer.paytmmoney.com/orders/v1/user/orders', {
+        headers: { 'x-jwt-token': token }
+      });
+      const data = await resp.json();
+      res.writeHead(resp.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: err.message }));
+    }
+  }
+  // Fyers Positions Sync
+  else if (reqUrl.pathname === '/api/fyers/positions' && req.method === 'GET') {
+    const appId = req.headers['x-fyers-app-id'] || process.env.FYERS_CLIENT_ID;
+    const token = req.headers['x-fyers-access-token'] || process.env.FYERS_ACCESS_TOKEN;
+    if (!appId || !token) {
+      res.writeHead(412, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ s: 'error', code: 'NO_CREDENTIALS', message: 'Missing live Fyers credentials' }));
+      return;
+    }
+    try {
+      const resp = await fetch('https://api-t1.fyers.in/api/v3/positions', {
+        headers: { 'Authorization': `${appId.trim()}:${token.trim()}` }
+      });
+      const data = await resp.json();
+      res.writeHead(resp.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ s: 'error', message: err.message }));
+    }
+  }
+  // Paytm Positions Sync
+  else if (reqUrl.pathname === '/api/paytm/positions' && req.method === 'GET') {
+    let token = req.headers['x-jwt-token'];
+    if (!token && process.env.PAYTM_ACCESS_TOKEN) token = process.env.PAYTM_ACCESS_TOKEN;
+    if (!token) {
+      res.writeHead(412, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, code: 'NO_CREDENTIALS', message: 'Missing live Paytm access token' }));
+      return;
+    }
+    try {
+      const resp = await fetch('https://developer.paytmmoney.com/orders/v1/position', {
+        headers: { 'x-jwt-token': token }
+      });
+      const data = await resp.json();
+      res.writeHead(resp.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, message: err.message }));
+    }
+  }
+  // Global Kill Switch: POST /api/kill
+  else if (reqUrl.pathname === '/api/kill' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      const payload = JSON.parse(body || '{}');
+      const today = new Date().toISOString().split('T')[0];
+      const killKey = `autotrade_killed_${today}`;
+      const record = {
+        killedAt: Date.now(),
+        reason: payload.reason || 'Manual kill switch triggered',
+        date: today
+      };
+
+      try {
+        const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+        const auth = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+        if (url && auth) {
+          const { Redis } = await import('@upstash/redis');
+          await new Redis({ url, token: auth }).set(killKey, JSON.stringify(record), { ex: 86400 });
+        }
+      } catch (err) {
+        console.warn('[Kill Switch] Redis persistence error:', err.message);
+      }
+
+      console.warn(`[Kill Switch] FLATTEN & DISARM LATCHED: ${JSON.stringify(record)}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, killed: true, date: today, record }));
+    });
+  }
+  // Global Kill Switch Status: GET /api/kill/status
+  else if (reqUrl.pathname === '/api/kill/status' && req.method === 'GET') {
+    const today = new Date().toISOString().split('T')[0];
+    const killKey = `autotrade_killed_${today}`;
+    let killed = false;
+    let details = null;
+
+    try {
+      const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+      const auth = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+      if (url && auth) {
+        const { Redis } = await import('@upstash/redis');
+        const val = await new Redis({ url, token: auth }).get(killKey);
+        if (val) {
+          killed = true;
+          details = typeof val === 'string' ? JSON.parse(val) : val;
+        }
+      }
+    } catch (err) {
+      console.warn('[Kill Switch Status] Redis read error:', err.message);
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ killed, date: today, details }));
+  }
+  // Token Status: GET /api/token-status
+  else if (reqUrl.pathname === '/api/token-status' && req.method === 'GET') {
+    let paytmToken = null;
+    let paytmSource = null;
+    try {
+      const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+      const auth = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+      if (url && auth) {
+        const { Redis } = await import('@upstash/redis');
+        paytmToken = await new Redis({ url, token: auth }).get('paytm:access_token');
+        if (paytmToken) paytmSource = 'redis';
+      }
+    } catch (e) {}
+
+    if (!paytmToken && process.env.PAYTM_ACCESS_TOKEN) {
+      paytmToken = process.env.PAYTM_ACCESS_TOKEN;
+      paytmSource = 'env';
+    }
+
+    const fyersToken = process.env.FYERS_ACCESS_TOKEN || null;
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      paytm: {
+        present: Boolean(paytmToken),
+        source: paytmSource
+      },
+      fyers: {
+        present: Boolean(fyersToken),
+        source: fyersToken ? 'env' : null
+      }
+    }));
+  }
+  // Append-only Disk Journal: POST /api/journal/:stream
+  else if (reqUrl.pathname.startsWith('/api/journal/') && req.method === 'POST') {
+    const stream = reqUrl.pathname.replace('/api/journal/', '').replace(/[^a-zA-Z0-9_-]/g, '');
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0];
+        const os = await import('os');
+        let journalDir = path.join(os.homedir(), 'TradingJournal', dateStr);
+        try {
+          fs.mkdirSync(journalDir, { recursive: true });
+        } catch (e) {
+          journalDir = path.join(process.cwd(), 'TradingJournal', dateStr);
+          fs.mkdirSync(journalDir, { recursive: true });
+        }
+        const filePath = path.join(journalDir, `${stream}.jsonl`);
+        const record = {
+          timestamp: now.getTime(),
+          isoTime: now.toISOString(),
+          ...payload
+        };
+        fs.appendFileSync(filePath, JSON.stringify(record) + '\n');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, stream, filePath }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
       }
     });
   }

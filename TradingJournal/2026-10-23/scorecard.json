@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-23",
+  "configVersion": "v1-bd5a65d2",
+  "metrics": {
+    "totalTrades": 0,
+    "evaluatedTrades": 0,
+    "syntheticExcluded": 0,
+    "wins": 0,
+    "losses": 0,
+    "winRate": 0,
+    "wilsonInterval95": [
+      0,
+      100
+    ],
+    "profitFactor": 0,
+    "netPnl": 0
+  },
+  "baselines": {
+    "alwaysNeutralAccuracy": 0,
+    "majorityClass": "LOSS",
+    "majorityBaselineHitRate": 100
+  },
+  "premarketStatus": "NO_DATA",
+  "gateAudits": 0,
+  "trades": []
+}

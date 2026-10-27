@@ -17,8 +17,9 @@
 
 import { EnrichedFyersQuote, FyersQuote } from '../types';
 import { dbService } from './db';
+import { NIFTY_LOT_SIZE } from '../constants/lotSize';
 
-export const NIFTY_LOT_SIZE = 75;
+export { NIFTY_LOT_SIZE };
 const STORE_KEY = 'paper_trading_book_v1';
 const DEFAULT_CAPITAL = 100000;
 

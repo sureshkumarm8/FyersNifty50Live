@@ -925,6 +925,100 @@ export const PreMarketAnalyzer: React.FC<{
     }
   };
 
+  const sha1Hex = async (buffer: ArrayBuffer): Promise<string> => {
+    const hashBuffer = await crypto.subtle.digest('SHA-1', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const pullTodaysCharts = async () => {
+    setIsGenerating(true);
+    addLog('📷 Requesting chart snapshots from vision capture engine...');
+    try {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+      const response = await fetch('/api/vision/snapshots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir: `data/snapshots/${today}/` })
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        addLog(`❌ Snapshot capture failed (${response.status}): ${err.message || err.error || 'Server error'}`);
+        return;
+      }
+
+      const res = await response.json();
+      const snapshotList: Array<{ name?: string; file?: string; filename?: string; url?: string; path?: string; stale?: boolean; hash?: string }> =
+        res.snapshots || res.files || res.data || [];
+
+      if (!snapshotList.length) {
+        addLog('⚠️ No snapshots returned by vision engine.');
+        return;
+      }
+
+      addLog(`📥 Processing ${snapshotList.length} snapshot(s)...`);
+      const fetchedFiles: File[] = [];
+      const storedHashes: Record<string, string> = JSON.parse(localStorage.getItem('snapshot_hashes') || '{}');
+      const newHashes: Record<string, string> = { ...storedHashes };
+
+      for (const item of snapshotList) {
+        const fileName = item.name || item.file || item.filename || (item.url ? item.url.split('/').pop() : 'chart.png')!;
+        if (item.stale) {
+          addLog(`⚠️ Skipping stale snapshot from engine: ${fileName}`);
+          continue;
+        }
+
+        const fileUrl = item.url || (fileName.startsWith('http') ? fileName : `/api/vision/snapshots-files/${today}/${fileName}`);
+        try {
+          let imgRes = await fetch(fileUrl);
+          if (!imgRes.ok) {
+            imgRes = await fetch(`/api/vision/shots/${fileName}`);
+          }
+          if (!imgRes.ok) {
+            addLog(`⚠️ Could not fetch image for ${fileName}`);
+            continue;
+          }
+
+          const buf = await imgRes.arrayBuffer();
+          const hash = await sha1Hex(buf);
+          if (storedHashes[fileName] === hash) {
+            addLog(`⚠️ Snapshot ${fileName} is byte-identical to previous capture (stale). Skipping.`);
+            continue;
+          }
+          newHashes[fileName] = hash;
+          fetchedFiles.push(new File([buf], fileName, { type: 'image/png' }));
+        } catch (fetchErr: any) {
+          addLog(`❌ Failed to fetch ${fileName}: ${fetchErr.message}`);
+        }
+      }
+
+      localStorage.setItem('snapshot_hashes', JSON.stringify(newHashes));
+
+      if (fetchedFiles.length > 0) {
+        addLog(`📸 Ingesting ${fetchedFiles.length} fresh chart(s)...`);
+        await ingestFiles(fetchedFiles);
+        addLog(`🎯 Generating Pre-Market Decision...`);
+        await generatePreMarketDecision();
+      } else {
+        addLog('ℹ️ No fresh un-stale snapshots available to ingest.');
+      }
+    } catch (err: any) {
+      addLog(`❌ Error in pullTodaysCharts: ${err.message}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  useEffect(() => {
+    const hash = window.location.hash || '';
+    const search = window.location.search || '';
+    if (hash.includes('autopull=1') || search.includes('autopull=1')) {
+      addLog('🚀 Autopull triggered via URL parameter');
+      pullTodaysCharts();
+    }
+  }, []);
+
   /**
    * Recompute one phase on demand, against whatever the market is doing now.
    *
@@ -1388,6 +1482,7 @@ export const PreMarketAnalyzer: React.FC<{
           hasUnanalyzed={hasUnanalyzed}
           onGenerate={generatePreMarketDecision}
           isGenerating={isGenerating}
+          onPullCharts={pullTodaysCharts}
           onCopy={() => copyToClipboard()}
           onExport={exportSession}
           onImport={importSession}
