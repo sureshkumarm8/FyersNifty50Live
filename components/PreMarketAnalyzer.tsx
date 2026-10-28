@@ -925,84 +925,83 @@ export const PreMarketAnalyzer: React.FC<{
     }
   };
 
-  const sha1Hex = async (buffer: ArrayBuffer): Promise<string> => {
-    const hashBuffer = await crypto.subtle.digest('SHA-1', buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  };
+  // Set once fresh charts are attached and analysed; the effect below then builds
+  // the decision from the next render. Calling generatePreMarketDecision directly
+  // after ingesting would read this render's (pre-pull) charts.
+  const [decisionQueued, setDecisionQueued] = useState(false);
+  useEffect(() => {
+    if (!decisionQueued || isGenerating) return;
+    setDecisionQueued(false);
+    void generatePreMarketDecision();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decisionQueued, isGenerating, analyzedCharts]);
 
+  /**
+   * Asks the vision sidecar to capture its snapshot set, then routes each PNG
+   * into its chart slot, replacing whatever an earlier pull or upload left there.
+   *
+   * Sidecar contract (POST /api/snapshots): { ok, dir, stamp, results: [{ id, ok,
+   * file, error? }] }. The PNGs land in `dir` (its Downloads folder), which the
+   * sidecar does not serve, so they are read through /api/vision-snapshot-file/.
+   */
   const pullTodaysCharts = async () => {
     setIsGenerating(true);
     addLog('📷 Requesting chart snapshots from vision capture engine...');
     try {
-      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-      const response = await fetch('/api/vision/snapshots', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir: `data/snapshots/${today}/` })
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        addLog(`❌ Snapshot capture failed (${response.status}): ${err.message || err.error || 'Server error'}`);
+      let response: Response | null = null;
+      // A scheduled capture holds the browser for a few seconds; wait it out.
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        response = await fetch('/api/vision/snapshots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (response.status !== 409 || attempt === 4) break;
+        addLog(`⏳ Capture engine busy with a scheduled run - retrying (${attempt}/3)...`);
+        await new Promise(r => setTimeout(r, 8000));
+      }
+      if (!response || !response.ok) {
+        const err = await response?.json().catch(() => ({})) ?? {};
+        addLog(`❌ Snapshot capture failed (${response?.status ?? '?'}): ${err.message || err.error || 'Server error'}`);
         return;
       }
 
       const res = await response.json();
-      const snapshotList: Array<{ name?: string; file?: string; filename?: string; url?: string; path?: string; stale?: boolean; hash?: string }> =
-        res.snapshots || res.files || res.data || [];
-
-      if (!snapshotList.length) {
+      const results: Array<{ id?: string; label?: string; ok?: boolean; file?: string; error?: string }> =
+        Array.isArray(res.results) ? res.results : [];
+      if (!results.length) {
         addLog('⚠️ No snapshots returned by vision engine.');
         return;
       }
 
-      addLog(`📥 Processing ${snapshotList.length} snapshot(s)...`);
-      const fetchedFiles: File[] = [];
-      const storedHashes: Record<string, string> = JSON.parse(localStorage.getItem('snapshot_hashes') || '{}');
-      const newHashes: Record<string, string> = { ...storedHashes };
-
-      for (const item of snapshotList) {
-        const fileName = item.name || item.file || item.filename || (item.url ? item.url.split('/').pop() : 'chart.png')!;
-        if (item.stale) {
-          addLog(`⚠️ Skipping stale snapshot from engine: ${fileName}`);
+      const fetched: { file: File; slot: ChartSlotId }[] = [];
+      for (const item of results) {
+        const name = item.file || item.id || 'snapshot';
+        if (!item.ok || !item.file) {
+          addLog(`⚠️ ${item.label || name}: capture failed${item.error ? ` - ${item.error}` : ''}`);
           continue;
         }
-
-        const fileUrl = item.url || (fileName.startsWith('http') ? fileName : `/api/vision/snapshots-files/${today}/${fileName}`);
+        const slot = guessSlot(item.file, []);
+        if (!slot) continue; // e.g. the Google Finance report: not a pre-market chart
         try {
-          let imgRes = await fetch(fileUrl);
+          const imgRes = await fetch(`/api/vision-snapshot-file/${encodeURIComponent(item.file)}`, { cache: 'no-store' });
           if (!imgRes.ok) {
-            imgRes = await fetch(`/api/vision/shots/${fileName}`);
-          }
-          if (!imgRes.ok) {
-            addLog(`⚠️ Could not fetch image for ${fileName}`);
+            const err = await imgRes.json().catch(() => ({}));
+            addLog(`⚠️ Could not read ${item.file}${err.dir ? ` from ${err.dir}` : ''} (${imgRes.status})`);
             continue;
           }
-
           const buf = await imgRes.arrayBuffer();
-          const hash = await sha1Hex(buf);
-          if (storedHashes[fileName] === hash) {
-            addLog(`⚠️ Snapshot ${fileName} is byte-identical to previous capture (stale). Skipping.`);
-            continue;
-          }
-          newHashes[fileName] = hash;
-          fetchedFiles.push(new File([buf], fileName, { type: 'image/png' }));
+          fetched.push({ file: new File([buf], item.file, { type: 'image/png' }), slot });
         } catch (fetchErr: any) {
-          addLog(`❌ Failed to fetch ${fileName}: ${fetchErr.message}`);
+          addLog(`❌ Failed to fetch ${item.file}: ${fetchErr.message}`);
         }
       }
 
-      localStorage.setItem('snapshot_hashes', JSON.stringify(newHashes));
-
-      if (fetchedFiles.length > 0) {
-        addLog(`📸 Ingesting ${fetchedFiles.length} fresh chart(s)...`);
-        await ingestFiles(fetchedFiles);
-        addLog(`🎯 Generating Pre-Market Decision...`);
-        await generatePreMarketDecision();
-      } else {
-        addLog('ℹ️ No fresh un-stale snapshots available to ingest.');
+      if (!fetched.length) {
+        addLog('ℹ️ No pre-market charts could be loaded from this capture.');
+        return;
       }
+      addLog(`📸 Ingesting ${fetched.length} fresh chart(s) from ${res.stamp || 'capture'}...`);
+      // Forced slot per file: today's capture replaces the previous image.
+      for (const { file, slot } of fetched) await ingestFiles([file], slot);
+      addLog('🎯 Generating Pre-Market Decision...');
+      setDecisionQueued(true);
     } catch (err: any) {
       addLog(`❌ Error in pullTodaysCharts: ${err.message}`);
     } finally {

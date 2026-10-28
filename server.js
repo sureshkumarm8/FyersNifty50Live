@@ -3,7 +3,8 @@ import http from 'http';
 import { URL } from 'url';
 import crypto from 'crypto';
 import { readFileSync, writeFileSync, existsSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
+import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
@@ -70,6 +71,11 @@ function saveTokensToFile(broker, tokens) {
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5001; 
 // Local chart-capture + vision-analysis engine (the liveImageAnalsis project).
 const VISION_SIDECAR_URL = (process.env.VISION_SIDECAR_URL || 'http://localhost:4321').replace(/\/+$/, '');
+// The sidecar's "snapshot set" writes PNGs to its Downloads folder, which it does
+// not serve over HTTP. The folder it reports after each capture is remembered here
+// so the PreMkt "Pull Today's Charts" button can fetch the files it just wrote.
+let visionSnapshotDir = process.env.VISION_SNAPSHOT_DIR || join(homedir(), 'Downloads');
+const SNAPSHOT_FILE = /^\d{8}-\d{6}-[a-z0-9-]+\.png$/i;
 const LOCAL_MODE = process.env.LOCAL_MODE === 'true' || process.env.NODE_ENV === 'development';
 
 // In-memory storage for local testing
@@ -347,6 +353,23 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
   // process because it needs a real, non-headless Chrome with a persistent broker
   // login - something serverless cannot host. We reverse-proxy it so the SPA can
   // talk to it same-origin. Everything under /api/vision maps to the sidecar.
+  // Serves one sidecar snapshot PNG by bare file name only (no paths), from the
+  // folder the sidecar reported. Must precede the /api/vision proxy below, and
+  // shares its no-auth exemption via the /api/vision prefix.
+  if (reqUrl.pathname.startsWith('/api/vision-snapshot-file/') && req.method === 'GET') {
+    const name = decodeURIComponent(reqUrl.pathname.slice('/api/vision-snapshot-file/'.length));
+    const root = resolve(visionSnapshotDir);
+    const file = resolve(root, name);
+    if (!SNAPSHOT_FILE.test(name) || !file.startsWith(root + sep) || !existsSync(file)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'snapshot_not_found', name, dir: root }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+    res.end(readFileSync(file));
+    return;
+  }
+
   if (reqUrl.pathname.startsWith('/api/vision')) {
     const rest = reqUrl.pathname.replace('/api/vision', '') || '/';
     // Screenshots are served by the sidecar at /shots/<file> or /snapshots/<file>, everything else under /api.
@@ -389,6 +412,12 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
 
       const contentType = upstream.headers.get('content-type') || 'application/json';
       const buffer = Buffer.from(await upstream.arrayBuffer());
+      if (rest === '/snapshots' && req.method === 'POST' && upstream.ok) {
+        try {
+          const dir = JSON.parse(buffer.toString('utf8')).dir;
+          if (typeof dir === 'string' && dir) visionSnapshotDir = dir;
+        } catch { /* non-JSON reply: keep the previous folder */ }
+      }
       res.writeHead(upstream.status, {
         'Content-Type': contentType,
         'Cache-Control': contentType.startsWith('image/') ? 'public, max-age=3600' : 'no-store'
