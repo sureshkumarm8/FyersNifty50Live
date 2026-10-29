@@ -5,15 +5,19 @@
 
 import { CONFIG_VERSION } from '../constants/strategyConfig';
 
-export type JournalStream =
-  | 'decisions'
-  | 'gates'
-  | 'orders'
-  | 'fills'
-  | 'exits'
-  | 'premarket'
-  | 'vision'
-  | 'alerts';
+/** Keep in step with BROWSER_STREAMS in ops/journal.mjs — the server rejects anything else. */
+export const JOURNAL_STREAMS = [
+  'decisions',
+  'gates',
+  'orders',
+  'fills',
+  'exits',
+  'premarket',
+  'vision',
+  'alerts'
+] as const;
+
+export type JournalStream = (typeof JOURNAL_STREAMS)[number];
 
 export interface JournalRecord {
   stream: JournalStream;
@@ -62,6 +66,11 @@ class JournalService {
     this.flush();
   }
 
+  /** Records waiting to reach the server. A growing number means the server is down. */
+  public pending(): number {
+    return this.queue.length;
+  }
+
   public async flush(): Promise<void> {
     if (this.flushing || this.queue.length === 0) return;
     this.flushing = true;
@@ -80,6 +89,12 @@ class JournalService {
         });
 
         if (res.ok) {
+          this.queue.shift();
+          this.saveQueue();
+        } else if (res.status >= 400 && res.status < 500) {
+          // The server will never accept this record (unknown stream, bad
+          // body, not loopback). Retrying it would block every record behind it.
+          console.warn(`[Journal] Dropped a ${item.stream} record: HTTP ${res.status}`);
           this.queue.shift();
           this.saveQueue();
         } else {

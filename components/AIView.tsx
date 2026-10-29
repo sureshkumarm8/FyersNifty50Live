@@ -123,6 +123,9 @@ export const AIView: React.FC<AIViewProps> = ({ stocks, niftyLtp, historyLog, op
       case 'claude': return { label: '🟠 Claude', chip: 'bg-orange-500/20 text-orange-300', dot: 'bg-orange-400' };
       case 'cerebras': return { label: '🟡 Cerebras', chip: 'bg-amber-500/20 text-amber-300', dot: 'bg-amber-400' };
       case 'ollama': return { label: '🦙 Local Llama', chip: 'bg-cyan-500/20 text-cyan-300', dot: 'bg-cyan-400' };
+      case 'claude-code': return { label: '🟠 Local Claude', chip: 'bg-orange-500/20 text-orange-300', dot: 'bg-orange-400' };
+      case 'copilot': return { label: '⚫ Copilot CLI', chip: 'bg-slate-500/20 text-slate-200', dot: 'bg-slate-300' };
+      case 'antigravity': return { label: '🔵 Antigravity', chip: 'bg-blue-500/20 text-blue-300', dot: 'bg-blue-400' };
       default: return { label: '🟢 Gemini', chip: 'bg-green-500/20 text-green-300', dot: 'bg-green-400' };
     }
   }, [credentials.aiProvider]);

@@ -8,6 +8,11 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
+import { istDateStr } from './ops/time.mjs';
+import { appendJournal, isBrowserStream } from './ops/journal.mjs';
+import { localOnlyAllowed } from './ops/net.mjs';
+import { handleOpsRoute } from './ops/routes.mjs';
+import { handleLocalAiRoute } from './ops/localAiRoute.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -324,6 +329,16 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
   
   const authHeader = req.headers['authorization'];
 
+  // Kill switch, order placement, the journal and the ops agent answer only
+  // this machine (see ops/net.mjs). That check replaces the header check below
+  // for those routes, which is why they are also in the exemption list.
+  if (!localOnlyAllowed(req, reqUrl.pathname)) {
+    console.warn(`[Server] 403 — ${req.method} ${reqUrl.pathname} from ${req.socket.remoteAddress} (origin ${req.headers.origin || 'none'})`);
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: 'This endpoint is only available from this machine.' }));
+    return;
+  }
+
   // Skip auth check in local mode or for local testing endpoints
   const isLocalEndpoint = reqUrl.pathname.startsWith('/api/get-history') || 
                           reqUrl.pathname.startsWith('/api/save-history') ||
@@ -340,7 +355,13 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
                           // whenever LOCAL_MODE is off.
                           reqUrl.pathname.startsWith('/api/discover-options') ||
                           reqUrl.pathname.startsWith('/api/get-redis-data') ||
-                          reqUrl.pathname.startsWith('/api/save-redis-data');
+                          reqUrl.pathname.startsWith('/api/save-redis-data') ||
+                          // Loopback-only routes (checked above).
+                          reqUrl.pathname.startsWith('/api/ops/') ||
+                          reqUrl.pathname.startsWith('/api/local-ai/') ||
+                          reqUrl.pathname.startsWith('/api/journal/') ||
+                          reqUrl.pathname.startsWith('/api/kill') ||
+                          reqUrl.pathname === '/api/token-status';
 
   if (!LOCAL_MODE && !isLocalEndpoint && !authHeader) {
      res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -623,6 +644,18 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
     }
+    return;
+  }
+
+  // --- LOCAL AI CLIs: Claude Code / Copilot / Antigravity (ops/localAiRoute.mjs) ---
+  if (reqUrl.pathname.startsWith('/api/local-ai/')) {
+    await handleLocalAiRoute(req, res, reqUrl);
+    return;
+  }
+
+  // --- NIFTY50OPS AGENT (ops/routes.mjs) ---
+  if (reqUrl.pathname.startsWith('/api/ops/')) {
+    await handleOpsRoute(req, res, reqUrl, { port: PORT });
     return;
   }
 
@@ -1152,8 +1185,11 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
     req.on('end', async () => {
-      const payload = JSON.parse(body || '{}');
-      const today = new Date().toISOString().split('T')[0];
+      let payload = {};
+      try { payload = JSON.parse(body || '{}'); } catch { /* a bad body still latches the kill */ }
+      // IST, matching the client's autotrade_killed_<IST date> key. A UTC key
+      // disagreed with the client between 00:00 and 05:30 IST.
+      const today = istDateStr();
       const killKey = `autotrade_killed_${today}`;
       const record = {
         killedAt: Date.now(),
@@ -1172,14 +1208,21 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
         console.warn('[Kill Switch] Redis persistence error:', err.message);
       }
 
-      console.warn(`[Kill Switch] FLATTEN & DISARM LATCHED: ${JSON.stringify(record)}`);
+      // This only records the flag. Closing broker positions happens in the
+      // browser's OrderManager (flattenAndDisarmAll), not here.
+      console.warn(`[Kill Switch] DISARM latched (flag only, no server-side flatten): ${JSON.stringify(record)}`);
+      try {
+        appendJournal('alerts', { rule: 'kill_latched', severity: 'critical', message: record.reason, source: 'server' });
+      } catch (err) {
+        console.warn('[Kill Switch] Journal write failed:', err.message);
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, killed: true, date: today, record }));
     });
   }
   // Global Kill Switch Status: GET /api/kill/status
   else if (reqUrl.pathname === '/api/kill/status' && req.method === 'GET') {
-    const today = new Date().toISOString().split('T')[0];
+    const today = istDateStr();
     const killKey = `autotrade_killed_${today}`;
     let killed = false;
     let details = null;
@@ -1236,30 +1279,30 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
     }));
   }
   // Append-only Disk Journal: POST /api/journal/:stream
+  // Written to TradingJournal/<IST date>/<stream>.jsonl by ops/journal.mjs.
   else if (reqUrl.pathname.startsWith('/api/journal/') && req.method === 'POST') {
-    const stream = reqUrl.pathname.replace('/api/journal/', '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const stream = reqUrl.pathname.slice('/api/journal/'.length);
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
-    req.on('end', async () => {
+    req.on('end', () => {
+      if (!isBrowserStream(stream)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: `Unknown journal stream: ${stream}` }));
+        return;
+      }
+      let payload;
       try {
-        const payload = JSON.parse(body || '{}');
-        const now = new Date();
-        const dateStr = now.toISOString().split('T')[0];
-        const os = await import('os');
-        let journalDir = path.join(os.homedir(), 'TradingJournal', dateStr);
-        try {
-          fs.mkdirSync(journalDir, { recursive: true });
-        } catch (e) {
-          journalDir = path.join(process.cwd(), 'TradingJournal', dateStr);
-          fs.mkdirSync(journalDir, { recursive: true });
-        }
-        const filePath = path.join(journalDir, `${stream}.jsonl`);
-        const record = {
-          timestamp: now.getTime(),
-          isoTime: now.toISOString(),
-          ...payload
-        };
-        fs.appendFileSync(filePath, JSON.stringify(record) + '\n');
+        payload = JSON.parse(body || '{}');
+      } catch {
+        payload = null;
+      }
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload) || body.length > 256_000) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Body must be a JSON object under 256 KB' }));
+        return;
+      }
+      try {
+        const { filePath } = appendJournal(stream, payload);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, stream, filePath }));
       } catch (err) {
@@ -1455,8 +1498,14 @@ server.on('request', (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`\n🚀 Local Server running at http://localhost:${PORT}`);
+// BIND_HOST=127.0.0.1 closes the LAN entirely (not HOST: zsh sets that to the
+// machine name). Unset keeps today's behaviour (all interfaces) so a phone or
+// tablet on the LAN still works; the kill switch, order placement, journal and
+// ops routes are loopback-only either way.
+const HOST = process.env.BIND_HOST || undefined;
+
+server.listen(PORT, HOST, () => {
+  console.log(`\n🚀 Local Server running at http://${HOST || 'localhost'}:${PORT}`);
   if (LOCAL_MODE) {
     console.log(`🔧 LOCAL MODE ENABLED - Using in-memory storage for testing`);
     console.log(`   • No Redis required`);

@@ -37,3 +37,4 @@ Nifty50_AI_config_tokens*.json
 # Python bytecode
 __pycache__/
 *.pyc
+data/ops-provider.json

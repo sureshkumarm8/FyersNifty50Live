@@ -26,6 +26,8 @@ import { evaluateTrailingStop, isTrailingStopTriggered } from '../../services/tr
 import { playOrderFilledChime, playGateArmedChime } from '../../utils/audioChimes';
 import { scheduleBackground } from '../../services/heartbeat';
 import { visionService } from '../../services/visionService';
+import { logJournal } from '../../services/journal';
+import { reportEngine, reportPositions } from '../../services/opsState';
 import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
 import AutoTradeHistory from './AutoTradeHistory';
 import { NIFTY_LOT_SIZE } from '../../constants/lotSize';
@@ -507,6 +509,12 @@ export const MomentumPanel: React.FC<Props> = ({
     const stalled = ageMs > 2 * 60_000;
     if (stalled !== stalledRef.current) {
       stalledRef.current = stalled;
+      logJournal('alerts', {
+        rule: stalled ? 'feed_stalled' : 'feed_recovered',
+        severity: stalled ? 'warning' : 'info',
+        source: 'momentum',
+        message: stalled ? `Newest snapshot is ${Math.round(ageMs / 1000)}s old` : 'Snapshots are arriving again'
+      });
       addLog(
         stalled
           ? `⚠️ Feed stalled — newest snapshot is ${Math.round(ageMs / 1000)}s old. No entry can clear the 90s freshness gate until snapshots resume.`
@@ -547,6 +555,19 @@ export const MomentumPanel: React.FC<Props> = ({
 
     if (gateLogRef.current !== gate.reason) {
       gateLogRef.current = gate.reason;
+      // Only on change, like the log line: a gate that holds for an hour is one row.
+      logJournal('gates', {
+        strategy: 'MOMENTUM',
+        mode: tradingModeRef.current,
+        ready: gate.ready,
+        blockedBy: gate.blockedBy,
+        reason: gate.reason,
+        direction: s.direction,
+        score: Math.round(s.confidence * 10) / 10,
+        threshold: settingsRef.current.minConfidence,
+        spot: ltp,
+        snapshotAt: signalAtRef.current || null
+      });
       addLog(gate.reason, gate.ready ? 'good' : 'warn');
     }
   }, [addLog, assessEntry]);
@@ -971,6 +992,35 @@ export const MomentumPanel: React.FC<Props> = ({
     : null;
 
   const blockingGate = entryGate.checks.find(c => c.status === 'block');
+
+  // --- ops bridge (report only) ---------------------------------------------
+  useEffect(() => {
+    reportEngine('momentum', {
+      state: running ? 'RUNNING' : 'STOPPED',
+      guardWarm: historyLog.length >= MIN_HISTORY,
+      lastGate: entryGate.ready ? 'All gates passed' : entryGate.reason
+    });
+  }, [running, historyLog.length, entryGate.ready, entryGate.reason]);
+
+  useEffect(() => {
+    reportPositions('momentum', positions.map(p => {
+      const meta = entryRef.current[p.symbol];
+      const stopPct = meta?.stopPct ?? settings.stopPct;
+      const targetPct = meta?.targetPct ?? settings.targetPct;
+      const stop = meta?.currentTrailingStop ?? (p.avgPrice > 0 ? p.avgPrice * (1 - stopPct / 100) : undefined);
+      return {
+        book: tradingMode === 'LIVE' ? 'live' as const : 'paper' as const,
+        strategy: 'MOMENTUM',
+        symbol: p.symbol,
+        qty: p.quantity,
+        entry: p.avgPrice,
+        ltp: Number.isFinite(p.ltp) ? p.ltp : null,
+        ...(stop != null && Number.isFinite(stop) ? { stop: Math.round(stop * 100) / 100, stopBasis: 'premium' as const } : {}),
+        ...(p.avgPrice > 0 ? { target: Math.round(p.avgPrice * (1 + targetPct / 100) * 100) / 100 } : {}),
+        openedAt: p.entryTime
+      };
+    }));
+  }, [positions, settings.stopPct, settings.targetPct, tradingMode]);
   const gatesApplicable = entryGate.checks.filter(c => c.status !== 'skip').length;
   const gatesPassed = entryGate.checks.filter(c => c.status === 'pass').length;
 

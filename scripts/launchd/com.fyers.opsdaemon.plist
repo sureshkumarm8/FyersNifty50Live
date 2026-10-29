@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nifty50Ops daemon: replaces com.fyers.morningrunner.
+  Starts 08:25 local time (this Mac runs on IST) Monday to Friday; the daemon
+  itself exits on NSE holidays and after 15:45. A crash (non-zero exit) is
+  restarted; a clean exit is not. KeepAlive/SuccessfulExit also implies
+  RunAtLoad, so it starts at login too: mid-session that resumes the watchdog,
+  any other time it exits straight away.
+
+  Install:
+    launchctl bootout gui/$(id -u)/com.fyers.morningrunner 2>/dev/null
+    cp scripts/launchd/com.fyers.opsdaemon.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fyers.opsdaemon.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fyers.opsdaemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/Users/SureshKumar.M/Documents/Suresh/AITools/FyersNifty50Live/scripts/opsDaemon.mjs</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/SureshKumar.M/Documents/Suresh/AITools/FyersNifty50Live</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+    </array>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/SureshKumar.M/Documents/Suresh/AITools/FyersNifty50Live/TradingJournal/launchd/opsdaemon.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/SureshKumar.M/Documents/Suresh/AITools/FyersNifty50Live/TradingJournal/launchd/opsdaemon.stderr.log</string>
+</dict>
+</plist>

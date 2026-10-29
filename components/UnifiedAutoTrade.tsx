@@ -28,6 +28,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { DenseProvider } from './ui/panels';
 import MomentumPanel from './autotrade/MomentumPanel';
 import SniperPanel from './autotrade/SniperPanel';
+import { reportEngine } from '../services/opsState';
 
 type TradeMode = 'PAPER' | 'LIVE';
 type ActiveTab = 'sniper' | 'momentum';
@@ -174,6 +175,17 @@ const UnifiedAutoTrade: React.FC<UnifiedAutoTradeProps> = ({ credentials, niftyL
   );
 
   const effectiveMode = panelProps.tradingMode;
+
+  // Tell the ops state bridge what is actually in force (report only).
+  useEffect(() => {
+    reportEngine('autotrade', {
+      mode: effectiveMode,
+      requestedMode: mode,
+      killed: isKilled,
+      armed: status.sniper.active || status.momentum.active,
+      broker: credentials.dataProvider ?? null
+    });
+  }, [effectiveMode, mode, isKilled, status, credentials.dataProvider]);
   const live = effectiveMode === 'LIVE';
   const modeLocked = isKilled || !expiryValidation.valid;
   const timeText = new Date(clock).toLocaleTimeString('en-IN', {

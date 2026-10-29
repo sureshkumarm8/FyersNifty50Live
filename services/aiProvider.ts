@@ -1,7 +1,24 @@
 import { GoogleGenAI } from "@google/genai";
-import { FyersCredentials, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_VISION_MODEL } from "../types";
+import { FyersCredentials, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_VISION_MODEL, AIProviderChoice, LOCAL_CLI_AI_PROVIDERS, LocalCliAIProvider } from "../types";
 
-export type AIProviderId = 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama';
+export type AIProviderId = AIProviderChoice;
+
+export const isLocalCliProvider = (p: string | undefined): p is LocalCliAIProvider =>
+  (LOCAL_CLI_AI_PROVIDERS as readonly string[]).includes(p ?? '');
+
+export const LOCAL_CLI_LABEL: Record<LocalCliAIProvider, string> = {
+  'claude-code': 'Local Claude (Claude Code)',
+  copilot: 'GitHub Copilot CLI',
+  antigravity: 'Antigravity CLI'
+};
+
+/** The model saved for a local CLI; empty means "the CLI's own default". */
+export function localCliModel(credentials: FyersCredentials, provider: LocalCliAIProvider): string {
+  const m = provider === 'claude-code' ? credentials.claudeCodeModel
+    : provider === 'copilot' ? credentials.copilotModel
+    : credentials.antigravityModel;
+  return (m || '').trim();
+}
 
 // API Call Tracker
 interface APICallLog {
@@ -60,6 +77,7 @@ class APICallTracker {
     const claudeCalls = this.calls.filter(c => c.provider === 'claude').length;
     const cerebrasCalls = this.calls.filter(c => c.provider === 'cerebras').length;
     const ollamaCalls = this.calls.filter(c => c.provider === 'ollama').length;
+    const localCliCalls = this.calls.filter(c => isLocalCliProvider(c.provider)).length;
 
     return {
       lastMinute: lastMinute.length,
@@ -74,6 +92,7 @@ class APICallTracker {
       claudeCalls,
       cerebrasCalls,
       ollamaCalls,
+      localCliCalls,
       recentCalls: this.calls.slice(-10).reverse()
     };
   }
@@ -103,6 +122,8 @@ export interface APIStats {
   claudeCalls: number;
   cerebrasCalls: number;
   ollamaCalls: number;
+  /** Claude Code, Copilot and Antigravity CLIs combined. */
+  localCliCalls: number;
   recentCalls: APICallLog[];
 }
 
@@ -116,7 +137,9 @@ export async function callAI(
   const jsonMode = options?.jsonMode ?? false;
   
   // Check which provider to use
-  if (provider === 'ollama') {
+  if (isLocalCliProvider(provider)) {
+    return callLocalCliAI(provider, systemInstruction, userContent, jsonMode, localCliModel(credentials, provider));
+  } else if (provider === 'ollama') {
     const model = credentials.ollamaModel || DEFAULT_OLLAMA_MODEL;
     return callOllamaAI(credentials.ollamaBaseUrl, systemInstruction, userContent, jsonMode, model);
   } else if (provider === 'groq' && credentials.groqApiKey) {
@@ -135,6 +158,96 @@ export async function callAI(
     throw new Error('No valid AI API key configured');
   }
 }
+
+/**
+ * Claude Code / Copilot / Antigravity, run by the local server with the CLI's
+ * own sign-in (see ops/localAI.mjs). Only works against the local server -
+ * the deployed build has no machine to run a CLI on. Expect seconds, not
+ * milliseconds: every call starts the CLI afresh.
+ */
+async function callLocalCliAI(
+  provider: LocalCliAIProvider,
+  systemInstruction: string,
+  userContent: string,
+  jsonMode: boolean,
+  model: string
+): Promise<string> {
+  console.log(`%c📡 Calling ${LOCAL_CLI_LABEL[provider]}${model ? ` (${model})` : ''}`, 'color: #f97316; font-size: 11px;');
+  const startTime = performance.now();
+  try {
+    const res = await fetch('/api/local-ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model: model || undefined, system: systemInstruction, prompt: userContent, jsonMode })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const hint = res.status === 404
+        ? ' The local server has no /api/local-ai route - local CLIs only work with `npm run dev`.'
+        : res.status === 403 ? ' Local CLIs are only available from this machine.' : '';
+      throw new Error(`${LOCAL_CLI_LABEL[provider]}: ${body.error || `HTTP ${res.status}`}.${hint}`);
+    }
+    apiCallTracker.logCall({
+      timestamp: Date.now(),
+      provider,
+      model: body.model || model || undefined,
+      duration: performance.now() - startTime,
+      success: true,
+      tokensUsed: (body.usage?.inputTokens ?? 0) + (body.usage?.outputTokens ?? 0)
+    });
+    return String(body.text ?? '');
+  } catch (error: any) {
+    apiCallTracker.logCall({
+      timestamp: Date.now(),
+      provider,
+      model: model || undefined,
+      duration: performance.now() - startTime,
+      success: false,
+      error: error?.message
+    });
+    throw error;
+  }
+}
+
+/** Which local CLIs the server can find. Sends no prompt. */
+export async function listLocalCliProviders(): Promise<Array<{ provider: LocalCliAIProvider; label: string; installed: boolean; version: string | null }>> {
+  const res = await fetch('/api/local-ai/status', { cache: 'no-store' });
+  if (!res.ok) throw new Error(res.status === 404 ? 'The local server has no /api/local-ai route (run `npm run dev`).' : `HTTP ${res.status}`);
+  return (await res.json()).providers;
+}
+
+export interface AntigravityLogin {
+  state: 'idle' | 'starting' | 'awaiting_code' | 'verifying' | 'signed_in' | 'failed' | 'cancelled';
+  url?: string;
+  expiresAt?: number | null;
+  message?: string | null;
+}
+
+async function antigravityAuth<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`/api/local-ai/antigravity/auth${path}`, body === undefined
+    ? { cache: 'no-store' }
+    : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 404) {
+    // Node does not reload server.js: a server started before this feature
+    // existed answers with its own 404 until it is restarted.
+    throw new Error('The app server (port 5001) is running older code without Antigravity sign-in. Restart it: stop `npm run dev` and start it again.');
+  }
+  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+  return json as T;
+}
+
+/**
+ * Antigravity sign-in, driven by the local server (ops/antigravityAuth.mjs):
+ * start → open the Google link → paste the code shown on
+ * antigravity.google/oauth-callback → submit. The CLI keeps the token.
+ */
+export const antigravitySignIn = {
+  status: () => antigravityAuth<{ installed: boolean; signedIn: boolean; login: AntigravityLogin }>(''),
+  start: () => antigravityAuth<{ login: AntigravityLogin }>('/start', {}).then(r => r.login),
+  submitCode: (code: string) => antigravityAuth<{ login: AntigravityLogin }>('/code', { code }).then(r => r.login),
+  cancel: () => antigravityAuth<{ login: AntigravityLogin }>('/cancel', {}).then(r => r.login)
+};
 
 async function callGeminiAI(
   apiKey: string,
@@ -783,7 +896,11 @@ export function isVisionConfigured(credentials: FyersCredentials): boolean {
  * misattributes the analysis.
  */
 export function getAIProviderLabel(credentials: FyersCredentials): string {
-  switch (credentials.aiProvider || 'gemini') {
+  const provider = credentials.aiProvider || 'gemini';
+  if (isLocalCliProvider(provider)) {
+    return `${LOCAL_CLI_LABEL[provider]} · ${localCliModel(credentials, provider) || 'default model'}`;
+  }
+  switch (provider) {
     case 'ollama':
       return `Local Llama · ${credentials.ollamaModel || DEFAULT_OLLAMA_MODEL}`;
     case 'groq':
@@ -1004,6 +1121,8 @@ async function callOllamaVision(
  * Ollama needs no key because it runs locally.
  */
 export function isAIConfigured(credentials: FyersCredentials): boolean {
+  // Local CLIs use their own sign-in; whether they are signed in shows up on the first call.
+  if (isLocalCliProvider(credentials.aiProvider)) return true;
   switch (credentials.aiProvider || 'gemini') {
     case 'ollama': return true;
     case 'groq': return !!credentials.groqApiKey;

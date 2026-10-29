@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FyersCredentials, MarketSnapshot, EnrichedFyersQuote } from '../types';
 import { imageStorageService } from '../services/imageStorage';
+import { logJournal } from '../services/journal';
 import { callAI, callAIVision, getAIProviderLabel, getVisionProviderLabel, isAIConfigured, isVisionConfigured, resolveVisionProvider } from '../services/aiProvider';
 import { SNIPER, buildSniperPlaybook, resolvePhase, istMinutes, SniperPlaybook, ZonePlay } from '../services/sniperPlaybook';
 import {
@@ -561,6 +562,30 @@ export function migrateDecision(saved: PreMarketDecision): PreMarketDecision {
 }
 
 
+/**
+ * One `premarket` journal row per saved plan. The day record needs what the
+ * engines were handed and when, not the whole analysis object.
+ */
+function journalDecision(decision: PreMarketDecision, trigger: string): void {
+  logJournal('premarket', {
+    trigger,
+    generatedAt: decision.generatedAt,
+    basis: decision.basis ?? null,
+    provisional: decision.provisional === true,
+    spot: decision.spot,
+    spotSource: decision.spotSource,
+    primaryBias: decision.primaryBias,
+    confidence: decision.confidence,
+    verdict: decision.playbook?.verdict ?? null,
+    headline: decision.playbook?.verdictHeadline ?? null,
+    expectedSupport: decision.expectedSupport,
+    expectedResistance: decision.expectedResistance,
+    chartCoverage: decision.chartCoverage,
+    staleCharts: decision.staleCharts,
+    aiReview: decision.aiReview ? { stance: decision.aiReview.stance, conviction: decision.aiReview.conviction } : null
+  });
+}
+
 export const PreMarketAnalyzer: React.FC<{
   credentials: FyersCredentials;
   historyLog?: MarketSnapshot[];
@@ -914,6 +939,7 @@ export const PreMarketAnalyzer: React.FC<{
 
       setPreMarketDecision(decision);
       imageStorageService.saveState(DECISION_STATE_KEY, decision).catch(() => {});
+      journalDecision(decision, 'generate');
       addLog(`✅ Decision ready · ${decision.primaryBias} · confidence ${decision.confidence}%`);
       if (isProvisional(basis)) {
         addLog(`🕘 Provisional (${BASIS_LABEL[basis]}) — auto re-checks at 09:10 and 09:15 IST.`);
@@ -1074,6 +1100,7 @@ export const PreMarketAnalyzer: React.FC<{
             };
         setPreMarketDecision(next);
         imageStorageService.saveState(DECISION_STATE_KEY, next).catch(() => {});
+        journalDecision(next, 'recut');
         addLog(
           `🧪 Recomputed "${BASIS_LABEL[basis]}" at ${Math.round(resolved.spot)} (${resolved.source.toLowerCase()}) — ` +
             `${record.playbook.verdict} · ${record.expectedSupport}–${record.expectedResistance} (${record.expectedRange} pts)`
@@ -1174,6 +1201,7 @@ export const PreMarketAnalyzer: React.FC<{
         };
         setPreMarketDecision(next);
         imageStorageService.saveState(DECISION_STATE_KEY, next).catch(() => {});
+        journalDecision(next, 'ai_review');
         addLog(
           `🤖 Analyst pass on "${BASIS_LABEL[basis]}" — ${review.stance.replace('_', ' ')} at ${review.conviction}% · ${review.headline}`
         );
@@ -1251,6 +1279,7 @@ export const PreMarketAnalyzer: React.FC<{
       });
       setPreMarketDecision(next);
       imageStorageService.saveState(DECISION_STATE_KEY, next).catch(() => {});
+      journalDecision(next, 'recut');
 
       const changed = next.playbook.verdictHeadline !== decision.playbook.verdictHeadline;
       addLog(
@@ -1384,6 +1413,7 @@ export const PreMarketAnalyzer: React.FC<{
       reviewedCutRef.current = null;
       setPreMarketDecision(decision);
       await imageStorageService.saveState(DECISION_STATE_KEY, decision).catch(() => {});
+      if (decision) journalDecision(decision, 'import');
 
       const analyzed = CHART_SLOTS.map(s => result.charts[s.id]).filter(
         c => c?.verdict && !isUnreadable(c.verdict)

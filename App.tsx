@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain, Sparkles, Eye, GraduationCap } from 'lucide-react';
+import { Settings, RefreshCw, Activity, Search, AlertCircle, BarChart3, List, PieChart, Clock, Zap, Moon, Pause, Play, Download, Bot, BrainCircuit, TrendingUp, Layers, Brain, Sparkles, Eye, GraduationCap, Radar } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { StockTable } from './components/StockTable';
 import { StockDetail } from './components/StockDetail';
@@ -17,6 +17,7 @@ import PatternDashboard from './components/PatternDashboard';
 import VisionAnalysis from './components/VisionAnalysis';
 import PaperTrading from './components/PaperTrading';
 import OpeningPilot from './components/OpeningPilot';
+import OpsAgent from './components/OpsAgent';
 import { FyersCredentials, FyersQuote, SortConfig, SortField, EnrichedFyersQuote, MarketSnapshot, ViewMode, SessionHistoryMap, SessionCandle, SectorMetric, PivotPoints } from './types';
 import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './services/fyersService';
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP, fetchPayTMFromRedis } from './services/paytmService';
@@ -30,6 +31,7 @@ import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 import { istMinutesOf } from './services/sniperEngine';
 import { dayStrength, isUsableBaseline, shouldAnchorSymbol } from './services/marketStrength';
 import { startNewTradingDay } from './services/tradingDayManager';
+import { LiveInputs, startOpsStatePublisher } from './services/opsState';
 
 // Declare global window cache for PayTM options
 declare global {
@@ -146,6 +148,7 @@ const App: React.FC = () => {
     claudeCalls: 0,
     cerebrasCalls: 0,
     ollamaCalls: 0,
+    localCliCalls: 0,
     recentCalls: []
   });
 
@@ -155,6 +158,16 @@ const App: React.FC = () => {
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [isDecoyMode, setIsDecoyMode] = useState(false);
   const prevViewModeRef = useRef<ViewMode>('summary');
+
+  // Nifty50Ops state bridge: one tab posts a read-only snapshot every 5 s so
+  // the server-side agent and watchdog can see this tab (services/opsState.ts).
+  const opsLiveRef = useRef<LiveInputs>({ spot: null, lastQuoteAt: null, source: null });
+  opsLiveRef.current = {
+    spot: niftyLtp,
+    lastQuoteAt: lastUpdated || null,
+    source: credentials.dataProvider ?? 'paytm'
+  };
+  useEffect(() => startOpsStatePublisher(() => opsLiveRef.current), []);
 
   const prevStocksRef = useRef<Record<string, FyersQuote>>({});
   const initialStocksRef = useRef<Record<string, FyersQuote>>({});
@@ -1937,6 +1950,9 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('autotrade')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'autotrade' ? 'bg-purple-600 text-white shadow-md animate-pulse' : 'text-slate-400 hover:text-white'}`}>
                    <Layers size={14} /> AutoTrade
                </button>
+               <button onClick={() => handleSetViewMode('ops')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ops' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Radar size={14} /> Nifty50Ops
+               </button>
                <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Sparkles size={14} /> AI Lab
                </button>
@@ -2258,6 +2274,12 @@ const App: React.FC = () => {
         {viewMode === 'vision' && (
             <div className="flex flex-col h-full overflow-hidden">
                 <VisionAnalysis niftyLtp={niftyLtp} />
+            </div>
+        )}
+
+        {viewMode === 'ops' && (
+            <div className="flex flex-col h-full overflow-hidden">
+                <OpsAgent active credentials={credentials} />
             </div>
         )}
 

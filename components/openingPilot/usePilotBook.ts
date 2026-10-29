@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { emptyPilotBook } from '../../services/openingPilot';
 import { PilotBook } from '../../services/openingPilotTypes';
 import { loadPilotBook, PILOT_WRITER_LOCK, savePilotBook } from '../../services/openingPilotStore';
+import { logJournal } from '../../services/journal';
+import { pilotJournalEvents } from '../../services/pilotJournal';
 
 export function usePilotBook() {
   const [book, setBook] = useState<PilotBook>(emptyPilotBook);
@@ -69,6 +71,8 @@ export function usePilotBook() {
       // Publish only after the IndexedDB transaction commits; a failed save must
       // not create a success-shaped paper fill that disappears on reload.
       await savePilotBook(next);
+      // Journal only what the committed save actually changed.
+      for (const e of pilotJournalEvents(current.current, next)) logJournal(e.stream, e.data);
       current.current = next;
       if (mounted.current) {
         setBook(next);
