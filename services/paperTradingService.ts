@@ -18,9 +18,12 @@
 import { EnrichedFyersQuote, FyersQuote } from '../types';
 import { dbService } from './db';
 import { NIFTY_LOT_SIZE } from '../constants/lotSize';
+import { logJournal } from './journal';
 
 export { NIFTY_LOT_SIZE };
 const STORE_KEY = 'paper_trading_book_v1';
+/** Read-only access for the ops state bridge, which must not call load(). */
+export const PAPER_STORE_KEY = STORE_KEY;
 const DEFAULT_CAPITAL = 100000;
 
 export type PaperOptionType = 'CE' | 'PE';
@@ -451,6 +454,10 @@ class PaperTradingEngine {
     return this.book;
   }
 
+  public isLoaded(): boolean {
+    return this.loaded;
+  }
+
   public subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -676,6 +683,11 @@ class PaperTradingEngine {
     this.book.positions = [position, ...this.book.positions];
     this.book.totalCharges += charges.total;
     this.commit();
+    // Engine trades are journaled by their OrderManager; this is the hand-placed path.
+    logJournal('fills', {
+      book: 'paper', strategy: 'MANUAL', symbol: position.symbol, side: 'BUY',
+      quantity, price, stopLoss, target
+    });
 
     return {
       ok: true,
@@ -745,6 +757,12 @@ class PaperTradingEngine {
     this.book.realizedPnl += netPnl;
     this.book.totalCharges += exitCharges.total;
     this.commit();
+    if (trade.source !== 'AUTOTRADE') {
+      logJournal('exits', {
+        book: 'paper', strategy: 'MANUAL', symbol: trade.symbol, side: 'SELL', quantity: trade.quantity,
+        entryPrice: trade.entryPrice, exitPrice, pnl: Math.round(netPnl * 100) / 100, reason, exitNote: exitNote ?? null
+      });
+    }
 
     return {
       ok: true,

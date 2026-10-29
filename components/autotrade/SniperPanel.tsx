@@ -33,6 +33,8 @@ import { getAIProviderLabel } from '../../services/aiProvider';
 import { isMarketLive, readFlag, writeFlag } from '../../services/marketSession';
 import { estimateOptionPremium } from '../../services/optionPricing';
 import { PaperExitReason, paperTradingEngine } from '../../services/paperTradingService';
+import { logJournal } from '../../services/journal';
+import { reportEngine, reportPositions } from '../../services/opsState';
 import { BlockList, Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr } from './shared';
 import AutoTradeHistory from './AutoTradeHistory';
 import { RangeBoard, SetupBoard, ThesisBoard, fmt } from './SniperViews';
@@ -1007,6 +1009,72 @@ export const SniperPanel: React.FC<Props> = ({
       return { text: 'WAITING', tone: 'warn' as const, sub: 'Inside the window, but the setup has not appeared.' };
     return { text: 'STAND DOWN', tone: 'muted' as const, sub: phaseLabelOf(phase) };
   }, [evaluation, positions.length, dayState.tradeTaken, phase]);
+
+  // --- ops bridge (read-only: these effects only report, never decide) ------
+  /**
+   * One `decisions` row per change of the protocol's verdict, not per tick.
+   * The key is what a reviewer would call "the engine changed its mind".
+   */
+  const decisionKeyRef = useRef('');
+  useEffect(() => {
+    if (!evaluation) return;
+    const codes = evaluation.blocks.map(b => b.code);
+    const key = [
+      evaluation.phase, evaluation.canEnter, evaluation.mustExit, codes.join(','), evaluation.setup?.symbol ?? ''
+    ].join('|');
+    if (key === decisionKeyRef.current) return;
+    decisionKeyRef.current = key;
+    logJournal('decisions', {
+      strategy: 'SNIPER',
+      mode: tradingMode,
+      armed,
+      phase: evaluation.phase,
+      canEnter: evaluation.canEnter,
+      mustExit: evaluation.mustExit,
+      blocks: evaluation.blocks.map(b => ({ code: b.code, message: b.message })),
+      setup: evaluation.setup
+        ? {
+            symbol: evaluation.setup.symbol,
+            direction: evaluation.setup.direction,
+            entrySpot: evaluation.setup.entrySpot,
+            targetSpot: evaluation.setup.targetSpot,
+            stopSpot: evaluation.setup.stopSpot,
+            confidence: evaluation.setup.confidence
+          }
+        : null,
+      spot: niftyLtp,
+      thesis: thesis.state,
+      tradeTaken: dayState.tradeTaken
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evaluation]);
+
+  useEffect(() => {
+    reportEngine('sniper', {
+      state: banner.text,
+      armed,
+      playbookDate: loadedPlanRef.current ? istDayKey(loadedPlanRef.current) : null,
+      lastDecision: evaluation
+        ? evaluation.canEnter
+          ? 'All gates green'
+          : evaluation.blocks[0]?.message ?? phaseLabelOf(evaluation.phase)
+        : undefined
+    });
+  }, [banner.text, armed, playbook, evaluation]);
+
+  useEffect(() => {
+    // The Sniper's stop and target are Nifty spot levels, not premiums.
+    reportPositions('sniper', positions.map(p => ({
+      book: tradingMode === 'LIVE' ? 'live' as const : 'paper' as const,
+      strategy: 'SNIPER',
+      symbol: p.symbol,
+      qty: p.quantity,
+      entry: p.avgPrice,
+      ltp: Number.isFinite(p.ltp) ? p.ltp : null,
+      ...(activeSetup ? { stop: activeSetup.stopSpot, stopBasis: 'spot' as const, target: activeSetup.targetSpot } : {}),
+      openedAt: p.entryTime
+    })));
+  }, [positions, activeSetup, tradingMode]);
 
   const bannerCls = {
     good: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 shadow-[0_0_60px_-20px_rgba(16,185,129,0.8)]',

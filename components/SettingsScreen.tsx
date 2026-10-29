@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FyersCredentials, TradingSystemProtocol, OLLAMA_MODELS, OLLAMA_VISION_MODELS, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_VISION_MODEL } from '../types';
+import { AIProviderChoice, FyersCredentials, LocalCliAIProvider, TradingSystemProtocol, OLLAMA_MODELS, OLLAMA_VISION_MODELS, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_VISION_MODEL } from '../types';
 import { 
   Save, ShieldCheck, Upload, Download, Trash2, 
   ArrowLeft, ToggleLeft, ToggleRight, 
@@ -13,7 +13,8 @@ import {
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
-import { apiCallTracker, APIStats, testOllamaConnection, isBlockedLocalOllama } from '../services/aiProvider';
+import { apiCallTracker, APIStats, testOllamaConnection, isBlockedLocalOllama, isLocalCliProvider } from '../services/aiProvider';
+import LocalAISettings from './LocalAISettings';
 import { TokenGeneratorModal } from './TokenGeneratorModal';
 import { startNewTradingDay } from '../services/tradingDayManager';
 
@@ -91,7 +92,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [googleApiKey, setGoogleApiKey] = useState(currentCreds.googleApiKey || '');
   const [groqApiKey, setGroqApiKey] = useState(currentCreds.groqApiKey || '');
   const [claudeApiKey, setClaudeApiKey] = useState(currentCreds.claudeApiKey || '');
-  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama'>(currentCreds.aiProvider || 'gemini');
+  const [selectedAiProvider, setSelectedAiProvider] = useState<AIProviderChoice>(currentCreds.aiProvider || 'gemini');
+  const [localCliModels, setLocalCliModels] = useState<Record<LocalCliAIProvider, string>>({
+    'claude-code': currentCreds.claudeCodeModel || '',
+    copilot: currentCreds.copilotModel || '',
+    antigravity: currentCreds.antigravityModel || ''
+  });
   const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'mixtral-8x7b-32768');
   const [geminiModel, setGeminiModel] = useState(currentCreds.geminiModel || 'gemini-2.0-flash');
   const [claudeModel, setClaudeModel] = useState(currentCreds.claudeModel || 'claude-3-5-sonnet-20241022');
@@ -228,6 +234,9 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       ollamaBaseUrl,
       ollamaModel,
       ollamaVisionModel,
+      claudeCodeModel: localCliModels['claude-code'],
+      copilotModel: localCliModels.copilot,
+      antigravityModel: localCliModels.antigravity,
       bypassMarketHours, 
       refreshInterval, 
       aiEnabled, 
@@ -859,7 +868,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 </div>
                                 <select 
                                     value={selectedAiProvider} 
-                                    onChange={(e) => setSelectedAiProvider(e.target.value as 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama')}
+                                    onChange={(e) => setSelectedAiProvider(e.target.value as AIProviderChoice)}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                 >
                                     <option value="gemini">Gemini AI (Free: 1M tokens/day)</option>
@@ -867,6 +876,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                     <option value="claude">Claude AI (Paid: $0.80-$15/1M)</option>
                                     <option value="cerebras">Cerebras AI (Fast: 600 req/min)</option>
                                     <option value="ollama">Local Llama / Ollama (Offline: Free & Private)</option>
+                                    <optgroup label="Local CLIs on this Mac (your signed-in account)">
+                                        <option value="claude-code">Local Claude (Claude Code CLI)</option>
+                                        <option value="copilot">GitHub Copilot CLI</option>
+                                        <option value="antigravity">Google Antigravity CLI</option>
+                                    </optgroup>
                                 </select>
                                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -1254,6 +1268,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                               </div>
                             </>
                          )}
+
+                          {isLocalCliProvider(selectedAiProvider) && (
+                            <LocalAISettings
+                              provider={selectedAiProvider}
+                              model={localCliModels[selectedAiProvider]}
+                              onModelChange={m => setLocalCliModels(prev => ({ ...prev, [selectedAiProvider]: m }))}
+                              enabled={aiEnabled}
+                            />
+                          )}
                     </div>
                 </div>
 
@@ -2054,7 +2077,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                         <BarChart4 size={20} className="text-purple-400" />
                         Provider Breakdown
                     </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-6">
                         <div>
                             <div className="text-sm text-slate-400 mb-2">Total Calls</div>
                             <div className="text-3xl font-bold text-white">{apiStats.total}</div>
@@ -2092,6 +2115,13 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             <div className="text-3xl font-bold text-cyan-400">{apiStats.ollamaCalls}</div>
                             <div className="text-xs text-slate-500 mt-1">
                                 {apiStats.total > 0 ? ((apiStats.ollamaCalls / apiStats.total) * 100).toFixed(1) : 0}% · Free
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-sm text-slate-400 mb-2">Local CLI Calls</div>
+                            <div className="text-3xl font-bold text-orange-300">{apiStats.localCliCalls ?? 0}</div>
+                            <div className="text-xs text-slate-500 mt-1">
+                                {apiStats.total > 0 ? (((apiStats.localCliCalls ?? 0) / apiStats.total) * 100).toFixed(1) : 0}% · Claude Code / Copilot / Antigravity
                             </div>
                         </div>
                     </div>

@@ -4,6 +4,7 @@
  */
 
 import { FyersCredentials } from '../types';
+import { logJournal } from './journal';
 
 /** IST calendar day, used to expire an intraday book overnight. */
 const istDayKey = (ts: number = Date.now()): string =>
@@ -67,6 +68,8 @@ export class OrderManager {
   private syncInterval: any = null;
   private activeProtectiveStops: Map<string, string> = new Map(); // symbol -> brokerOrderId
   private mismatchDetectedSince: number | null = null;
+  /** The mismatch alarm re-fires every sync; the journal wants one row per episode. */
+  private mismatchJournaled = false;
   private onMismatchAlarm?: (msg: string) => void;
   /**
    * Where this book is mirrored so it survives a page reload.
@@ -199,13 +202,40 @@ export class OrderManager {
 
     this.orders.set(orderId, order);
 
+    let result: BrokerResponse | null = null;
     try {
-      return this.paperTrading ? await this.simulateOrder(order) : await this.executeRealOrder(order);
+      result = this.paperTrading ? await this.simulateOrder(order) : await this.executeRealOrder(order);
+      return result;
     } finally {
       // Mirror the book after every attempt — fills, rejections and all — so a
       // reload picks up exactly what the engine believes it holds.
       this.persist();
+      this.journal('orders', {
+        orderId: order.id,
+        symbol,
+        side,
+        type,
+        quantity,
+        price: price ?? null,
+        triggerPrice: triggerPrice ?? null,
+        status: order.status,
+        brokerOrderId: order.brokerOrderId ?? null,
+        rejectionReason: order.rejectionReason ?? null,
+        message: result?.message ?? null
+      });
     }
+  }
+
+  /** Which engine owns this book, read off its storage key. */
+  private strategy(): string {
+    const key = this.storageKey ?? '';
+    if (key.startsWith('sniper')) return 'SNIPER';
+    if (key.startsWith('momentum')) return 'MOMENTUM';
+    return 'UNKNOWN';
+  }
+
+  private journal(stream: 'orders' | 'fills' | 'exits' | 'alerts', data: Record<string, any>) {
+    logJournal(stream, { book: this.paperTrading ? 'paper' : 'live', strategy: this.strategy(), ...data });
   }
 
   /**
@@ -513,12 +543,17 @@ export class OrderManager {
           } else if (Date.now() - this.mismatchDetectedSince > 10_000) {
             const msg = `POSITION MISMATCH ALARM: Broker holds ${openBrokerCount} open positions, app holds ${localCount}. Auto-trade disarmed.`;
             console.error(`[Broker Sync] ${msg}`);
+            if (!this.mismatchJournaled) {
+              this.mismatchJournaled = true;
+              this.journal('alerts', { rule: 'broker_mismatch', severity: 'critical', message: msg });
+            }
             if (this.onMismatchAlarm) {
               this.onMismatchAlarm(msg);
             }
           }
         } else {
           this.mismatchDetectedSince = null;
+          this.mismatchJournaled = false;
         }
       }
     } catch (err: any) {
@@ -637,6 +672,13 @@ export class OrderManager {
     if (order.status !== 'FILLED') return;
 
     const existing = this.positions.get(order.symbol);
+    this.journal('fills', {
+      orderId: order.id,
+      symbol: order.symbol,
+      side: order.side,
+      quantity: order.filledQty,
+      avgPrice: order.avgPrice
+    });
 
     if (!existing) {
       // New position
@@ -656,7 +698,21 @@ export class OrderManager {
       const newQty = existing.quantity + (order.side === 'BUY' ? order.filledQty : -order.filledQty);
       
       if (newQty === 0) {
-        // Position closed
+        // Position closed. A paper MARKET exit carries no fill price (avgPrice
+        // 0), so the last mark is the honest exit price for the record.
+        const exitPrice = order.avgPrice > 0 ? order.avgPrice : existing.ltp;
+        const direction = existing.quantity > 0 ? 1 : -1;
+        this.journal('exits', {
+          orderId: order.id,
+          symbol: order.symbol,
+          side: order.side,
+          quantity: Math.abs(existing.quantity),
+          entryPrice: existing.avgPrice,
+          exitPrice,
+          priceSource: order.avgPrice > 0 ? 'fill' : 'mark',
+          pnl: Math.round((exitPrice - existing.avgPrice) * Math.abs(existing.quantity) * direction * 100) / 100,
+          heldMs: order.timestamp - existing.entryTime
+        });
         this.positions.delete(order.symbol);
         this.cancelProtectiveStop(order.symbol);
       } else {

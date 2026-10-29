@@ -1,7 +1,15 @@
 
 
 
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'premarket' | 'autotrade' | 'patterns' | 'vision' | 'paper' | 'opening-pilot';
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'premarket' | 'autotrade' | 'patterns' | 'vision' | 'paper' | 'opening-pilot' | 'ops';
+
+export type AIProviderChoice =
+  | 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama'
+  | 'claude-code' | 'copilot' | 'antigravity';
+
+/** Providers served by a CLI on this machine through the local server (/api/local-ai). */
+export const LOCAL_CLI_AI_PROVIDERS = ['claude-code', 'copilot', 'antigravity'] as const;
+export type LocalCliAIProvider = (typeof LOCAL_CLI_AI_PROVIDERS)[number];
 
 export interface FyersCredentials {
   appId: string;
@@ -13,7 +21,7 @@ export interface FyersCredentials {
   claudeApiKey?: string;
   cerebrasApiKey?: string;
   aiEnabled?: boolean;
-  aiProvider?: 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama';
+  aiProvider?: AIProviderChoice;
   groqModel?: string;
   geminiModel?: string;
   claudeModel?: string;
@@ -24,6 +32,12 @@ export interface FyersCredentials {
   ollamaModel?: string;
   // Separate multimodal model - text models like llama3.1 cannot read chart images
   ollamaVisionModel?: string;
+
+  // Local AI CLIs, run by the local server with the CLI's own sign-in (no key here).
+  // Empty model = the CLI's default.
+  claudeCodeModel?: string;    // e.g. 'sonnet', 'haiku', 'opus'
+  copilotModel?: string;       // e.g. 'claude-sonnet-4.5', 'gpt-5'
+  antigravityModel?: string;
   
   // AI Feature Switches by Screen/Component
   aiAutoTradeEnabled?: boolean;     // SniperScope in AutoTrade

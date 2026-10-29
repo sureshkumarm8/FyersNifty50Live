@@ -19,6 +19,9 @@
     "runner": "node scripts/morningRunner.mjs",
     "grade": "node scripts/gradeDay.mjs",
     "promotion:check": "node scripts/promotionCheck.mjs",
+    "ops:test": "npx --yes tsx ml/journalEndpoint.test.ts && npx --yes tsx ml/opsGuard.test.ts && npx --yes tsx ml/opsState.test.ts && npx --yes tsx ml/opsWatchdog.test.ts && npx --yes tsx ml/opsAgent.replay.test.ts && npx --yes tsx ml/opsDayReplay.test.ts && npx --yes tsx ml/localAI.test.ts && npx --yes tsx ml/antigravityAuth.test.ts",
+    "ops:ask": "node ops/cli.mjs",
+    "ops:daemon": "node scripts/opsDaemon.mjs",
     "backtest:sniper": "node ml/backtest/sniperCore.mjs",
     "agent:check": "python3 -m agent.supervisor --check",
     "agent:daemon": "python3 -m agent.supervisor --daemon"
