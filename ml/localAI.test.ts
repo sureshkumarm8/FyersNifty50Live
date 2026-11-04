@@ -38,12 +38,23 @@ async function run() {
   const disabled = copilot.args.flatMap((a: string, i: number) => (a === '--disable-mcp-server' ? [copilot.args[i + 1]] : []));
   assert.deepStrictEqual(disabled, ['devicely', 'artemis']);
   assert.ok(copilot.args.includes('--disable-builtin-mcps') && copilot.args.includes('--no-custom-instructions'));
+  assert.strictEqual(copilot.args[copilot.args.indexOf('--available-tools') + 1], 'view');
+  assert.ok(copilot.args.includes('-s'));
   assert.strictEqual(copilot.stdin, null);
   const agy = buildCliArgs('antigravity', { system: 'S', prompt: 'P', timeoutMs: 90_000 });
   assert.strictEqual(agy.args[agy.args.indexOf('--mode') + 1], 'plan');
   assert.ok(agy.args.includes('--sandbox') && agy.args.includes('90s'));
   assert.throws(() => buildCliArgs('bash' as any, { prompt: 'x' }));
-  ok('each CLI is called with its own tools, MCP servers and settings switched off');
+  const vision = buildCliArgs('claude-code', { system: 'S', prompt: 'P', images: ['data:image/jpeg;base64,QUJD'] });
+  assert.ok(vision.args.includes('stream-json') && vision.args.includes('--strict-mcp-config'));
+  assert.strictEqual(vision.args[vision.args.indexOf('--tools') + 1], '');
+  const visionMsg = JSON.parse(vision.stdin);
+  assert.deepStrictEqual(visionMsg.message.content[0], { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' } });
+  assert.deepStrictEqual(visionMsg.message.content[1], { type: 'text', text: 'P' });
+  const copilotVision = buildCliArgs('copilot', { prompt: 'P', attachments: ['./chart-1.png'], mcpServers: [] });
+  assert.strictEqual(copilotVision.args[copilotVision.args.indexOf('--attachment') + 1], './chart-1.png');
+  assert.throws(() => buildCliArgs('antigravity', { prompt: 'P', attachments: ['./a.png'] }), /cannot read images/);
+  ok('each CLI is called with its own tools, MCP servers and settings switched off; Claude Code takes images as content blocks');
 
   // Output parsers
   const c = parseCliOutput('claude-code', JSON.stringify({ result: ' hi ', is_error: false, usage: { input_tokens: 2, cache_read_input_tokens: 10, output_tokens: 3 }, modelUsage: { 'claude-haiku-4-5': {} } }));
@@ -55,6 +66,8 @@ async function run() {
   const ag = parseCliOutput('antigravity', JSON.stringify({ status: 'SUCCESS', response: 'yo', usage: { input_tokens: 5, output_tokens: 1 } }));
   assert.strictEqual(ag.text, 'yo');
   assert.throws(() => parseCliOutput('antigravity', JSON.stringify({ status: 'ERROR', response: '', error: 'authentication failed or timed out' })), /Sign in with Google/);
+  const streamed = [JSON.stringify({ type: 'system' }), JSON.stringify({ type: 'assistant' }), JSON.stringify({ type: 'result', result: 'Red', is_error: false, usage: { input_tokens: 1, output_tokens: 2 } })].join('\n');
+  assert.strictEqual(parseCliOutput('claude-code', streamed).text, 'Red');
   ok('Claude Code JSON, Copilot text + usage, Antigravity JSON are parsed; failures are readable');
 
   // Text tool protocol

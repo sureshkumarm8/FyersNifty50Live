@@ -549,14 +549,22 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
   // Get config
   if (reqUrl.pathname === '/api/get-config' && req.method === 'GET') {
     try {
-      if (!localStore.config) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'No config found' }));
-        return;
-      }
-      
+      const envGoogleKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '';
+      const envGroqKey = process.env.GROQ_API_KEY || '';
+      const envPaytmToken = process.env.PAYTM_ACCESS_TOKEN || '';
+
+      const base = localStore.config || {};
+      const config = {
+        ...base,
+        googleApiKey: (base.googleApiKey && base.googleApiKey !== 'AIzaSc0vXlM') ? base.googleApiKey : envGoogleKey,
+        geminiModel: (base.geminiModel && base.geminiModel !== 'gemini-2.0-flash') ? base.geminiModel : 'gemini-2.5-flash',
+        groqApiKey: base.groqApiKey || envGroqKey,
+        paytmAccessToken: base.paytmAccessToken || envPaytmToken,
+        aiEnabled: base.aiEnabled !== undefined ? base.aiEnabled : true
+      };
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, data: localStore.config }));
+      res.end(JSON.stringify({ success: true, data: config }));
     } catch (err) {
       console.error('[Local] Get config error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });

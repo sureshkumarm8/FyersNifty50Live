@@ -5,7 +5,8 @@
  * returns the text. Loopback-only, like the ops routes.
  *
  *   GET  /api/local-ai/status   which CLIs are installed
- *   POST /api/local-ai/chat     { provider, model?, system, prompt, jsonMode? } → { text, model, usage, ms }
+ *   POST /api/local-ai/chat     { provider, model?, system, prompt, jsonMode?, images? } → { text, model, usage, ms }
+ *                               images (data URLs): Claude Code and Copilot only
  *
  *   Antigravity sign-in (see ops/antigravityAuth.mjs):
  *   GET  /api/local-ai/antigravity/auth          { signedIn, login: { state, url?, expiresAt?, message? } }
@@ -14,7 +15,7 @@
  *   POST /api/local-ai/antigravity/auth/cancel
  */
 
-import { LOCAL_CLI_PROVIDERS, localCliStatus, runLocalCli } from './localAI.mjs';
+import { IMAGE_PROVIDERS, LOCAL_CLI_PROVIDERS, localCliStatus, runLocalCli } from './localAI.mjs';
 import { antigravitySignedIn, cancelLogin, loginState, startLogin, submitCode } from './antigravityAuth.mjs';
 
 const json = (res, status, body) => {
@@ -81,7 +82,8 @@ export async function handleLocalAiRoute(req, res, reqUrl) {
     if (reqUrl.pathname === '/api/local-ai/chat' && req.method === 'POST') {
       let body;
       try {
-        body = JSON.parse(await readBody(req));
+        // Chart screenshots are a few hundred KB each as base64.
+        body = JSON.parse(await readBody(req, 20_000_000));
       } catch {
         return json(res, 400, { error: 'invalid JSON body' });
       }
@@ -89,16 +91,18 @@ export async function handleLocalAiRoute(req, res, reqUrl) {
       if (!LOCAL_CLI_PROVIDERS.includes(provider)) return json(res, 400, { error: `provider must be one of ${LOCAL_CLI_PROVIDERS.join(', ')}` });
       const prompt = String(body.prompt || '');
       if (!prompt.trim()) return json(res, 400, { error: 'prompt required' });
+      const images = Array.isArray(body.images) ? body.images.filter(i => typeof i === 'string' && i) : [];
+      if (images.length && !IMAGE_PROVIDERS.includes(provider)) return json(res, 400, { error: `${provider} cannot read images; use Claude Code or Copilot` });
       const system = [
         String(body.system || ''),
-        'You have no tools in this session; answer from the text provided only.',
+        images.length ? 'You have no tools in this session; answer from the text and images provided only.' : 'You have no tools in this session; answer from the text provided only.',
         body.jsonMode ? 'Respond with only valid JSON: no prose, no markdown code fences.' : ''
       ].filter(Boolean).join('\n\n');
       const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
 
       const abort = new AbortController();
       res.on('close', () => { if (!res.writableEnded) abort.abort(); });
-      const r = await runLocalCli(provider, { system, prompt, model, timeoutMs: 150_000, signal: abort.signal });
+      const r = await runLocalCli(provider, { system, prompt, model, images, timeoutMs: 150_000, signal: abort.signal });
       return json(res, 200, { text: body.jsonMode ? extractJson(r.text) : r.text, model: r.model, usage: r.usage, ms: r.ms });
     }
 

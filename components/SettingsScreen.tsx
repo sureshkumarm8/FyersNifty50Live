@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { REFRESH_OPTIONS, COLUMN_GLOSSARY } from '../constants';
 import { dbService } from '../services/db';
+import { imageStorageService } from '../services/imageStorage';
 import { apiCallTracker, APIStats, testOllamaConnection, isBlockedLocalOllama, isLocalCliProvider } from '../services/aiProvider';
 import LocalAISettings from './LocalAISettings';
 import { TokenGeneratorModal } from './TokenGeneratorModal';
@@ -99,7 +100,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     antigravity: currentCreds.antigravityModel || ''
   });
   const [groqModel, setGroqModel] = useState(currentCreds.groqModel || 'mixtral-8x7b-32768');
-  const [geminiModel, setGeminiModel] = useState(currentCreds.geminiModel || 'gemini-2.0-flash');
+  const [geminiModel, setGeminiModel] = useState((!currentCreds.geminiModel || currentCreds.geminiModel === 'gemini-2.0-flash') ? 'gemini-2.5-flash' : currentCreds.geminiModel);
   const [claudeModel, setClaudeModel] = useState(currentCreds.claudeModel || 'claude-3-5-sonnet-20241022');
   const [cerebrasApiKey, setCerebrasApiKey] = useState(currentCreds.cerebrasApiKey || '');
   const [cerebrasModel, setCerebrasModel] = useState(currentCreds.cerebrasModel || 'cerebras/llama-3.1-70b');
@@ -263,7 +264,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   };
 
   const handleNewDay = async () => {
-    if (confirm("🌅 Start a new trading day? This will clear today's session charts, order logs, and cached snapshots while keeping your API keys, credentials, and settings completely intact.")) {
+    if (confirm("🌅 Start a new trading day? This will clear today's pre-market analysis, session charts, order logs, and cached snapshots while keeping your API keys, credentials, and settings completely intact.")) {
       try {
         const res = await startNewTradingDay({ force: true });
         alert(`New trading day initialized for ${res.tradingDay}! Cleared ${res.clearedKeys.length} session items.`);
@@ -278,7 +279,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
     const confirmation = prompt("⚠️ FACTORY RESET WARNING: This will permanently delete your API credentials, tokens, saved protocols, and all historical data.\n\nType RESET to confirm:");
     if (confirmation === "RESET") {
       try {
-        await dbService.clearAll();
+        await Promise.all([
+          dbService.clearAll(),
+          imageStorageService.clearAll()
+        ]);
         localStorage.clear();
         window.location.reload();
       } catch (e) {
@@ -374,7 +378,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         aiEnabled: true,
         aiProvider: "gemini",
         groqModel: "mixtral-8x7b-32768",
-        geminiModel: "gemini-2.0-flash",
+        geminiModel: "gemini-2.5-flash",
         claudeModel: "claude-3-5-sonnet-20241022",
         dataProvider: "paytm",
         liveOrdersEnabled: false
@@ -919,7 +923,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none appearance-none cursor-pointer"
                                    >
                                        <optgroup label="🆓 FREE TIER MODELS (Recommended)">
-                                           <option value="gemini-2.0-flash">Gemini 2.0 Flash - RECOMMENDED (Latest, 1M tokens/day FREE)</option>
+                                           <option value="gemini-2.5-flash">Gemini 2.5 Flash - RECOMMENDED (Latest, 1M tokens/day FREE)</option>
                                            <option value="gemini-1.5-flash">Gemini 1.5 Flash - Alternative (1M tokens/day FREE)</option>
                                        </optgroup>
                                        <optgroup label="💎 PAID TIER MODELS">

@@ -9,6 +9,7 @@ let db: IDBDatabase | null = null;
 export const imageStorageService = {
   // Initialize IndexedDB
   async init(): Promise<void> {
+    if (typeof indexedDB === 'undefined') return Promise.resolve();
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
@@ -180,7 +181,9 @@ export const imageStorageService = {
 
   // Clear all images
   async clearImages(): Promise<void> {
+    if (typeof indexedDB === 'undefined') return Promise.resolve();
     if (!db) await this.init();
+    if (!db) return Promise.resolve();
 
     return new Promise((resolve, reject) => {
       const transaction = db!.transaction(IMAGES_STORE, 'readwrite');
@@ -192,9 +195,47 @@ export const imageStorageService = {
     });
   },
 
+  // Clear all analysis data and state
+  async clearAnalysis(): Promise<void> {
+    if (typeof indexedDB === 'undefined') return Promise.resolve();
+    if (!db) await this.init();
+    if (!db) return Promise.resolve();
+
+    return new Promise((resolve, reject) => {
+      const transaction = db!.transaction(ANALYSIS_STORE, 'readwrite');
+      const store = transaction.objectStore(ANALYSIS_STORE);
+      store.clear();
+
+      transaction.onerror = () => reject(transaction.error);
+      transaction.oncomplete = () => resolve();
+    });
+  },
+
+  // Clear all images AND analysis data completely (for New Day & Reset)
+  async clearAll(): Promise<void> {
+    if (typeof indexedDB === 'undefined') return Promise.resolve();
+    if (!db) await this.init();
+    if (!db) return Promise.resolve();
+
+    return new Promise((resolve, reject) => {
+      try {
+        const transaction = db!.transaction([IMAGES_STORE, ANALYSIS_STORE], 'readwrite');
+        transaction.objectStore(IMAGES_STORE).clear();
+        transaction.objectStore(ANALYSIS_STORE).clear();
+
+        transaction.onerror = () => reject(transaction.error);
+        transaction.oncomplete = () => resolve();
+      } catch (err) {
+        resolve();
+      }
+    });
+  },
+
   // Delete specific image
   async deleteImage(key: string): Promise<void> {
+    if (typeof indexedDB === 'undefined') return Promise.resolve();
     if (!db) await this.init();
+    if (!db) return Promise.resolve();
 
     return new Promise((resolve, reject) => {
       const transaction = db!.transaction(IMAGES_STORE, 'readwrite');

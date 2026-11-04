@@ -11,21 +11,27 @@
  *   - stdin is closed, so any "allow this?" prompt is answered no instead of hanging
  *   - Claude Code: built-in tools off (--tools ""), no MCP servers, no
  *     settings/hooks loaded, no session saved
- *   - Copilot: shell and write denied, built-in and user MCP servers disabled,
- *     no AGENTS.md instructions (--allow-all-tools is required for -p mode;
- *     the denials take precedence over it)
+ *   - Copilot (1.x): only the read-only `view` tool is available, shell and
+ *     write denied on top, built-in and user MCP servers disabled, no
+ *     AGENTS.md instructions (--allow-all-tools is required for -p mode; the
+ *     denials take precedence over it), -s so stdout is only the answer
  *   - Antigravity: plan mode (no edits) inside its terminal sandbox
+ *
+ * Claude Code and Copilot can also be handed images (chart screenshots): Claude
+ * Code as content blocks on stdin, Copilot as files in the temp folder (--attachment).
  *
  * Only text comes back. Tool use for the ops agent is a text protocol
  * (ops/providers/localCli.mjs) executed by our own guard, never by the CLI.
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export const LOCAL_CLI_PROVIDERS = Object.freeze(['claude-code', 'copilot', 'antigravity']);
+/** The CLIs that can be handed chart screenshots. */
+export const IMAGE_PROVIDERS = Object.freeze(['claude-code', 'copilot']);
 
 const LABELS = { 'claude-code': 'Claude Code (local)', copilot: 'GitHub Copilot CLI (local)', antigravity: 'Antigravity CLI (local)' };
 const MAX_PROMPT_CHARS = 200_000;
@@ -64,28 +70,37 @@ function copilotUserMcpServers() {
  * Pure: the argv for one call, and whether the prompt goes on stdin.
  * Exported so the lockdown flags are tested, not just documented.
  */
-export function buildCliArgs(provider, { system, prompt, model, timeoutMs = 120_000, mcpServers = copilotUserMcpServers() }) {
+export function buildCliArgs(provider, { system, prompt, model, images = [], attachments = [], timeoutMs = 120_000, mcpServers = copilotUserMcpServers() }) {
+  if (images.length && provider !== 'claude-code') throw new Error(`${LABELS[provider]} takes images as attachments (files), not inline`);
+  if (attachments.length && provider !== 'copilot') throw new Error(`${LABELS[provider]} cannot read images`);
   if (provider === 'claude-code') {
-    const args = [
-      '-p', '--output-format', 'json',
+    // Images only go in as content blocks, which needs stream-json on both ends.
+    const args = images.length
+      ? ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
+      : ['-p', '--output-format', 'json'];
+    args.push(
       '--tools', '',
       '--strict-mcp-config',
       '--setting-sources', '',
       '--no-session-persistence'
-    ];
+    );
     if (system) args.push('--system-prompt', system);
     if (model) args.push('--model', model);
-    return { args, stdin: prompt };
+    if (!images.length) return { args, stdin: prompt };
+    const content = [...images.map(imageBlock), { type: 'text', text: prompt }];
+    return { args, stdin: `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n` };
   }
   // Copilot and Antigravity take no separate system prompt in print mode.
   const full = system ? `${system}\n\n---\n\n${prompt}` : prompt;
   if (provider === 'copilot') {
     const args = [
-      '-p', full, '--no-color',
+      '-p', full, '-s', '--no-color',
+      '--available-tools', 'view',
       '--allow-all-tools', '--deny-tool', 'shell', '--deny-tool', 'write',
       '--disable-builtin-mcps', '--no-custom-instructions'
     ];
     for (const name of mcpServers) args.push('--disable-mcp-server', name);
+    for (const file of attachments) args.push('--attachment', file);
     if (model) args.push('--model', model);
     return { args, stdin: null };
   }
@@ -101,15 +116,43 @@ export function buildCliArgs(provider, { system, prompt, model, timeoutMs = 120_
   throw new Error(`Unknown local AI provider: ${provider}`);
 }
 
+/** A data URL or bare base64 PNG as an Anthropic image content block. */
+function imageBlock(image) {
+  const m = /^data:([^;]+);base64,(.*)$/s.exec(String(image));
+  return { type: 'image', source: { type: 'base64', media_type: m ? m[1] : 'image/png', data: m ? m[2] : String(image) } };
+}
+
+const IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+
+/** Writes one data URL / bare base64 image into `dir`; returns its file name. */
+function writeImage(dir, image, i) {
+  const { source } = imageBlock(image);
+  const name = `chart-${i + 1}.${IMAGE_EXT[source.media_type] || 'png'}`;
+  writeFileSync(join(dir, name), Buffer.from(source.data, 'base64'));
+  return `./${name}`;
+}
+
+/** stream-json output is one event per line; the answer is the final `result` event. */
+function claudeResultJson(stdout) {
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    const lines = String(stdout).trim().split('\n').reverse();
+    for (const line of lines) {
+      try {
+        const ev = JSON.parse(line);
+        if (ev?.type === 'result') return ev;
+      } catch { /* not a JSON line */ }
+    }
+    return null;
+  }
+}
+
 /** Pure: turn one CLI's stdout/stderr into `{ text, usage }`, or throw a readable error. */
 export function parseCliOutput(provider, stdout, stderr = '') {
   if (provider === 'claude-code') {
-    let json;
-    try {
-      json = JSON.parse(stdout);
-    } catch {
-      throw new Error(`Claude Code returned no JSON: ${(stderr || stdout).trim().slice(0, 300)}`);
-    }
+    const json = claudeResultJson(stdout);
+    if (!json) throw new Error(`Claude Code returned no JSON: ${(stderr || stdout).trim().slice(0, 300)}`);
     if (json.is_error) throw new Error(`Claude Code: ${String(json.result || json.subtype || 'error').slice(0, 300)}`);
     return {
       text: String(json.result ?? '').trim(),
@@ -161,14 +204,17 @@ let running = 0;
  * Run one prompt through a local CLI. Resolves `{ text, usage, model, ms }`.
  * `signal` aborts (kills the process).
  */
-export async function runLocalCli(provider, { system = '', prompt, model, timeoutMs = 120_000, signal, env = process.env } = {}) {
+export async function runLocalCli(provider, { system = '', prompt, model, images = [], timeoutMs = 120_000, signal, env = process.env } = {}) {
   if (!LOCAL_CLI_PROVIDERS.includes(provider)) throw new Error(`Unknown local AI provider: ${provider}`);
   if (!prompt) throw new Error('prompt required');
   if (prompt.length + system.length > MAX_PROMPT_CHARS) throw new Error(`prompt too long for a local CLI (${prompt.length + system.length} chars)`);
   if (running >= MAX_CONCURRENT) throw new Error(`${LABELS[provider]} is busy (${running} calls running); try again shortly`);
 
-  const { args, stdin } = buildCliArgs(provider, { system, prompt, model, timeoutMs });
+  if (images.length && !IMAGE_PROVIDERS.includes(provider)) throw new Error(`${LABELS[provider]} cannot read images`);
   const cwd = mkdtempSync(join(tmpdir(), 'nifty50-localai-'));
+  // Copilot reads images from disk; they live in the temp folder and go with it.
+  const attachments = provider === 'copilot' ? images.map((img, i) => writeImage(cwd, img, i)) : [];
+  const { args, stdin } = buildCliArgs(provider, { system, prompt, model, images: provider === 'copilot' ? [] : images, attachments, timeoutMs });
   const started = Date.now();
   running += 1;
   try {

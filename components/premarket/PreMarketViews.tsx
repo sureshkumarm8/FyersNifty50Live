@@ -21,6 +21,7 @@ import {
 import { GapScenario, SNIPER, SniperPlaybook, ZonePlay, istMinutes, phaseLabelOf, resolvePhase } from '../../services/sniperPlaybook';
 import { BASIS_LABEL, BASIS_NOTE, DecisionBasis } from '../../services/premarketSchedule';
 import { PhaseReview, ReviewLevelNote } from '../../services/premarketReview';
+import { AIProviderChoice, FyersCredentials } from '../../types';
 import { Card, Meter, Pill, Stat } from '../ui/panels';
 import {
   CHART_SLOTS, ChartEntry, ChartSlotId, LevelSource, PendingImage, PhaseSnapshot, PreMarketDecision,
@@ -166,8 +167,13 @@ const SessionTransfer: React.FC<{
 // ---------------------------------------------------------------------------
 
 export const CommandBar: React.FC<{
-  visionReady: boolean;
-  visionLabel: string;
+  visionReady?: boolean;
+  visionLabel?: string;
+  aiReady?: boolean;
+  aiLabel?: string;
+  selectedProvider?: AIProviderChoice;
+  onProviderChange?: (provider: AIProviderChoice) => void;
+  credentials?: FyersCredentials;
   charts: Partial<Record<ChartSlotId, ChartEntry>>;
   analyzingSlots: ChartSlotId[];
   coverage: number;
@@ -188,13 +194,16 @@ export const CommandBar: React.FC<{
   hasDecision: boolean;
   generatedAtStr?: string;
 }> = ({
-  visionReady, visionLabel, charts, analyzingSlots, coverage, liveLtp, manualSpot, onManualSpot,
+  visionReady, visionLabel, aiReady, aiLabel, selectedProvider, onProviderChange, credentials,
+  charts, analyzingSlots, coverage, liveLtp, manualSpot, onManualSpot,
   onFiles, onAnalyzeRemaining, hasUnanalyzed, onGenerate, isGenerating, onPullCharts, onCopy, onExport, onImport,
   onReset, hasDecision, generatedAtStr
 }) => {
   const pct = Math.round((coverage / CHART_SLOTS.length) * 100);
   const busy = analyzingSlots.length > 0;
   const hasWorkspace = hasDecision || CHART_SLOTS.some(s => !!charts[s.id]);
+  const isReady = aiReady ?? visionReady ?? false;
+  const currentProvider = selectedProvider || credentials?.aiProvider || 'gemini';
 
   return (
     <div className="sticky top-0 z-30 -mx-4 mb-4 border-b border-slate-800 bg-slate-950/90 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
@@ -204,10 +213,36 @@ export const CommandBar: React.FC<{
             <Sparkles className="h-4 w-4 text-amber-400" />
             Pre-Market Intelligence
           </h1>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
-            <span className={visionReady ? 'text-sky-300' : 'text-rose-300'}>
-              {visionReady ? visionLabel : 'Vision AI not configured'}
-            </span>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
+            {onProviderChange && credentials ? (
+              <div className="inline-flex items-center gap-1.5">
+                <span className={`inline-block h-2 w-2 rounded-full ${isReady ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                <select
+                  value={currentProvider}
+                  onChange={e => onProviderChange(e.target.value as AIProviderChoice)}
+                  className="bg-slate-900 hover:bg-slate-800 text-sky-300 font-medium border border-slate-700/80 rounded px-1.5 py-0.5 text-[11px] outline-none cursor-pointer focus:ring-1 focus:ring-sky-500 transition-colors"
+                  title="AI Provider (defaults to Configuration > AI Provider)"
+                >
+                  <option value="gemini">Gemini · {credentials.geminiModel || 'gemini-2.5-flash'}</option>
+                  <option value="groq">Groq · {credentials.groqModel || 'mixtral-8x7b-32768'}</option>
+                  <option value="claude">Claude · {credentials.claudeModel || 'claude-3-5-sonnet-20241022'}</option>
+                  <option value="cerebras">Cerebras · {credentials.cerebrasModel || 'llama-3.1-70b'}</option>
+                  <option value="ollama">Local Llama / Ollama</option>
+                  <optgroup label="Local CLIs">
+                    <option value="claude-code">Local Claude (Claude Code)</option>
+                    <option value="copilot">GitHub Copilot CLI</option>
+                    <option value="antigravity">Google Antigravity CLI</option>
+                  </optgroup>
+                </select>
+                <span className="text-[10px] text-slate-500 hidden md:inline">
+                  (Configuration default)
+                </span>
+              </div>
+            ) : (
+              <span className={isReady ? 'text-sky-300' : 'text-rose-300'}>
+                {isReady ? (aiLabel || visionLabel || 'AI Ready') : 'AI not configured'}
+              </span>
+            )}
             {generatedAtStr && (
               <>
                 <span className="text-slate-700">·</span>
@@ -216,7 +251,7 @@ export const CommandBar: React.FC<{
                 </span>
               </>
             )}
-          </p>
+          </div>
         </div>
 
         {/* coverage */}
@@ -1854,7 +1889,7 @@ export const EvidenceGrid: React.FC<{ decision: PhaseSnapshot; visionLabel: stri
         <Card
           title="Market summary"
           icon={<Brain className="h-4 w-4 text-indigo-400" />}
-          right={<Pill tone={review ? 'info' : 'muted'}>{review ? aiLabel ?? review.model : visionLabel}</Pill>}
+          right={<Pill tone={review ? 'info' : 'muted'}>{review ? aiLabel ?? review.model : aiLabel || visionLabel}</Pill>}
         >
           {review ? (
             <>

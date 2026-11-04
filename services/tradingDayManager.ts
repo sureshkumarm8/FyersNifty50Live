@@ -5,6 +5,7 @@
 
 import { isDayScopedKey } from './storageScopes';
 import { dbService } from './db';
+import { imageStorageService } from './imageStorage';
 
 export function getTodayIST(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -67,7 +68,15 @@ export async function startNewTradingDay(options: { force?: boolean } = {}): Pro
     console.warn('[TradingDay] IndexedDB clear warning:', err.message);
   }
 
-  // 3. Update trading_day marker
+  // 3. Clear Pre-Market analysis & images (new day starts with clean slate)
+  try {
+    await imageStorageService.clearAll();
+    clearedKeys.push('preMarketImages', 'preMarketAnalysis');
+  } catch (err: any) {
+    console.warn('[TradingDay] Pre-Market clear warning:', err.message);
+  }
+
+  // 4. Update trading_day marker
   localStorage.setItem('trading_day', today);
 
   console.log(`[TradingDay] ✅ New trading day initialized for ${today}. Cleared ${clearedKeys.length} day-scoped keys.`);

@@ -11,6 +11,10 @@ export async function fetchEncryptedConfig() {
 
     const data = await response.json();
     
+    if (data.success && data.data) {
+      return data.data;
+    }
+
     if (!data.success || !data.encrypted) {
       throw new Error('Invalid config response');
     }

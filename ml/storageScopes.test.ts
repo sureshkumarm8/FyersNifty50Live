@@ -23,6 +23,8 @@ check('sniper_log is day-scoped', isDayScopedKey('sniper_log'));
 check('sniper_day_state is day-scoped', isDayScopedKey('sniper_day_state'));
 check('sniper_range_2026-10-23 is day-scoped', isDayScopedKey('sniper_range_2026-10-23'));
 check('autotrade_killed_2026-10-23 is day-scoped', isDayScopedKey('autotrade_killed_2026-10-23'));
+check('preMarketData is day-scoped', isDayScopedKey('preMarketData'));
+check('nifty50ops_chat_v1 is day-scoped', isDayScopedKey('nifty50ops_chat_v1'));
 
 // 2. Simulated LocalStorage mock
 const store = new Map<string, string>();
@@ -51,6 +53,8 @@ startNewTradingDay({ force: true }).then(res => {
   check('sniper_lots preserved', localStorage.getItem('sniper_lots') === '2');
   check('sniper_log cleared', localStorage.getItem('sniper_log') === null);
   check('sniper_range cleared', localStorage.getItem('sniper_range_yesterday') === null);
+  check('preMarketImages cleared in transition', res.clearedKeys.includes('preMarketImages'));
+  check('preMarketAnalysis cleared in transition', res.clearedKeys.includes('preMarketAnalysis'));
   check('trading_day updated to today', localStorage.getItem('trading_day') === getTodayIST());
 
   // Second call on same day should be idempotent

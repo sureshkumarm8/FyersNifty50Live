@@ -46,7 +46,8 @@ export const DAY_SCOPED_STORAGE_KEYS = new Set([
   'session_data',
   'session_start',
   'preMarketData',
-  'snapshot_hashes'
+  'snapshot_hashes',
+  'nifty50ops_chat_v1'
 ]);
 
 export function isDurableKey(key: string): boolean {

@@ -1,7 +1,8 @@
 {
   "appId": "TONVE-100",
   "accessToken": "XDzgwg",
-  "googleApiKey": "AIzaSc0vXlM",
+  "googleApiKey": "AIzaSyB42OVnJOnFWvlOjWE_9SjDJfmdhc0vXlM",
+  "geminiModel": "gemini-2.5-flash",
   "groqApiKey": "gsk_BPVhHdK9HyIy",
   "paytmApiKey": "eyJ0eXAisP4uUX9Po",
   "paytmApiSecret": "ebb896ce28",

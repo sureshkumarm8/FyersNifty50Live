@@ -216,18 +216,25 @@ const App: React.FC = () => {
             }
 
             // Try to load encrypted config from backend first
-            if (!credentials.paytmAccessToken) {
+            const hasDummyGoogleKey = !credentials.googleApiKey || credentials.googleApiKey === 'AIzaSc0vXlM';
+            if (!credentials.paytmAccessToken || hasDummyGoogleKey) {
               setIsLoadingConfig(true);
               try {
                 const { fetchEncryptedConfig } = await import('./utils/configLoader');
                 const backendConfig = await fetchEncryptedConfig();
                 
-                if (backendConfig && backendConfig.paytmAccessToken) {
-                  console.log('✅ Loaded encrypted config from backend');
+                if (backendConfig) {
+                  console.log('✅ Loaded config from backend');
                   // Don't overwrite user preferences like refreshInterval
                   // Only merge credentials (tokens and API keys)
                   const { refreshInterval, ...backendCredentials } = backendConfig;
                   const updatedCreds = { ...credentials, ...backendCredentials };
+                  if (hasDummyGoogleKey && backendConfig.googleApiKey) {
+                    updatedCreds.googleApiKey = backendConfig.googleApiKey;
+                  }
+                  if (backendConfig.geminiModel && (!updatedCreds.geminiModel || updatedCreds.geminiModel === 'gemini-2.0-flash')) {
+                    updatedCreds.geminiModel = backendConfig.geminiModel;
+                  }
                   setCredentials(updatedCreds);
                   localStorage.setItem('fyers_creds', JSON.stringify(updatedCreds));
                 }
@@ -2243,6 +2250,7 @@ const App: React.FC = () => {
                    aiEnabled={credentials.aiEnabled}
                    historyLog={premarketHistory}
                    stocks={stocks}
+                   onSaveCredentials={saveCredentials}
                 />
             </div>
         )}

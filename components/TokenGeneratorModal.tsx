@@ -349,7 +349,7 @@ export const TokenGeneratorModal: React.FC<TokenGeneratorModalProps> = ({
         aiEnabled: currentCreds?.aiEnabled !== false,
         aiProvider: currentCreds?.aiProvider || "gemini",
         groqModel: currentCreds?.groqModel || "mixtral-8x7b-32768",
-        geminiModel: currentCreds?.geminiModel || "gemini-2.0-flash",
+        geminiModel: currentCreds?.geminiModel || "gemini-2.5-flash",
         claudeModel: currentCreds?.claudeModel || "claude-3-5-sonnet-20241022",
         cerebrasModel: currentCreds?.cerebrasModel || "cerebras/llama-3.1-70b",
         ollamaBaseUrl: currentCreds?.ollamaBaseUrl || "http://localhost:11434",

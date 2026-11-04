@@ -152,7 +152,7 @@ export async function callAI(
     const model = credentials.cerebrasModel || 'cerebras/llama-3.1-70b';
     return callCerebrasAI(credentials.cerebrasApiKey, systemInstruction, userContent, jsonMode, model);
   } else if (credentials.googleApiKey) {
-    const model = credentials.geminiModel || 'gemini-2.0-flash';
+    const model = (!credentials.geminiModel || credentials.geminiModel === 'gemini-2.0-flash') ? 'gemini-2.5-flash' : credentials.geminiModel;
     return callGeminiAI(credentials.googleApiKey, systemInstruction, userContent, jsonMode, model);
   } else {
     throw new Error('No valid AI API key configured');
@@ -170,7 +170,8 @@ async function callLocalCliAI(
   systemInstruction: string,
   userContent: string,
   jsonMode: boolean,
-  model: string
+  model: string,
+  images: string[] = []
 ): Promise<string> {
   console.log(`%c📡 Calling ${LOCAL_CLI_LABEL[provider]}${model ? ` (${model})` : ''}`, 'color: #f97316; font-size: 11px;');
   const startTime = performance.now();
@@ -178,7 +179,7 @@ async function callLocalCliAI(
     const res = await fetch('/api/local-ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, model: model || undefined, system: systemInstruction, prompt: userContent, jsonMode })
+      body: JSON.stringify({ provider, model: model || undefined, system: systemInstruction, prompt: userContent, jsonMode, images: images.length ? images : undefined })
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -254,13 +255,28 @@ async function callGeminiAI(
   systemInstruction: string,
   userContent: string,
   jsonMode: boolean = false,
-  model: string = 'gemini-2.0-flash'
+  model: string = 'gemini-2.5-flash'
 ): Promise<string> {
-  console.log(`%c📡 Calling Gemini AI (${model})`, 'color: green; font-size: 11px;');
+  const targetModel = (!model || model === 'gemini-2.0-flash') ? 'gemini-2.5-flash' : model;
+  console.log(`%c📡 Calling Gemini AI (${targetModel})`, 'color: green; font-size: 11px;');
   const startTime = performance.now();
   
+  // Resolve key from server if empty or placeholder
+  let effectiveApiKey = apiKey;
+  if (!effectiveApiKey || effectiveApiKey === 'AIzaSc0vXlM') {
+    try {
+      const res = await fetch('/api/get-config');
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.data?.googleApiKey && json.data.googleApiKey !== 'AIzaSc0vXlM') {
+          effectiveApiKey = json.data.googleApiKey;
+        }
+      }
+    } catch {}
+  }
+  
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({ apiKey: effectiveApiKey });
     const config: any = { systemInstruction };
     
     // Only force JSON mode if explicitly requested
@@ -269,7 +285,7 @@ async function callGeminiAI(
     }
     
     const response = await ai.models.generateContent({
-      model: model,
+      model: targetModel,
       contents: userContent,
       config
     });
@@ -730,6 +746,31 @@ export async function testOllamaConnection(
   }
 }
 
+let ollamaVisionCache: { url: string; at: number; models: string[] } | null = null;
+
+/**
+ * The configured vision model if it is installed; otherwise the text model when
+ * it can see (e.g. gemma4), otherwise any installed vision model. Settings always
+ * stores a vision model (the llama3.2-vision default), so a machine that only
+ * pulled a multimodal text model would otherwise 404 on every chart.
+ */
+async function pickOllamaVisionModel(credentials: FyersCredentials): Promise<string> {
+  const configured = credentials.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL;
+  const url = normalizeOllamaBaseUrl(credentials.ollamaBaseUrl);
+  if (!ollamaVisionCache || ollamaVisionCache.url !== url || Date.now() - ollamaVisionCache.at > 60_000) {
+    const models = await listOllamaVisionModels(url).catch(() => null);
+    if (!models) return configured;
+    ollamaVisionCache = { url, at: Date.now(), models };
+  }
+  const installed = ollamaVisionCache.models;
+  const find = (name?: string) => name && installed.find(m => m === name || m === `${name}:latest` || `${m}:latest` === name);
+  const picked = find(configured) || find(credentials.ollamaModel) || installed[0];
+  if (picked && picked !== configured) {
+    console.warn(`[Ollama] Vision model "${configured}" is not installed - reading charts with "${picked}".`);
+  }
+  return picked || configured;
+}
+
 function extractJsonText(responseText: string): string {
   try {
     return JSON.stringify(JSON.parse(responseText));
@@ -846,11 +887,11 @@ async function callOllamaAI(
 
 // ---------------------------------------------------------------------------
 // Vision (image) support - used by the Pre-Market chart analyser.
-// Only Gemini (cloud) and Ollama (local) are wired up; the remaining providers
-// fall back to whichever of those two is configured.
+// Gemini, Claude (API), Claude Code / Copilot (local CLIs) and Ollama are wired up; the
+// remaining providers fall back to whichever of those is configured.
 // ---------------------------------------------------------------------------
 
-export type VisionProviderId = 'gemini' | 'ollama';
+export type VisionProviderId = 'gemini' | 'claude' | 'claude-code' | 'copilot' | 'ollama';
 
 /** Strips a `data:image/png;base64,` prefix so only raw base64 is sent. */
 function toBase64Payload(image: string): string {
@@ -864,28 +905,42 @@ function detectMimeType(image: string): string {
 
 /**
  * Picks the provider used for image prompts.
- * Ollama is honoured as-is; text-only cloud providers degrade to Gemini when a
- * key exists, otherwise to a local Ollama vision model.
+ * Respects configured AI provider if it has vision capabilities (Gemini, Claude, Ollama);
+ * otherwise degrades to Gemini when a key exists, then Claude, then local Ollama.
  */
 export function resolveVisionProvider(credentials: FyersCredentials): VisionProviderId {
   const provider = credentials.aiProvider || 'gemini';
   if (provider === 'ollama') return 'ollama';
+  // The local Claude Code / Copilot CLIs read images themselves - no API key involved.
+  if (provider === 'claude-code' || provider === 'copilot') return provider;
+  if (provider === 'claude' && credentials.claudeApiKey) return 'claude';
+  if (provider === 'gemini' && credentials.googleApiKey) return 'gemini';
   if (credentials.googleApiKey) return 'gemini';
+  if (credentials.claudeApiKey) return 'claude';
   return 'ollama';
 }
 
 /** Human readable label for the vision engine, for UI badges. */
 export function getVisionProviderLabel(credentials: FyersCredentials): string {
-  if (resolveVisionProvider(credentials) === 'ollama') {
+  const vp = resolveVisionProvider(credentials);
+  if (vp === 'ollama') {
     return `Local Llama · ${credentials.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL}`;
   }
-  return `Gemini · ${credentials.geminiModel || 'gemini-2.0-flash'}`;
+  if (vp === 'claude') {
+    return `Claude · ${credentials.claudeModel || 'claude-3-5-sonnet-20241022'}`;
+  }
+  if (vp === 'claude-code' || vp === 'copilot') {
+    return `${LOCAL_CLI_LABEL[vp]} · ${localCliModel(credentials, vp) || 'default model'}`;
+  }
+  return `Gemini · ${credentials.geminiModel || 'gemini-2.5-flash'}`;
 }
 
 /** True when an image prompt can actually be served right now. */
 export function isVisionConfigured(credentials: FyersCredentials): boolean {
-  // Ollama needs no key - it is local - so vision is always attemptable there.
-  return resolveVisionProvider(credentials) === 'ollama' || !!credentials.googleApiKey;
+  const vp = resolveVisionProvider(credentials);
+  if (vp === 'ollama' || vp === 'claude-code' || vp === 'copilot') return true;
+  if (vp === 'claude') return !!credentials.claudeApiKey;
+  return !!credentials.googleApiKey;
 }
 
 /**
@@ -910,7 +965,7 @@ export function getAIProviderLabel(credentials: FyersCredentials): string {
     case 'cerebras':
       return `Cerebras · ${credentials.cerebrasModel || 'cerebras/llama-3.1-70b'}`;
     default:
-      return `Gemini · ${credentials.geminiModel || 'gemini-2.0-flash'}`;
+      return `Gemini · ${credentials.geminiModel || 'gemini-2.5-flash'}`;
   }
 }
 
@@ -928,12 +983,34 @@ export async function callAIVision(
   const temperature = options?.temperature ?? 0.3;
   const jsonMode = options?.jsonMode ?? false;
 
-  if (resolveVisionProvider(credentials) === 'ollama') {
+  const vp = resolveVisionProvider(credentials);
+
+  if (vp === 'ollama') {
     return callOllamaVision(
       credentials.ollamaBaseUrl,
       prompt,
       images,
-      credentials.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL,
+      await pickOllamaVisionModel(credentials),
+      maxTokens,
+      temperature,
+      jsonMode
+    );
+  }
+
+  if (vp === 'claude-code' || vp === 'copilot') {
+    const text = await callLocalCliAI(vp, '', prompt, jsonMode, localCliModel(credentials, vp), images);
+    return jsonMode ? extractJsonText(text) : text;
+  }
+
+  if (vp === 'claude') {
+    if (!credentials.claudeApiKey) {
+      throw new Error('Claude API key missing for vision analysis. Add a Claude API key in Settings.');
+    }
+    return callClaudeVision(
+      credentials.claudeApiKey,
+      prompt,
+      images,
+      credentials.claudeModel || 'claude-3-5-sonnet-20241022',
       maxTokens,
       temperature,
       jsonMode
@@ -941,18 +1018,109 @@ export async function callAIVision(
   }
 
   if (!credentials.googleApiKey) {
-    throw new Error('No vision-capable AI configured. Add a Gemini API key or switch to Ollama with a vision model.');
+    throw new Error('No vision-capable AI configured. Add a Gemini API key or switch to Claude / Ollama in Settings.');
   }
 
   return callGeminiVision(
     credentials.googleApiKey,
     prompt,
     images,
-    credentials.geminiModel || 'gemini-2.0-flash',
+    (!credentials.geminiModel || credentials.geminiModel === 'gemini-2.0-flash') ? 'gemini-2.5-flash' : credentials.geminiModel,
     maxTokens,
     temperature,
     jsonMode
   );
+}
+
+async function callClaudeVision(
+  apiKey: string,
+  prompt: string,
+  images: string[],
+  model: string = 'claude-3-5-sonnet-20241022',
+  maxTokens: number = 700,
+  temperature: number = 0.2,
+  jsonMode: boolean = false
+): Promise<string> {
+  console.log(`%c📡 Calling Claude Vision (${model}) with ${images.length} image(s)`, 'color: orange; font-size: 11px;');
+  const startTime = performance.now();
+
+  const imageBlocks = images.map(img => {
+    let mediaType = 'image/png';
+    let base64Data = img;
+    if (img.startsWith('data:')) {
+      const match = img.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        mediaType = match[1];
+        base64Data = match[2];
+      }
+    }
+    return {
+      type: 'image' as const,
+      source: {
+        type: 'base64' as const,
+        media_type: mediaType,
+        data: base64Data
+      }
+    };
+  });
+
+  const fullPrompt = jsonMode
+    ? `${prompt}\n\nRespond ONLY with valid JSON. No markdown fences, no explanatory text.`
+    : prompt;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      temperature,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...imageBlocks,
+            { type: 'text' as const, text: fullPrompt }
+          ]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const duration = performance.now() - startTime;
+    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+    console.error(`%c❌ Claude Vision Error: ${response.status}`, 'color: red; font-weight: bold;');
+    apiCallTracker.logCall({
+      timestamp: Date.now(),
+      provider: 'claude',
+      model,
+      duration,
+      success: false,
+      error: `${response.status}: ${JSON.stringify(errorData)}`
+    });
+    throw new Error(`Claude Vision API error (${response.status}): ${JSON.stringify(errorData)}`);
+  }
+
+  const duration = performance.now() - startTime;
+  const data = await response.json();
+  const text = data.content?.[0]?.text || '';
+  const tokensUsed = (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
+
+  apiCallTracker.logCall({
+    timestamp: Date.now(),
+    provider: 'claude',
+    model,
+    duration,
+    success: true,
+    tokensUsed
+  });
+
+  return text;
 }
 
 async function callGeminiVision(
@@ -964,8 +1132,22 @@ async function callGeminiVision(
   temperature: number,
   jsonMode: boolean = false
 ): Promise<string> {
-  console.log(`%c📡 Calling Gemini Vision (${model})`, 'color: green; font-size: 11px;');
+  const targetModel = (!model || model === 'gemini-2.0-flash') ? 'gemini-2.5-flash' : model;
+  console.log(`%c📡 Calling Gemini Vision (${targetModel})`, 'color: green; font-size: 11px;');
   const startTime = performance.now();
+
+  let effectiveApiKey = apiKey;
+  if (!effectiveApiKey || effectiveApiKey === 'AIzaSc0vXlM') {
+    try {
+      const res = await fetch('/api/get-config');
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.data?.googleApiKey && json.data.googleApiKey !== 'AIzaSc0vXlM') {
+          effectiveApiKey = json.data.googleApiKey;
+        }
+      }
+    } catch {}
+  }
 
   try {
     const parts: any[] = images.map(img => ({
@@ -974,7 +1156,7 @@ async function callGeminiVision(
     parts.push({ text: prompt });
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent?key=${effectiveApiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -994,20 +1176,23 @@ async function callGeminiVision(
     if (!response.ok) {
       const details = (await response.text().catch(() => '')).slice(0, 300);
       apiCallTracker.logCall({
-        timestamp: Date.now(), provider: 'gemini', model, duration,
+        timestamp: Date.now(), provider: 'gemini', model: targetModel, duration,
         success: false, error: `${response.status}: ${details}`
       });
+      if (response.status === 400 && /API_KEY_INVALID|API key not valid/.test(details)) {
+        throw new Error(`Google API key is invalid or placeholder. Enter a valid key in Settings > Intelligence Engine (or check GOOGLE_API_KEY in .env.local).`);
+      }
       throw new Error(`Gemini vision error (${response.status}): ${details}`);
     }
 
     const data = await response.json();
-    apiCallTracker.logCall({ timestamp: Date.now(), provider: 'gemini', model, duration, success: true });
+    apiCallTracker.logCall({ timestamp: Date.now(), provider: 'gemini', model: targetModel, duration, success: true });
 
     return (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
   } catch (error: any) {
     if (!/Gemini vision error/.test(error?.message || '')) {
       apiCallTracker.logCall({
-        timestamp: Date.now(), provider: 'gemini', model,
+        timestamp: Date.now(), provider: 'gemini', model: targetModel,
         duration: performance.now() - startTime, success: false, error: error?.message
       });
     }

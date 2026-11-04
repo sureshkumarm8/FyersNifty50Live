@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { FyersCredentials, MarketSnapshot, EnrichedFyersQuote } from '../types';
+import { FyersCredentials, MarketSnapshot, EnrichedFyersQuote, AIProviderChoice } from '../types';
 import { imageStorageService } from '../services/imageStorage';
 import { logJournal } from '../services/journal';
 import { callAI, callAIVision, getAIProviderLabel, getVisionProviderLabel, isAIConfigured, isVisionConfigured, resolveVisionProvider } from '../services/aiProvider';
@@ -591,7 +591,27 @@ export const PreMarketAnalyzer: React.FC<{
   historyLog?: MarketSnapshot[];
   stocks?: EnrichedFyersQuote[];
   aiEnabled?: boolean;
-}> = ({ credentials, historyLog = [], stocks = [], aiEnabled = true }) => {
+  onSaveCredentials?: (creds: FyersCredentials) => void;
+}> = ({ credentials, historyLog = [], stocks = [], aiEnabled = true, onSaveCredentials }) => {
+  const [selectedProvider, setSelectedProvider] = useState<AIProviderChoice>(() => credentials.aiProvider || 'gemini');
+
+  // Keep in sync whenever Configuration changes credentials.aiProvider
+  useEffect(() => {
+    setSelectedProvider(credentials.aiProvider || 'gemini');
+  }, [credentials.aiProvider]);
+
+  const activeCredentials = useMemo(() => ({
+    ...credentials,
+    aiProvider: selectedProvider
+  }), [credentials, selectedProvider]);
+
+  const handleProviderChange = (newProvider: AIProviderChoice) => {
+    setSelectedProvider(newProvider);
+    if (onSaveCredentials) {
+      onSaveCredentials({ ...credentials, aiProvider: newProvider });
+    }
+  };
+
   const [charts, setCharts] = useState<Partial<Record<ChartSlotId, ChartEntry>>>({});
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [analyzingSlots, setAnalyzingSlots] = useState<ChartSlotId[]>([]);
@@ -622,13 +642,14 @@ export const PreMarketAnalyzer: React.FC<{
     setLogs(p => [`[${time}] ${msg}`, ...p.slice(0, 49)]);
   };
 
-  const aiLabel = getAIProviderLabel(credentials);
-  const reviewReady = isAIConfigured(credentials) && aiEnabled;
+  const aiLabel = getAIProviderLabel(activeCredentials);
+  const reviewReady = isAIConfigured(activeCredentials) && aiEnabled;
+  const aiReady = reviewReady;
 
-  const visionProvider = resolveVisionProvider(credentials);
-  const visionLabel = getVisionProviderLabel(credentials);
-  const visionEngineName = visionProvider === 'ollama' ? 'Local Llama' : 'Gemini';
-  const visionReady = isVisionConfigured(credentials) && aiEnabled;
+  const visionProvider = resolveVisionProvider(activeCredentials);
+  const visionLabel = getVisionProviderLabel(activeCredentials);
+  const visionEngineName = visionProvider === 'ollama' ? 'Local Llama' : visionProvider === 'claude-code' ? 'Local Claude' : visionProvider === 'copilot' ? 'Copilot' : visionProvider === 'claude' ? 'Claude' : 'Gemini';
+  const visionReady = isVisionConfigured(activeCredentials) && aiEnabled;
 
   const liveLtp = historyLog[0]?.niftyLtp ?? null;
   // Charts the model actually managed to read - these drive every number below.
@@ -653,10 +674,18 @@ export const PreMarketAnalyzer: React.FC<{
         ]);
 
         const restored: Partial<Record<ChartSlotId, ChartEntry>> = {};
+        let hasPreviousDayCharts = false;
+
         for (const slot of CHART_SLOTS) {
           const data = images[IMAGE_KEY(slot.id)];
           if (!data) continue;
           const entryMeta = meta?.[slot.id];
+          const uploadTime = entryMeta?.uploadedAt || 0;
+          // Discard charts from previous days on new day
+          if (uploadTime && istDateKey(uploadTime) !== istDateKey(Date.now())) {
+            hasPreviousDayCharts = true;
+            continue;
+          }
           restored[slot.id] = {
             slot: slot.id,
             data,
@@ -668,7 +697,10 @@ export const PreMarketAnalyzer: React.FC<{
           };
         }
 
-        if (Object.keys(restored).length > 0) {
+        if (hasPreviousDayCharts && Object.keys(restored).length === 0) {
+          await imageStorageService.clearAll().catch(() => {});
+          addLog('🗓️ Previous day charts and analysis cleared for new trading day.');
+        } else if (Object.keys(restored).length > 0) {
           setCharts(restored);
           addLog(`💾 Restored ${Object.keys(restored).length} saved chart(s)`);
         }
@@ -840,7 +872,23 @@ export const PreMarketAnalyzer: React.FC<{
     addLog(`🧠 Reading ${config.short} with ${visionEngineName}...`);
 
     try {
-      const text = await callAIVision(credentials, config.prompt, [data], {
+      let credsToUse = activeCredentials;
+      if (resolveVisionProvider(activeCredentials) === 'gemini' && (!credsToUse.googleApiKey || credsToUse.googleApiKey === 'AIzaSc0vXlM')) {
+        try {
+          const res = await fetch('/api/get-config');
+          if (res.ok) {
+            const cfg = await res.json();
+            if (cfg?.data?.googleApiKey && cfg.data.googleApiKey !== 'AIzaSc0vXlM') {
+              credsToUse = { ...credsToUse, googleApiKey: cfg.data.googleApiKey };
+              if (onSaveCredentials) {
+                onSaveCredentials({ ...credentials, googleApiKey: cfg.data.googleApiKey });
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const text = await callAIVision(credsToUse, config.prompt, [data], {
         maxTokens: 700,
         temperature: 0.2,
         jsonMode: true
@@ -1183,7 +1231,7 @@ export const PreMarketAnalyzer: React.FC<{
           }
         };
 
-        const review = await requestPhaseReview(credentials, input, aiLabel);
+        const review = await requestPhaseReview(activeCredentials, input, aiLabel);
         // The decision may have been re-cut while the model was thinking. Merge
         // into whatever is current, and only where the price still matches -
         // a review pinned to a price that no longer exists is worse than none.
@@ -1222,7 +1270,7 @@ export const PreMarketAnalyzer: React.FC<{
         setReviewingPhase(null);
       }
     },
-    [reviewReady, credentials, aiLabel, analyzedCharts, addLog]
+    [reviewReady, activeCredentials, aiLabel, analyzedCharts, addLog]
   );
 
   /**
@@ -1328,15 +1376,12 @@ export const PreMarketAnalyzer: React.FC<{
   }, [preMarketDecision, reviewReady, reviewingPhase, runReview]);
 
   const clearAll = async () => {
-    for (const slot of CHART_SLOTS) {
-      if (charts[slot.id]) await imageStorageService.deleteImage(IMAGE_KEY(slot.id)).catch(() => {});
-    }
+    await imageStorageService.clearAll().catch(() => {});
     setCharts({});
     setPendingImages([]);
     setPreMarketDecision(null);
     setPinnedPhase(null);
     reviewedCutRef.current = null;
-    imageStorageService.saveState(DECISION_STATE_KEY, null).catch(() => {});
     setLogs([]);
     addLog('🔄 Workspace cleared');
   };
@@ -1498,6 +1543,11 @@ export const PreMarketAnalyzer: React.FC<{
     <div className="h-full overflow-y-auto bg-slate-950 text-slate-200 custom-scrollbar">
       <div className="mx-auto max-w-6xl px-4 pb-6 sm:px-6">
         <CommandBar
+          aiReady={aiReady}
+          aiLabel={aiLabel}
+          selectedProvider={selectedProvider}
+          onProviderChange={handleProviderChange}
+          credentials={activeCredentials}
           visionReady={visionReady}
           visionLabel={visionLabel}
           charts={charts}
