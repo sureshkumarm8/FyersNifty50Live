@@ -2,7 +2,7 @@
 import http from 'http';
 import { URL } from 'url';
 import crypto from 'crypto';
-import { readFileSync, writeFileSync, existsSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, statSync, readdirSync } from 'fs';
 import { join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -388,6 +388,24 @@ const server = http.createServer(async (req, res) => {  res.setHeader('Access-Co
     }
     res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
     res.end(readFileSync(file));
+    return;
+  }
+
+  // Returns list of recent/today's snapshots from Downloads directory
+  if (reqUrl.pathname === '/api/vision-latest-snapshots' && req.method === 'GET') {
+    const root = resolve(visionSnapshotDir);
+    try {
+      const files = existsSync(root) ? readdirSync(root).filter(f => SNAPSHOT_FILE.test(f)) : [];
+      files.sort().reverse();
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .format(new Date()).replace(/-/g, '');
+      const todayFiles = files.filter(f => f.startsWith(todayStr));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, dir: root, files: todayFiles.length ? todayFiles : files.slice(0, 20) }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
     return;
   }
 

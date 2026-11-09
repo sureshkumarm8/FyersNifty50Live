@@ -6,7 +6,7 @@
  *
  *   GET  /api/local-ai/status   which CLIs are installed
  *   POST /api/local-ai/chat     { provider, model?, system, prompt, jsonMode?, images? } → { text, model, usage, ms }
- *                               images (data URLs): Claude Code and Copilot only
+ *                               images (data URLs): every local CLI reads them
  *
  *   Antigravity sign-in (see ops/antigravityAuth.mjs):
  *   GET  /api/local-ai/antigravity/auth          { signedIn, login: { state, url?, expiresAt?, message? } }
@@ -92,7 +92,7 @@ export async function handleLocalAiRoute(req, res, reqUrl) {
       const prompt = String(body.prompt || '');
       if (!prompt.trim()) return json(res, 400, { error: 'prompt required' });
       const images = Array.isArray(body.images) ? body.images.filter(i => typeof i === 'string' && i) : [];
-      if (images.length && !IMAGE_PROVIDERS.includes(provider)) return json(res, 400, { error: `${provider} cannot read images; use Claude Code or Copilot` });
+      if (images.length && !IMAGE_PROVIDERS.includes(provider)) return json(res, 400, { error: `${provider} cannot read images` });
       const system = [
         String(body.system || ''),
         images.length ? 'You have no tools in this session; answer from the text and images provided only.' : 'You have no tools in this session; answer from the text provided only.',

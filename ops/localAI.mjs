@@ -15,10 +15,13 @@
  *     write denied on top, built-in and user MCP servers disabled, no
  *     AGENTS.md instructions (--allow-all-tools is required for -p mode; the
  *     denials take precedence over it), -s so stdout is only the answer
- *   - Antigravity: plan mode (no edits) inside its terminal sandbox
+ *   - Antigravity: plan mode (no edits) inside its terminal sandbox. Not
+ *     --disable-slash-commands: agy ignores --mode plan when it is set, so a
+ *     prompt starting with '/' is indented instead
  *
- * Claude Code and Copilot can also be handed images (chart screenshots): Claude
- * Code as content blocks on stdin, Copilot as files in the temp folder (--attachment).
+ * All three can also be handed images (chart screenshots): Claude Code as
+ * content blocks on stdin; Copilot (--attachment) and Antigravity (view_file) as
+ * files in the temp folder.
  *
  * Only text comes back. Tool use for the ops agent is a text protocol
  * (ops/providers/localCli.mjs) executed by our own guard, never by the CLI.
@@ -31,7 +34,7 @@ import { dirname, join } from 'node:path';
 
 export const LOCAL_CLI_PROVIDERS = Object.freeze(['claude-code', 'copilot', 'antigravity']);
 /** The CLIs that can be handed chart screenshots. */
-export const IMAGE_PROVIDERS = Object.freeze(['claude-code', 'copilot']);
+export const IMAGE_PROVIDERS = Object.freeze(['claude-code', 'copilot', 'antigravity']);
 
 const LABELS = { 'claude-code': 'Claude Code (local)', copilot: 'GitHub Copilot CLI (local)', antigravity: 'Antigravity CLI (local)' };
 const MAX_PROMPT_CHARS = 200_000;
@@ -72,7 +75,7 @@ function copilotUserMcpServers() {
  */
 export function buildCliArgs(provider, { system, prompt, model, images = [], attachments = [], timeoutMs = 120_000, mcpServers = copilotUserMcpServers() }) {
   if (images.length && provider !== 'claude-code') throw new Error(`${LABELS[provider]} takes images as attachments (files), not inline`);
-  if (attachments.length && provider !== 'copilot') throw new Error(`${LABELS[provider]} cannot read images`);
+  if (attachments.length && provider === 'claude-code') throw new Error(`${LABELS[provider]} cannot read images`);
   if (provider === 'claude-code') {
     // Images only go in as content blocks, which needs stream-json on both ends.
     const args = images.length
@@ -105,9 +108,14 @@ export function buildCliArgs(provider, { system, prompt, model, images = [], att
     return { args, stdin: null };
   }
   if (provider === 'antigravity') {
+    // agy has no attach flag; its agent opens the files with view_file.
+    const withImages = attachments.length
+      ? `The image${attachments.length > 1 ? 's are' : ' is'} in the current folder: ${attachments.join(', ')}. ` +
+        `Open ${attachments.length > 1 ? 'each one' : 'it'} with view_file before answering.\n\n${full}`
+      : full;
     const args = [
-      '-p', full, '--output-format', 'json',
-      '--mode', 'plan', '--sandbox', '--disable-slash-commands',
+      '-p', withImages.startsWith('/') ? ` ${withImages}` : withImages, '--output-format', 'json',
+      '--mode', 'plan', '--sandbox',
       '--print-timeout', `${Math.max(10, Math.round(timeoutMs / 1000))}s`
     ];
     if (model) args.push('--model', model);
@@ -212,9 +220,9 @@ export async function runLocalCli(provider, { system = '', prompt, model, images
 
   if (images.length && !IMAGE_PROVIDERS.includes(provider)) throw new Error(`${LABELS[provider]} cannot read images`);
   const cwd = mkdtempSync(join(tmpdir(), 'nifty50-localai-'));
-  // Copilot reads images from disk; they live in the temp folder and go with it.
-  const attachments = provider === 'copilot' ? images.map((img, i) => writeImage(cwd, img, i)) : [];
-  const { args, stdin } = buildCliArgs(provider, { system, prompt, model, images: provider === 'copilot' ? [] : images, attachments, timeoutMs });
+  // Copilot and agy read images from disk; they live in the temp folder and go with it.
+  const attachments = provider === 'claude-code' ? [] : images.map((img, i) => writeImage(cwd, img, i));
+  const { args, stdin } = buildCliArgs(provider, { system, prompt, model, images: provider === 'claude-code' ? images : [], attachments, timeoutMs });
   const started = Date.now();
   running += 1;
   try {

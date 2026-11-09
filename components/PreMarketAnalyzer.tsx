@@ -617,6 +617,8 @@ export const PreMarketAnalyzer: React.FC<{
   const [analyzingSlots, setAnalyzingSlots] = useState<ChartSlotId[]>([]);
   const [preMarketDecision, setPreMarketDecision] = useState<PreMarketDecision | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
   // Drives the staleness badges without needing a re-upload to refresh.
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
@@ -648,7 +650,7 @@ export const PreMarketAnalyzer: React.FC<{
 
   const visionProvider = resolveVisionProvider(activeCredentials);
   const visionLabel = getVisionProviderLabel(activeCredentials);
-  const visionEngineName = visionProvider === 'ollama' ? 'Local Llama' : visionProvider === 'claude-code' ? 'Local Claude' : visionProvider === 'copilot' ? 'Copilot' : visionProvider === 'claude' ? 'Claude' : 'Gemini';
+  const visionEngineName = visionProvider === 'ollama' ? 'Local Llama' : visionProvider === 'claude-code' ? 'Local Claude' : visionProvider === 'copilot' ? 'Copilot' : visionProvider === 'antigravity' ? 'Antigravity' : visionProvider === 'claude' ? 'Claude' : 'Gemini';
   const visionReady = isVisionConfigured(activeCredentials) && aiEnabled;
 
   const liveLtp = historyLog[0]?.niftyLtp ?? null;
@@ -873,7 +875,7 @@ export const PreMarketAnalyzer: React.FC<{
 
     try {
       let credsToUse = activeCredentials;
-      if (resolveVisionProvider(activeCredentials) === 'gemini' && (!credsToUse.googleApiKey || credsToUse.googleApiKey === 'AIzaSc0vXlM')) {
+      if (resolveVisionProvider(activeCredentials) === 'gemini') {
         try {
           const res = await fetch('/api/get-config');
           if (res.ok) {
@@ -1019,7 +1021,9 @@ export const PreMarketAnalyzer: React.FC<{
    * sidecar does not serve, so they are read through /api/vision-snapshot-file/.
    */
   const pullTodaysCharts = async () => {
+    setIsPulling(true);
     setIsGenerating(true);
+    setPullStatus('📷 Requesting chart snapshots from vision capture engine (~30s)...');
     addLog('📷 Requesting chart snapshots from vision capture engine...');
     try {
       let response: Response | null = null;
@@ -1027,32 +1031,67 @@ export const PreMarketAnalyzer: React.FC<{
       for (let attempt = 1; attempt <= 4; attempt++) {
         response = await fetch('/api/vision/snapshots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         if (response.status !== 409 || attempt === 4) break;
+        setPullStatus(`⏳ Capture engine busy with a scheduled run - retrying (${attempt}/3)...`);
         addLog(`⏳ Capture engine busy with a scheduled run - retrying (${attempt}/3)...`);
         await new Promise(r => setTimeout(r, 8000));
       }
-      if (!response || !response.ok) {
+
+      let results: Array<{ id?: string; label?: string; ok?: boolean; file?: string; error?: string }> = [];
+      let stamp = '';
+
+      if (response && response.ok) {
+        const res = await response.json();
+        stamp = res.stamp || '';
+        results = Array.isArray(res.results) ? res.results : [];
+      } else {
+        // Fallback: check if snapshots have already been captured today in Downloads
         const err = await response?.json().catch(() => ({})) ?? {};
-        addLog(`❌ Snapshot capture failed (${response?.status ?? '?'}): ${err.message || err.error || 'Server error'}`);
-        return;
+        addLog(`⚠️ Live capture unavailable (${response?.status ?? '?'}): ${err.message || err.error || 'Checking existing snapshots'}`);
+        try {
+          const fallbackRes = await fetch('/api/vision-latest-snapshots');
+          if (fallbackRes.ok) {
+            const fallbackData = await fallbackRes.json();
+            const files: string[] = fallbackData.files || [];
+            if (files.length > 0) {
+              addLog(`📂 Found ${files.length} existing snapshot(s) in Downloads, checking matches...`);
+              results = files.map(file => ({ file, ok: true }));
+            }
+          }
+        } catch {}
+
+        if (!results.length) {
+          const msg = err.message || err.error || 'Cannot reach vision capture engine';
+          setPullStatus(`❌ Capture failed: ${msg}`);
+          addLog(`❌ Snapshot capture failed: ${msg}`);
+          return;
+        }
       }
 
-      const res = await response.json();
-      const results: Array<{ id?: string; label?: string; ok?: boolean; file?: string; error?: string }> =
-        Array.isArray(res.results) ? res.results : [];
       if (!results.length) {
+        setPullStatus('⚠️ No snapshots returned by vision engine');
         addLog('⚠️ No snapshots returned by vision engine.');
         return;
       }
 
+      setPullStatus('📥 Reading chart files...');
+      const SNAPSHOT_SLOT_MAP: Record<string, ChartSlotId> = {
+        'nifty-1day-1year': 'DAILY_1Y',
+        'nifty-1min-1day': 'INTRADAY_1M',
+        'sensibull-open-interest': 'OI_SNAPSHOT',
+        'sensibull-multistrike-oi': 'MULTI_OI'
+      };
+
       const fetched: { file: File; slot: ChartSlotId }[] = [];
+      const assignedSlots = new Set<ChartSlotId>();
+
       for (const item of results) {
         const name = item.file || item.id || 'snapshot';
         if (!item.ok || !item.file) {
           addLog(`⚠️ ${item.label || name}: capture failed${item.error ? ` - ${item.error}` : ''}`);
           continue;
         }
-        const slot = guessSlot(item.file, []);
-        if (!slot) continue; // e.g. the Google Finance report: not a pre-market chart
+        const slot = (item.id && SNAPSHOT_SLOT_MAP[item.id]) ?? guessSlot(item.file, []);
+        if (!slot || assignedSlots.has(slot)) continue;
         try {
           const imgRes = await fetch(`/api/vision-snapshot-file/${encodeURIComponent(item.file)}`, { cache: 'no-store' });
           if (!imgRes.ok) {
@@ -1062,24 +1101,35 @@ export const PreMarketAnalyzer: React.FC<{
           }
           const buf = await imgRes.arrayBuffer();
           fetched.push({ file: new File([buf], item.file, { type: 'image/png' }), slot });
+          assignedSlots.add(slot);
         } catch (fetchErr: any) {
           addLog(`❌ Failed to fetch ${item.file}: ${fetchErr.message}`);
         }
       }
 
       if (!fetched.length) {
+        setPullStatus('ℹ️ No pre-market charts could be loaded');
         addLog('ℹ️ No pre-market charts could be loaded from this capture.');
         return;
       }
-      addLog(`📸 Ingesting ${fetched.length} fresh chart(s) from ${res.stamp || 'capture'}...`);
-      // Forced slot per file: today's capture replaces the previous image.
-      for (const { file, slot } of fetched) await ingestFiles([file], slot);
+
+      addLog(`📸 Ingesting ${fetched.length} fresh chart(s) from ${stamp || 'capture'}...`);
+      for (let i = 0; i < fetched.length; i++) {
+        const { file, slot } = fetched[i];
+        setPullStatus(`🔍 Analyzing ${SLOT_BY_ID[slot]?.short || slot} (${i + 1}/${fetched.length})...`);
+        await ingestFiles([file], slot);
+      }
+
+      setPullStatus('🎯 Generating Pre-Market Decision...');
       addLog('🎯 Generating Pre-Market Decision...');
       setDecisionQueued(true);
     } catch (err: any) {
+      setPullStatus(`❌ Error: ${err.message}`);
       addLog(`❌ Error in pullTodaysCharts: ${err.message}`);
     } finally {
+      setIsPulling(false);
       setIsGenerating(false);
+      setTimeout(() => setPullStatus(null), 5000);
     }
   };
 
@@ -1561,6 +1611,8 @@ export const PreMarketAnalyzer: React.FC<{
           hasUnanalyzed={hasUnanalyzed}
           onGenerate={generatePreMarketDecision}
           isGenerating={isGenerating}
+          isPulling={isPulling}
+          pullStatus={pullStatus}
           onPullCharts={pullTodaysCharts}
           onCopy={() => copyToClipboard()}
           onExport={exportSession}

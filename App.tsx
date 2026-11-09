@@ -229,7 +229,7 @@ const App: React.FC = () => {
                   // Only merge credentials (tokens and API keys)
                   const { refreshInterval, ...backendCredentials } = backendConfig;
                   const updatedCreds = { ...credentials, ...backendCredentials };
-                  if (hasDummyGoogleKey && backendConfig.googleApiKey) {
+                  if (backendConfig.googleApiKey && backendConfig.googleApiKey !== 'AIzaSc0vXlM') {
                     updatedCreds.googleApiKey = backendConfig.googleApiKey;
                   }
                   if (backendConfig.geminiModel && (!updatedCreds.geminiModel || updatedCreds.geminiModel === 'gemini-2.0-flash')) {

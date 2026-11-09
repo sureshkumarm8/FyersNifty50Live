@@ -53,7 +53,11 @@ async function run() {
   assert.deepStrictEqual(visionMsg.message.content[1], { type: 'text', text: 'P' });
   const copilotVision = buildCliArgs('copilot', { prompt: 'P', attachments: ['./chart-1.png'], mcpServers: [] });
   assert.strictEqual(copilotVision.args[copilotVision.args.indexOf('--attachment') + 1], './chart-1.png');
-  assert.throws(() => buildCliArgs('antigravity', { prompt: 'P', attachments: ['./a.png'] }), /cannot read images/);
+  const agyVision = buildCliArgs('antigravity', { prompt: 'P', attachments: ['./chart-1.png'] });
+  assert.match(agyVision.args[agyVision.args.indexOf('-p') + 1], /\.\/chart-1\.png.*view_file[\s\S]*P$/);
+  assert.ok(!agyVision.args.includes('--disable-slash-commands'), 'agy ignores --mode plan when slash commands are disabled');
+  assert.strictEqual(buildCliArgs('antigravity', { prompt: '/clear' }).args[1], ' /clear');
+  assert.throws(() => buildCliArgs('claude-code', { prompt: 'P', attachments: ['./a.png'] }), /cannot read images/);
   ok('each CLI is called with its own tools, MCP servers and settings switched off; Claude Code takes images as content blocks');
 
   // Output parsers

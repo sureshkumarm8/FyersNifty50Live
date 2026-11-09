@@ -303,6 +303,36 @@ async function callGeminiAI(
     
     return response.text || '{}';
   } catch (error: any) {
+    if (/API_KEY_INVALID|API key not valid/i.test(error?.message || '')) {
+      try {
+        const res = await fetch('/api/get-config');
+        if (res.ok) {
+          const json = await res.json();
+          const freshKey = json?.data?.googleApiKey;
+          if (freshKey && freshKey !== effectiveApiKey && freshKey !== 'AIzaSc0vXlM') {
+            console.log('%c🔄 Auto-healing Gemini AI with server key from .env.local', 'color: orange;');
+            const ai = new GoogleGenAI({ apiKey: freshKey });
+            const config: any = { systemInstruction };
+            if (jsonMode) config.responseMimeType = "application/json";
+            const response = await ai.models.generateContent({
+              model: targetModel,
+              contents: userContent,
+              config
+            });
+            try {
+              const saved = localStorage.getItem('fyers_creds');
+              if (saved) {
+                const parsed = JSON.parse(saved);
+                parsed.googleApiKey = freshKey;
+                localStorage.setItem('fyers_creds', JSON.stringify(parsed));
+              }
+            } catch {}
+            apiCallTracker.logCall({ timestamp: Date.now(), provider: 'gemini', model: targetModel, duration: performance.now() - startTime, success: true });
+            return response.text || '{}';
+          }
+        }
+      } catch {}
+    }
     const duration = performance.now() - startTime;
     apiCallTracker.logCall({
       timestamp: Date.now(),
@@ -887,11 +917,11 @@ async function callOllamaAI(
 
 // ---------------------------------------------------------------------------
 // Vision (image) support - used by the Pre-Market chart analyser.
-// Gemini, Claude (API), Claude Code / Copilot (local CLIs) and Ollama are wired up; the
+// Gemini, Claude (API), the local CLIs and Ollama are wired up; the
 // remaining providers fall back to whichever of those is configured.
 // ---------------------------------------------------------------------------
 
-export type VisionProviderId = 'gemini' | 'claude' | 'claude-code' | 'copilot' | 'ollama';
+export type VisionProviderId = 'gemini' | 'claude' | LocalCliAIProvider | 'ollama';
 
 /** Strips a `data:image/png;base64,` prefix so only raw base64 is sent. */
 function toBase64Payload(image: string): string {
@@ -911,8 +941,8 @@ function detectMimeType(image: string): string {
 export function resolveVisionProvider(credentials: FyersCredentials): VisionProviderId {
   const provider = credentials.aiProvider || 'gemini';
   if (provider === 'ollama') return 'ollama';
-  // The local Claude Code / Copilot CLIs read images themselves - no API key involved.
-  if (provider === 'claude-code' || provider === 'copilot') return provider;
+  // The local CLIs read images themselves - no API key involved.
+  if (isLocalCliProvider(provider)) return provider;
   if (provider === 'claude' && credentials.claudeApiKey) return 'claude';
   if (provider === 'gemini' && credentials.googleApiKey) return 'gemini';
   if (credentials.googleApiKey) return 'gemini';
@@ -929,7 +959,7 @@ export function getVisionProviderLabel(credentials: FyersCredentials): string {
   if (vp === 'claude') {
     return `Claude · ${credentials.claudeModel || 'claude-3-5-sonnet-20241022'}`;
   }
-  if (vp === 'claude-code' || vp === 'copilot') {
+  if (isLocalCliProvider(vp)) {
     return `${LOCAL_CLI_LABEL[vp]} · ${localCliModel(credentials, vp) || 'default model'}`;
   }
   return `Gemini · ${credentials.geminiModel || 'gemini-2.5-flash'}`;
@@ -938,7 +968,7 @@ export function getVisionProviderLabel(credentials: FyersCredentials): string {
 /** True when an image prompt can actually be served right now. */
 export function isVisionConfigured(credentials: FyersCredentials): boolean {
   const vp = resolveVisionProvider(credentials);
-  if (vp === 'ollama' || vp === 'claude-code' || vp === 'copilot') return true;
+  if (vp === 'ollama' || isLocalCliProvider(vp)) return true;
   if (vp === 'claude') return !!credentials.claudeApiKey;
   return !!credentials.googleApiKey;
 }
@@ -997,7 +1027,7 @@ export async function callAIVision(
     );
   }
 
-  if (vp === 'claude-code' || vp === 'copilot') {
+  if (isLocalCliProvider(vp)) {
     const text = await callLocalCliAI(vp, '', prompt, jsonMode, localCliModel(credentials, vp), images);
     return jsonMode ? extractJsonText(text) : text;
   }
@@ -1180,6 +1210,45 @@ async function callGeminiVision(
         success: false, error: `${response.status}: ${details}`
       });
       if (response.status === 400 && /API_KEY_INVALID|API key not valid/.test(details)) {
+        // Auto-heal: fetch key from backend server .env.local and retry
+        try {
+          const cfgRes = await fetch('/api/get-config');
+          if (cfgRes.ok) {
+            const cfg = await cfgRes.json();
+            const freshKey = cfg?.data?.googleApiKey;
+            if (freshKey && freshKey !== effectiveApiKey && freshKey !== 'AIzaSc0vXlM') {
+              console.log('%c🔄 Auto-healing Gemini Vision with server key from .env.local', 'color: orange;');
+              const retryRes = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent?key=${freshKey}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    contents: [{ parts }],
+                    generationConfig: {
+                      temperature,
+                      maxOutputTokens: maxTokens,
+                      ...(jsonMode ? { responseMimeType: 'application/json' } : {})
+                    }
+                  })
+                }
+              );
+              if (retryRes.ok) {
+                try {
+                  const saved = localStorage.getItem('fyers_creds');
+                  if (saved) {
+                    const parsed = JSON.parse(saved);
+                    parsed.googleApiKey = freshKey;
+                    localStorage.setItem('fyers_creds', JSON.stringify(parsed));
+                  }
+                } catch {}
+                const retryData = await retryRes.json();
+                apiCallTracker.logCall({ timestamp: Date.now(), provider: 'gemini', model: targetModel, duration: performance.now() - startTime, success: true });
+                return (retryData?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+              }
+            }
+          }
+        } catch {}
         throw new Error(`Google API key is invalid or placeholder. Enter a valid key in Settings > Intelligence Engine (or check GOOGLE_API_KEY in .env.local).`);
       }
       throw new Error(`Gemini vision error (${response.status}): ${details}`);

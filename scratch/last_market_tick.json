@@ -1,0 +1,252 @@
+{
+  "time": "10:01:34",
+  "timestamp": 1794198694328,
+  "spot": 24933.6,
+  "dayOpen": 25076.4,
+  "dayHigh": 25084.05,
+  "dayLow": 24874.85,
+  "prevClose": 24986.4,
+  "netChange": "-52.80",
+  "netChangePct": "-0.21",
+  "atmStrike": 24950,
+  "pcr": "1.21",
+  "minuteDelta": {
+    "spotChange": "9.60",
+    "newHigh": false,
+    "newLow": false,
+    "sniperStateChanged": false,
+    "momentumStateChanged": true,
+    "positionsChanged": false
+  },
+  "heavyweights": {
+    "advances": 4,
+    "declines": 11,
+    "unchanged": 0,
+    "topGainers": [
+      {
+        "symbol": "SBIN",
+        "price": 1043.95,
+        "changePct": 2.7509794,
+        "changeAbs": 27.949951,
+        "totalBuyQty": 740863,
+        "totalSellQty": 1035138,
+        "volume": 9403190
+      },
+      {
+        "symbol": "HDFCBANK",
+        "price": 792.1,
+        "changePct": 1.020278,
+        "changeAbs": 8,
+        "totalBuyQty": 859614,
+        "totalSellQty": 2456631,
+        "volume": 21781809
+      },
+      {
+        "symbol": "ICICIBANK",
+        "price": 1579.2,
+        "changePct": 0.9073451,
+        "changeAbs": 14.199951,
+        "totalBuyQty": 361630,
+        "totalSellQty": 528383,
+        "volume": 7386411
+      },
+      {
+        "symbol": "LT",
+        "price": 4112.5,
+        "changePct": 0.06082725,
+        "changeAbs": 2.5,
+        "totalBuyQty": 82793,
+        "totalSellQty": 167635,
+        "volume": 328894
+      }
+    ],
+    "topLosers": [
+      {
+        "symbol": "BHARTIARTL",
+        "price": 2050.1,
+        "changePct": -1.69743,
+        "changeAbs": -35.399902,
+        "totalBuyQty": 172347,
+        "totalSellQty": 202560,
+        "volume": 1184974
+      },
+      {
+        "symbol": "INFY",
+        "price": 1152.5,
+        "changePct": -1.6302472,
+        "changeAbs": -19.099976,
+        "totalBuyQty": 351178,
+        "totalSellQty": 547826,
+        "volume": 1798224
+      },
+      {
+        "symbol": "BAJFINANCE",
+        "price": 1068.1,
+        "changePct": -1.2618465,
+        "changeAbs": -13.650024,
+        "totalBuyQty": 250515,
+        "totalSellQty": 372813,
+        "volume": 1472009
+      }
+    ]
+  },
+  "chainTable": [
+    {
+      "strike": 24800,
+      "ceLtp": 170.8,
+      "ceChgPct": -36.892666,
+      "ceOi": 3061630,
+      "ceOiChg": 67535,
+      "peLtp": 34.15,
+      "peChgPct": -45.14056,
+      "peOi": 15626585,
+      "peOiChg": 9578400
+    },
+    {
+      "strike": 24850,
+      "ceLtp": 134,
+      "ceChgPct": -43.015095,
+      "ceOi": 2480530,
+      "ceOiChg": 1363505,
+      "peLtp": 48.85,
+      "peChgPct": -37.04897,
+      "peOi": 9544535,
+      "peOiChg": 6972160
+    },
+    {
+      "strike": 24900,
+      "ceLtp": 103,
+      "ceChgPct": -49.261086,
+      "ceOi": 11572405,
+      "ceOiChg": 8720920,
+      "peLtp": 68.55,
+      "peChgPct": -27.613512,
+      "peOi": 19698315,
+      "peOiChg": 14979250
+    },
+    {
+      "strike": 24950,
+      "ceLtp": 78.65,
+      "ceChgPct": -53.62618,
+      "ceOi": 15716155,
+      "ceOiChg": 14221740,
+      "peLtp": 92.65,
+      "peChgPct": -19.956802,
+      "peOi": 13997165,
+      "peOiChg": 11765390
+    },
+    {
+      "strike": 25000,
+      "ceLtp": 58.9,
+      "ceChgPct": -60.72024,
+      "ceOi": 25773865,
+      "ceOiChg": 16075215,
+      "peLtp": 123.4,
+      "peChgPct": -11.127119,
+      "peOi": 11944855,
+      "peOiChg": 5040880
+    },
+    {
+      "strike": 25050,
+      "ceLtp": 0,
+      "ceChgPct": 0,
+      "ceOi": 0,
+      "ceOiChg": 0,
+      "peLtp": 0,
+      "peChgPct": 0,
+      "peOi": 0,
+      "peOiChg": 0
+    },
+    {
+      "strike": 25100,
+      "ceLtp": 0,
+      "ceChgPct": 0,
+      "ceOi": 0,
+      "ceOiChg": 0,
+      "peLtp": 0,
+      "peChgPct": 0,
+      "peOi": 0,
+      "peOiChg": 0
+    }
+  ],
+  "engines": {
+    "autotrade": {
+      "mode": "PAPER",
+      "armed": true,
+      "killed": false
+    },
+    "sniper": {
+      "state": "STAND DOWN",
+      "armed": true,
+      "lastDecision": "Past 09:45. Your rule: if there was no setup by now, close the laptop."
+    },
+    "momentum": {
+      "state": "RUNNING",
+      "guardWarm": true,
+      "lastGate": "Signal score below 89; this score is not a win probability."
+    },
+    "pilot": {
+      "phase": "IDLE"
+    }
+  },
+  "positionsCount": 0,
+  "positions": [],
+  "premarketBias": "None",
+  "recentJournal": {
+    "lastDecision": {
+      "timestamp": 1794198671388,
+      "isoTime": "2026-11-09T04:31:11.388Z",
+      "configVersion": "v1-bd5a65d2",
+      "clientTimestamp": 1794198671383,
+      "strategy": "SNIPER",
+      "mode": "PAPER",
+      "armed": true,
+      "phase": "MANAGE_ONLY",
+      "canEnter": false,
+      "mustExit": false,
+      "blocks": [
+        {
+          "code": "PHASE",
+          "message": "Past 09:45. Your rule: if there was no setup by now, close the laptop."
+        },
+        {
+          "code": "DIRECTION_CONFLICT",
+          "message": "PCR is 2.93 (> 1.10, heavy put writing / bullish support floor). Short fade entry blocked."
+        }
+      ],
+      "setup": null,
+      "spot": 24939.7,
+      "thesis": "NO_PLAN",
+      "tradeTaken": false
+    },
+    "lastGate": {
+      "timestamp": 1794198692242,
+      "isoTime": "2026-11-09T04:31:32.242Z",
+      "configVersion": "v1-bd5a65d2",
+      "clientTimestamp": 1794198692228,
+      "strategy": "MOMENTUM",
+      "mode": "PAPER",
+      "ready": false,
+      "blockedBy": "score",
+      "reason": "Signal score below 89; this score is not a win probability.",
+      "direction": "SHORT",
+      "score": 83.6,
+      "threshold": 89,
+      "spot": 24939.7,
+      "snapshotAt": 1794198671289
+    },
+    "alerts": [
+      {
+        "timestamp": 1794185342915,
+        "isoTime": "2026-11-09T00:49:02.915Z",
+        "configVersion": "v1-bd5a65d2",
+        "clientTimestamp": 1793937304158,
+        "rule": "feed_stalled",
+        "severity": "warning",
+        "source": "momentum",
+        "message": "Newest snapshot is 142s old"
+      }
+    ],
+    "orders": []
+  }
+}

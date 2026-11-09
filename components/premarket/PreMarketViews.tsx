@@ -185,6 +185,8 @@ export const CommandBar: React.FC<{
   hasUnanalyzed: boolean;
   onGenerate: () => void;
   isGenerating: boolean;
+  isPulling?: boolean;
+  pullStatus?: string | null;
   onPullCharts?: () => void;
   onCopy: () => void;
   /** True exports the screenshots too, making the file a restore point. */
@@ -196,7 +198,7 @@ export const CommandBar: React.FC<{
 }> = ({
   visionReady, visionLabel, aiReady, aiLabel, selectedProvider, onProviderChange, credentials,
   charts, analyzingSlots, coverage, liveLtp, manualSpot, onManualSpot,
-  onFiles, onAnalyzeRemaining, hasUnanalyzed, onGenerate, isGenerating, onPullCharts, onCopy, onExport, onImport,
+  onFiles, onAnalyzeRemaining, hasUnanalyzed, onGenerate, isGenerating, isPulling, pullStatus, onPullCharts, onCopy, onExport, onImport,
   onReset, hasDecision, generatedAtStr
 }) => {
   const pct = Math.round((coverage / CHART_SLOTS.length) * 100);
@@ -320,12 +322,20 @@ export const CommandBar: React.FC<{
             <button
               type="button"
               onClick={onPullCharts}
-              disabled={busy || isGenerating}
+              disabled={busy || isGenerating || isPulling}
               className="inline-flex items-center gap-1.5 rounded-lg border border-purple-500/40 bg-purple-500/10 px-3 py-2 text-xs font-semibold text-purple-300 transition hover:bg-purple-500/20 disabled:opacity-40"
               title="Auto-pull today's captured charts from the vision sidecar engine"
             >
-              <Download size={13} /> Pull Today's Charts
+              {isPulling ? <RefreshCw size={13} className="animate-spin text-purple-300" /> : <Download size={13} />}
+              {isPulling ? 'Pulling Charts…' : "Pull Today's Charts"}
             </button>
+          )}
+
+          {pullStatus && (
+            <div className="flex items-center gap-1.5 rounded-lg border border-purple-500/30 bg-purple-950/80 px-2.5 py-1.5 text-xs text-purple-200 shadow-sm animate-pulse">
+              <RefreshCw size={12} className="animate-spin text-purple-400" />
+              <span>{pullStatus}</span>
+            </div>
           )}
 
           {hasUnanalyzed && (
