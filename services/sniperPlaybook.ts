@@ -73,6 +73,14 @@ export const SNIPER = {
    * real zones will come from the 09:15-09:25 five-minute range instead.
    */
   maxUsefulZoneWidth: 400,
+  /**
+   * PCR outside this band is a data fault, not a reading. ATM ± 1000 Nifty PCR
+   * lives around 0.5-1.8; the 16-32 logged from 2026-11-12 came from a strike
+   * list that stopped at 25000, and the gate read it as a bullish floor that
+   * blocked every short for a week.
+   */
+  minValidPcr: 0.3,
+  maxValidPcr: 3,
   /** Approximate delta of a 250-point ITM weekly Nifty option. */
   itmDelta: 0.85
 } as const;

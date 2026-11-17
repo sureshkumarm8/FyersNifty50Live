@@ -326,6 +326,13 @@ export interface MarketSnapshot {
   putsSellQty: number;
   callsOI: number;
   putsOI: number;
+
+  // OI walls (services/oiWalls.ts) - absent on rows logged before 2026-11-17
+  callWall?: number | null;   // strike with the largest call OI above spot
+  callWallOI?: number;
+  putWall?: number | null;    // strike with the largest put OI below spot
+  putWallOI?: number;
+  oiLadder?: string;          // "strike:putOI/callOI;..." ATM ± 500, OI in lakhs
 }
 
 // Local Session History for individual stocks

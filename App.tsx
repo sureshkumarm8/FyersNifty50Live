@@ -26,6 +26,7 @@ import { dbService } from './services/db';
 import { scheduleBackground } from './services/heartbeat';
 import { lifecycleManager } from './services/lifecycleManager';
 import { downloadCSV } from './services/csv';
+import { computeOiWalls } from './services/oiWalls';
 import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 import { istMinutesOf } from './services/sniperEngine';
@@ -414,7 +415,8 @@ const App: React.FC = () => {
                       putsBuyQty,
                       putsSellQty,
                       callsOI,
-                      putsOI
+                      putsOI,
+                      ...computeOiWalls(options, niftyLTP)
                     };
                   });
                   
@@ -1582,7 +1584,7 @@ const App: React.FC = () => {
                       initialCallBuyQty += o.initial_total_buy_qty || 0;
                       initialCallSellQty += o.initial_total_sell_qty || 0;
                   }
-              } else {
+              } else if (o.symbol.endsWith('PE')) {
                   putsBuyQty += o.total_buy_qty || 0;
                   putsSellQty += o.total_sell_qty || 0;
                   putsOI += o.oi || 0;
@@ -1664,7 +1666,8 @@ const App: React.FC = () => {
                   putsBuyQty,
                   putsSellQty,
                   callsOI,
-                  putsOI
+                  putsOI,
+                  ...computeOiWalls(enrichedOptions, niftyLtpVal)
               };
               // Merge (dedupe-by-minute + re-sort by timestamp) instead of a raw
               // prepend: the client-stamped live snapshot must not interleave with

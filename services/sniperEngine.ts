@@ -585,7 +585,7 @@ export function evaluate(ctx: SniperContext): SniperEvaluation {
 
   // PCR Gate (Data-backed: PCR > 1.10 = 92.3% bullish accuracy, PCR < 0.85 = 71.4% bearish accuracy)
   const pcr = ctx.pcr;
-  if (pcr != null && pcr > 0) {
+  if (pcr != null && pcr >= SNIPER.minValidPcr && pcr <= SNIPER.maxValidPcr) {
     if (wantsLong && pcr < 0.85) {
       blocks.push({
         code: 'DIRECTION_CONFLICT',

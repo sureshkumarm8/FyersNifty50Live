@@ -122,6 +122,11 @@ const PatternDashboard: React.FC<PatternDashboardProps> = ({ currentSnapshot, ni
       putsSellQty: s.putsSellQty,
       callsOI: s.callsOI,
       putsOI: s.putsOI,
+      callWall: s.callWall ?? '',
+      callWallOI: s.callWallOI ?? '',
+      putWall: s.putWall ?? '',
+      putWallOI: s.putWallOI ?? '',
+      oiLadder: s.oiLadder ?? '',
     }));
 
     const dateStr = new Date(archive.date).toISOString().slice(0, 10);
