@@ -20,7 +20,9 @@
  *
  * Limits: spot points, no costs. Decisions are taken on each logged snapshot
  * (~30-60s apart), so stops realise worse than their nominal size. The morning
- * thesis and the AI risk officer are not replayed (both can only subtract).
+ * thesis and the AI risk officer are not replayed (the archive holds no
+ * playbooks), so reconcile changes such as the 2026-11-18 stand-aside fix
+ * cannot be measured here.
  * Option-flow fields from 2026-11-12 to 2026-11-17 are corrupt (strike list
  * capped at 25000) and 10-22 / 10-27 / 11-11 logged zero OI.
  */
@@ -100,6 +102,9 @@ function readFile(file: string): Row[] {
   });
 }
 
+/** Last logged price of every day in the archive, usable or not. */
+const closes = new Map<string, number>();
+
 /** Merge every source by timestamp and regroup by IST day. */
 function loadDays(sources: string[]): Map<string, Row[]> {
   const byDay = new Map<string, Map<number, Row>>();
@@ -114,6 +119,8 @@ function loadDays(sources: string[]): Map<string, Row[]> {
   const usable = new Map<string, Row[]>();
   for (const [day, rows] of [...byDay].sort(([a], [b]) => a.localeCompare(b))) {
     const sorted = [...rows.values()].sort((a, b) => a.timestamp - b.timestamp);
+    const session = sorted.filter(r => M(r) >= OPEN && M(r) <= 930);
+    if (session.length) closes.set(day, session[session.length - 1].niftyLtp);
     const minutes = new Set(sorted.map(M).filter(m => m >= OPEN && m <= FLAT));
     const opening = [...minutes].filter(m => m < ENTRY).length;
     if (minutes.size >= 55 && opening >= 6) usable.set(day, sorted);
@@ -180,7 +187,28 @@ function engine(rows: Row[], pcrMode: 'recorded' | 'off'): Trade[] {
 // 3 min). Stop = test extreme -/+ 8, skipped if risk > 25. Target +30. Flat at
 // 10:30. At most 2 attempts a day.
 
-function wallReclaim(rows: Row[], useBreadth: boolean): Trade[] {
+// F: D, but on a gap of 25+ from the previous session's close only the gap's
+// side is traded. Proxy for the 2026-11-18 B-rule fix (a floor the open gapped
+// through is a ceiling): the archive holds no pre-market OI walls, so the prior
+// close stands in for them. Days without a prior close in the archive are
+// traded unfiltered.
+
+/** The previous archived session's close, if the archive has one. */
+function prevClose(rows: Row[]): number | null {
+  const day = istDayKey(rows[0].timestamp);
+  const earlier = [...closes.keys()].filter(d => d < day).sort();
+  return earlier.length ? closes.get(earlier[earlier.length - 1])! : null;
+}
+
+function gapSide(rows: Row[]): Side | null {
+  const pc = prevClose(rows), open = rows.find(r => M(r) >= OPEN);
+  if (pc == null || !open) return null;
+  if (open.niftyLtp <= pc - 25) return 'SHORT';
+  if (open.niftyLtp >= pc + 25) return 'LONG';
+  return null;
+}
+
+function wallReclaim(rows: Row[], useBreadth: boolean, only: Side | null = null): Trade[] {
   const bars: Row[] = [];
   for (const r of rows) {
     if (bars.length && M(bars[bars.length - 1]) === M(r)) bars[bars.length - 1] = r;
@@ -219,11 +247,11 @@ function wallReclaim(rows: Row[], useBreadth: boolean): Trade[] {
     const prev = bars[i - 1]?.niftyLtp, b3 = bars[i - 3];
     const breadthUp = !useBreadth || (!!b3 && b.overallSent > b3.overallSent);
     const breadthDn = !useBreadth || (!!b3 && b.overallSent < b3.overallSent);
-    if (testLow != null && prev != null && px >= testLow + 10 && prev >= testLow + 10 && px > prev && breadthUp) {
+    if (only !== 'SHORT' && testLow != null && prev != null && px >= testLow + 10 && prev >= testLow + 10 && px > prev && breadthUp) {
       const stop = testLow - 8;
       if (px - stop <= 25) { pos = { side: 'LONG', entry: px, stop, at: b.time }; attempts++; continue; }
     }
-    if (testHigh != null && prev != null && px <= testHigh - 10 && prev <= testHigh - 10 && px < prev && breadthDn) {
+    if (only !== 'LONG' && testHigh != null && prev != null && px <= testHigh - 10 && prev <= testHigh - 10 && px < prev && breadthDn) {
       const stop = testHigh + 8;
       if (stop - px <= 25) { pos = { side: 'SHORT', entry: px, stop, at: b.time }; attempts++; }
     }
@@ -255,7 +283,8 @@ const STRATEGIES: Record<string, (rows: Row[]) => Trade[]> = {
   'B engine, PCR gate off': r => engine(r, 'off'),
   'C wall-reclaim +breadth': r => wallReclaim(r, true),
   'D wall-reclaim, no breadth': r => wallReclaim(r, false),
-  'E naive 09:25 drift': naive
+  'E naive 09:25 drift': naive,
+  'F wall-reclaim, gap side': r => wallReclaim(r, false, gapSide(r))
 };
 
 const describe = (t: Trade[]) =>
@@ -269,7 +298,9 @@ function main() {
   for (const [day, rows] of days) {
     const w = rows.filter(r => M(r) >= ENTRY && M(r) <= FLAT).map(r => r.niftyLtp);
     const or = rows.filter(r => M(r) >= OPEN && M(r) < ENTRY).map(r => r.niftyLtp);
-    console.log(`\n${day}  OR ${Math.round(Math.max(...or) - Math.min(...or))}pt  09:25-10:30 range ${Math.round(Math.max(...w) - Math.min(...w))}pt  (${Math.round(w[0])} → ${Math.round(w[w.length - 1])})`);
+    const pc = prevClose(rows), open = rows.find(r => M(r) >= OPEN)!.niftyLtp;
+    const gap = pc == null ? 'gap ?' : `gap ${open - pc > 0 ? '+' : ''}${Math.round(open - pc)}`;
+    console.log(`\n${day}  ${gap}  OR ${Math.round(Math.max(...or) - Math.min(...or))}pt  09:25-10:30 range ${Math.round(Math.max(...w) - Math.min(...w))}pt  (${Math.round(w[0])} → ${Math.round(w[w.length - 1])})`);
     for (const [name, run] of Object.entries(STRATEGIES)) {
       const t = run(rows);
       all[name].push(...t);

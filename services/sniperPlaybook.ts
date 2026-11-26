@@ -49,6 +49,13 @@ export const SNIPER = {
    * 25-point target mathematically unreachable before the opposite wall.
    */
   minZoneWidth: 50,
+  /**
+   * Fewest readings a 09:15-09:25 range may be built from and still be trusted.
+   * The feed refreshes about once a minute, so a complete range holds 7-11;
+   * 5 means at least half the window was seen. Checked in code and stated to
+   * the risk officer, which on 2026-11-19 ended the day over a normal 7.
+   */
+  minRangeSamples: 5,
   /** Below this the day is technically tradable but uncomfortably tight. */
   comfortableZoneWidth: 75,
   /**

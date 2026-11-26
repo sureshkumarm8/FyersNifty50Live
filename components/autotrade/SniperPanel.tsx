@@ -26,6 +26,7 @@ import {
 } from '../../services/sniperEngine';
 import { getNextExpiryDate } from '../../constants/niftyExpiryDates';
 import { LiveThesis, reconcile, sessionDrift } from '../../services/sniperReconcile';
+import { wallContext } from '../../services/oiWalls';
 import {
   LiveVerdict, allowedDirectionOf, isLiveReviewConfigured, needsFreshVerdict, requestLiveVerdict
 } from '../../services/sniperReview';
@@ -1043,6 +1044,9 @@ export const SniperPanel: React.FC<Props> = ({
           }
         : null,
       spot: niftyLtp,
+      // Floor/ceiling, room and writer flow at each change of mind, so "at a
+      // defended wall" can be scored against what the engine decided.
+      walls: niftyLtp ? wallContext(historyLog, niftyLtp) : null,
       thesis: thesis.state,
       tradeTaken: dayState.tradeTaken
     });

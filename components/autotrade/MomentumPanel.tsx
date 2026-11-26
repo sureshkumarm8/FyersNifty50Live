@@ -32,6 +32,7 @@ import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr
 import AutoTradeHistory from './AutoTradeHistory';
 import { NIFTY_LOT_SIZE } from '../../constants/lotSize';
 import { resolveOptionSymbol } from '../../services/instrumentResolver';
+import { wallContext, wallRoom } from '../../services/oiWalls';
 import { forecast, isForecastFailure, toModelRows } from '../../services/predictionModel';
 
 export { pairRoundTrips, findMissingRoundTrips } from '../../services/momentumEntryGuard';
@@ -858,6 +859,27 @@ export const MomentumPanel: React.FC<Props> = ({
         addLog(`✅ Bought ${proposed.symbol} × ${proposed.qty} at spot ${fmt(spot)}`, 'good');
         playOrderFilledChime();
         journalEntry(proposed.symbol, proposed.strike, proposed.optionType, fill, spot, s, orderTimestamp);
+        // How far the OI wall in the trade's path was at entry. Logged, not
+        // gated: 2026-11-18's two losses were shorts 24-50 points above a put
+        // wall, and one day is not enough to make that a rule.
+        const snap = inputsRef.current.historyLog[0];
+        logJournal('decisions', {
+          strategy: 'MOMENTUM',
+          event: 'ENTRY',
+          mode: tradingModeRef.current,
+          symbol: proposed.symbol,
+          direction: s.direction,
+          spot,
+          premium: fill,
+          score: Math.round(s.confidence * 10) / 10,
+          ...wallRoom(snap?.oiLadder, spot, s.direction as 'LONG' | 'SHORT'),
+          walls: wallContext(inputsRef.current.historyLog, spot),
+          callWall: snap?.callWall ?? null,
+          putWall: snap?.putWall ?? null,
+          pcr: snap?.pcr ?? null,
+          oiLadder: snap?.oiLadder ?? null,
+          snapshotAt: snap?.timestamp ?? null
+        });
       } else {
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }
@@ -906,6 +928,24 @@ export const MomentumPanel: React.FC<Props> = ({
           setStats(p => ({ ...p, wins: p.wins + (grossPnl > 0 ? 1 : 0), pnl: p.pnl + grossPnl }));
           // Journal before the metadata is dropped — the exit note is built from it.
           journalExit(symbol, order.avgPrice, reason, grossPnl, pnlPercent);
+          // The order book's exit record has prices but not why; this has why.
+          const meta = entryRef.current[symbol];
+          const exitSpot = inputsRef.current.niftyLtp;
+          logJournal('decisions', {
+            strategy: 'MOMENTUM',
+            event: 'EXIT',
+            mode: tradingModeRef.current,
+            symbol,
+            reason,
+            premium: order.avgPrice,
+            pnlPercent: Math.round(pnlPercent * 10) / 10,
+            netPnl: Math.round(netPnl * 100) / 100,
+            spot: exitSpot ?? null,
+            spotMove: meta && exitSpot != null
+              ? Math.round((exitSpot - meta.entry) * (meta.direction === 'LONG' ? 1 : -1) * 100) / 100
+              : null,
+            heldMs: meta ? Date.now() - meta.at : null
+          });
           delete entryRef.current[symbol];
         } else {
           addLog(`❌ Exit rejected: ${res.message ?? 'unknown error'}`, 'bad');

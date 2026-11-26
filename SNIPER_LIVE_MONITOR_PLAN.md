@@ -120,6 +120,10 @@ mid-session; put ideas in the EOD report.
 - **Arm LONG** when price trades within 10 pts of the active floor (an OI floor or the opening-range low,
   whichever is closer to price). Track `testLow` = the lowest print while armed.
 - **Arm SHORT** when price trades within 10 pts of the active ceiling. Track `testHigh`.
+- **A gapped-through wall changes sides (from B2).** If the open was below the B1 floor, that floor is
+  a ceiling for the rest of the window: arm **SHORT** there, never LONG. Mirror for an open above the
+  ceiling. (2026-11-18: the open at 25323 was below the 25350 floor, B2 said "candidate ceiling", and B3
+  still armed LONG at 25350.)
 - **Trigger LONG** when, after the test, **two consecutive 1-minute closes are ≥ 10 pts above
   `testLow`**, the latest close is higher than the previous one, and **all three** of these hold:
   breadth now > breadth 3 minutes ago; `putSent` falling or `callSent` rising over 3 minutes; and the
@@ -198,3 +202,6 @@ what the tape showed that neither rule captures
 | Date | A trade (pts) | B trade(s) (pts) | Hindsight best | Data OK |
 |---|---|---|---|---|
 | 2026-11-17 (replayed) | L 09:25 −15.2 | (D rules) L 09:31 −23.6, L 09:39 +33.8 | L ~09:38 +30 | No: PCR/OI corrupt |
+| 2026-11-18 | Flat (0 pts, stood aside) | Flat (0 pts, trigger blocked) | S 09:25 +50.7, L 09:29 +43.0 | Yes: clean PCR & OI |
+| 2026-11-19 | Flat (0 pts, stood aside) | Flat (0 pts, trigger blocked) | S 09:25 +51.5, L 09:33 +127.4 | Yes: clean PCR & OI |
+| 2026-11-20 | Flat (0 pts, stood aside) | Flat (0 pts, no arm/trigger) | L 09:27 +106.9 | Yes: clean PCR & OI |

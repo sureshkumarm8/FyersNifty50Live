@@ -99,7 +99,7 @@ export const TOOLS = [
   {
     name: 'get_journal',
     tier: 'read',
-    description: `Rows from today's (or another day's) journal stream. Streams: ${READABLE_STREAMS.join(', ')}. decisions = Sniper/Pilot verdict changes; gates = Momentum gate changes; orders/fills/exits = trades; alerts = safety alerts; ops = this agent's own audit. Newest rows are kept when limited.`,
+    description: `Rows from today's (or another day's) journal stream. Streams: ${READABLE_STREAMS.join(', ')}. decisions = Sniper/Pilot verdict changes and Momentum ENTRY (room to the OI wall) / EXIT (reason) records; gates = Momentum gate changes; orders/fills/exits = trades; alerts = safety alerts; ops = this agent's own audit. Newest rows are kept when limited.`,
     parameters: {
       type: 'object',
       properties: {
