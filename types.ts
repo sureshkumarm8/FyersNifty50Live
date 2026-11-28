@@ -1,7 +1,7 @@
 
 
 
-export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'premarket' | 'autotrade' | 'patterns' | 'vision' | 'paper' | 'opening-pilot' | 'ops';
+export type ViewMode = 'summary' | 'stocks' | 'options' | 'history' | 'settings' | 'ai' | 'premarket' | 'autotrade' | 'patterns' | 'vision' | 'paper' | 'opening-pilot' | 'ops' | 'manual';
 
 export type AIProviderChoice =
   | 'gemini' | 'groq' | 'claude' | 'cerebras' | 'ollama'

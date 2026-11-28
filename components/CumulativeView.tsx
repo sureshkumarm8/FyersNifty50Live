@@ -402,10 +402,12 @@ export const CumulativeView: React.FC<CumulativeViewProps> = ({
 
 
   if (data.length === 0) {
+      const closed = /closed/i.test(marketStatus || '');
       return (
           <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6 p-4">
-              <Loader2 size={48} className="text-blue-400 animate-spin" />
-              <h2 className="text-2xl font-bold text-white mb-2">Initializing Cockpit...</h2>
+              {closed ? <div className="text-5xl">🌙</div> : <Loader2 size={48} className="text-blue-400 animate-spin" />}
+              <h2 className="text-2xl font-bold text-white mb-2">{closed ? 'Market closed' : 'Initializing Cockpit...'}</h2>
+              {closed && <p className="text-sm text-slate-400">Live data is pulled only 09:00–15:30 IST on trading days.</p>}
           </div>
       );
   }

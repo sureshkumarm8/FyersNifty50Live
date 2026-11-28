@@ -346,7 +346,7 @@ export const fetchNiftyIndexLTP = async (credentials: FyersCredentials): Promise
 
 // Fetch data from Redis (stored by cron job)
 // This avoids making duplicate API calls and uses pre-fetched data
-export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], options: FyersQuote[], niftyLTP: number } | null> => {
+export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], options: FyersQuote[], niftyLTP: number; timestamp: number } | null> => {
   try {
     console.log('[PayTM Redis] Fetching data from /api/get-redis-data...');
     const response = await fetchWithTimeout('/api/get-redis-data');
@@ -373,6 +373,14 @@ export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], opt
     if (dataAge > 5 * 60 * 1000) {
       console.warn(`[PayTM Redis] ⚠️ Data is ${Math.round(dataAge / 60000)} minutes old`);
     }
+    // A snapshot from another IST day is never "the market": on 2026-11-27 a 16-Oct
+    // cache (Nifty 23,135.90, sentiment -94%) was shown in the ribbon as live. Same-day
+    // data (e.g. after the close) is kept and carries its own timestamp.
+    const istDay = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    if (!snapshot.timestamp || istDay(snapshot.timestamp) !== istDay(Date.now())) {
+      console.warn(`[PayTM Redis] ⛔ Ignoring snapshot from ${snapshot.timestamp ? istDay(snapshot.timestamp) : 'an unknown time'}; it is not today's data.`);
+      return null;
+    }
     
     // Data is now always in FyersQuote format (converted by both cron and frontend)
     const stocks: FyersQuote[] = snapshot.stocks || [];
@@ -389,7 +397,8 @@ export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], opt
     return {
       stocks,
       options,
-      niftyLTP: snapshot.niftyLTP || 0
+      niftyLTP: snapshot.niftyLTP || 0,
+      timestamp: snapshot.timestamp
     };
     
   } catch (error) {

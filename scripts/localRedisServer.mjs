@@ -5,9 +5,9 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_FILE = path.join(__dirname, '..', 'data', 'local_redis.json');
+const DATA_FILE = process.env.LOCAL_REDIS_FILE || path.join(__dirname, '..', 'data', 'local_redis.json');
 
-const PORT = 5055;
+const PORT = Number(process.env.LOCAL_REDIS_PORT) || 5055;
 
 // In-memory database with disk persistence
 let db = {
@@ -21,6 +21,7 @@ try {
     db = JSON.parse(raw);
     if (!db.strings) db.strings = {};
     if (!db.sortedSets) db.sortedSets = {};
+    if (!db.expires) db.expires = {};
     const stringKeys = Object.keys(db.strings).length;
     const zsetKeys = Object.keys(db.sortedSets).length;
     console.log(`[LocalRedis] Loaded from ${DATA_FILE} (${stringKeys} strings, ${zsetKeys} sorted sets)`);
@@ -29,17 +30,112 @@ try {
   console.warn('[LocalRedis] Could not load persisted data:', e.message);
 }
 
+// --- limits ---------------------------------------------------------------
+// Real Redis/Upstash drops keys at their TTL; this stand-in used to ignore EX, so every
+// `snapshot:<ts>` (~64 KB, set with ex: 86400) piled up forever (94 MB by 2026-11-27).
+// Now: TTLs are honoured, expired keys are swept every minute, and the total stays under
+// LOCAL_REDIS_MAX_MB (default 64) by evicting the oldest keys that carry a TTL (caches),
+// never a key without one (tokens, config).
+const MAX_BYTES = Math.max(8, Number(process.env.LOCAL_REDIS_MAX_MB) || 64) * 1024 * 1024;
+const SAVE_DEBOUNCE_MS = 5000;
+
+const sizeOf = key => (db.strings[key] === undefined ? 0 : String(db.strings[key]).length + key.length);
+let totalBytes = 0;
+function recount() {
+  totalBytes = Object.keys(db.strings).reduce((n, k) => n + sizeOf(k), 0);
+}
+
+function isExpired(key, now = Date.now()) {
+  const at = db.expires[key];
+  return at !== undefined && at <= now;
+}
+
+function dropKey(key) {
+  if (db.strings[key] !== undefined) {
+    totalBytes -= sizeOf(key);
+    delete db.strings[key];
+  }
+  delete db.sortedSets[key];
+  delete db.expires[key];
+}
+
+function sweepExpired(now = Date.now()) {
+  let n = 0;
+  for (const key of Object.keys(db.expires)) {
+    if (db.expires[key] <= now) { dropKey(key); n++; }
+  }
+  return n;
+}
+
+/** Evict TTL'd keys, oldest `snapshot:<ts>` first then soonest-expiring, until under the cap. */
+function enforceCap() {
+  if (totalBytes <= MAX_BYTES) return 0;
+  const victims = Object.keys(db.expires)
+    .filter(k => db.strings[k] !== undefined)
+    .sort((a, b) => {
+      const sa = /^snapshot:(\d+)$/.exec(a), sb = /^snapshot:(\d+)$/.exec(b);
+      if (sa && sb) return Number(sa[1]) - Number(sb[1]);
+      if (sa) return -1;
+      if (sb) return 1;
+      return db.expires[a] - db.expires[b];
+    });
+  let n = 0;
+  for (const k of victims) {
+    if (totalBytes <= MAX_BYTES * 0.9) break;
+    dropKey(k);
+    n++;
+  }
+  if (n) console.log(`[LocalRedis] Cap ${Math.round(MAX_BYTES / 1048576)} MB: evicted ${n} cached key(s), now ${(totalBytes / 1048576).toFixed(1)} MB`);
+  return n;
+}
+
 let saveTimer = null;
+function saveNow() {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(db));
+  } catch (e) {
+    console.error('[LocalRedis] Save error:', e.message);
+  }
+}
 function scheduleSave() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    try {
-      fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
-    } catch (e) {
-      console.error('[LocalRedis] Save error:', e.message);
+    saveNow();
+  }, SAVE_DEBOUNCE_MS);
+}
+
+/** Parse SET options (EX/PX/EXAT/PXAT/KEEPTTL/NX/XX), upper or lower case, or an Upstash options object. */
+function parseSetOptions(args) {
+  const o = { expireAt: undefined, keepTtl: false, nx: false, xx: false };
+  const now = Date.now();
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a && typeof a === 'object') {
+      if (a.ex) o.expireAt = now + Number(a.ex) * 1000;
+      if (a.px) o.expireAt = now + Number(a.px);
+      if (a.exat) o.expireAt = Number(a.exat) * 1000;
+      if (a.pxat) o.expireAt = Number(a.pxat);
+      if (a.keepTtl) o.keepTtl = true;
+      if (a.nx) o.nx = true;
+      if (a.xx) o.xx = true;
+      continue;
     }
-  }, 500);
+    const s = String(a).toLowerCase();
+    const next = Number(args[i + 1]);
+    if (s === 'ex') { o.expireAt = now + next * 1000; i++; }
+    else if (s === 'px') { o.expireAt = now + next; i++; }
+    else if (s === 'exat') { o.expireAt = next * 1000; i++; }
+    else if (s === 'pxat') { o.expireAt = next; i++; }
+    else if (s === 'keepttl') o.keepTtl = true;
+    else if (s === 'nx') o.nx = true;
+    else if (s === 'xx') o.xx = true;
+  }
+  return o;
+}
+
+function globToRegExp(glob) {
+  return new RegExp('^' + String(glob).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
 }
 
 function executeCommand(cmd) {
@@ -50,6 +146,7 @@ function executeCommand(cmd) {
 
   if (op === 'get') {
     const key = String(cmd[1]);
+    if (isExpired(key)) { dropKey(key); scheduleSave(); return null; }
     const val = db.strings[key];
     if (val === undefined) return null;
     return val;
@@ -63,23 +160,59 @@ function executeCommand(cmd) {
     } else {
       val = String(val);
     }
+    const opts = parseSetOptions(cmd.slice(3));
+    if (isExpired(key)) dropKey(key);
+    const exists = db.strings[key] !== undefined;
+    if ((opts.nx && exists) || (opts.xx && !exists)) return null;
+    totalBytes -= sizeOf(key);
     db.strings[key] = val;
+    totalBytes += sizeOf(key);
+    if (opts.expireAt !== undefined) db.expires[key] = opts.expireAt;
+    else if (!opts.keepTtl) delete db.expires[key];
+    enforceCap();
     scheduleSave();
     return 'OK';
+  }
+
+  if (op === 'expire' || op === 'pexpire') {
+    const key = String(cmd[1]);
+    if (db.strings[key] === undefined && db.sortedSets[key] === undefined) return 0;
+    db.expires[key] = Date.now() + Number(cmd[2]) * (op === 'expire' ? 1000 : 1);
+    scheduleSave();
+    return 1;
+  }
+
+  if (op === 'ttl') {
+    const key = String(cmd[1]);
+    if (isExpired(key)) dropKey(key);
+    if (db.strings[key] === undefined && db.sortedSets[key] === undefined) return -2;
+    return db.expires[key] === undefined ? -1 : Math.ceil((db.expires[key] - Date.now()) / 1000);
+  }
+
+  if (op === 'dbsize') {
+    sweepExpired();
+    return Object.keys(db.strings).length + Object.keys(db.sortedSets).length;
+  }
+
+  if (op === 'scan') {
+    // Single pass: cursor 0 in, every match out, cursor "0" back.
+    let match = '*';
+    for (let i = 2; i < cmd.length; i++) {
+      const a = cmd[i];
+      if (a && typeof a === 'object' && a.match) match = a.match;
+      if (String(a).toLowerCase() === 'match') match = cmd[i + 1];
+    }
+    sweepExpired();
+    const re = globToRegExp(match);
+    return ['0', [...Object.keys(db.strings), ...Object.keys(db.sortedSets)].filter(k => re.test(k))];
   }
 
   if (op === 'del') {
     let count = 0;
     for (let i = 1; i < cmd.length; i++) {
       const k = String(cmd[i]);
-      if (db.strings[k] !== undefined) {
-        delete db.strings[k];
-        count++;
-      }
-      if (db.sortedSets[k] !== undefined) {
-        delete db.sortedSets[k];
-        count++;
-      }
+      if (db.strings[k] !== undefined || db.sortedSets[k] !== undefined) count++;
+      dropKey(k);
     }
     if (count > 0) scheduleSave();
     return count;
@@ -268,6 +401,26 @@ const server = http.createServer((req, res) => {
     }
   });
 });
+
+// Old data was saved without TTLs: give every snapshot:<ts> its 24 h expiry from its own timestamp.
+for (const k of Object.keys(db.strings)) {
+  const m = /^snapshot:(\d+)$/.exec(k);
+  if (m && db.expires[k] === undefined) db.expires[k] = Number(m[1]) + 86_400_000;
+}
+recount();
+const startSwept = sweepExpired();
+enforceCap();
+if (startSwept) { console.log(`[LocalRedis] Dropped ${startSwept} expired key(s) at start`); saveNow(); }
+console.log(`[LocalRedis] ${(totalBytes / 1048576).toFixed(1)} MB in use, cap ${Math.round(MAX_BYTES / 1048576)} MB`);
+
+setInterval(() => {
+  const n = sweepExpired();
+  if (n) { console.log(`[LocalRedis] Expired ${n} key(s), ${(totalBytes / 1048576).toFixed(1)} MB in use`); scheduleSave(); }
+}, 60_000).unref();
+
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => { if (saveTimer) { clearTimeout(saveTimer); saveNow(); } process.exit(0); });
+}
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`🚀 [LocalRedis] Local Upstash-compatible Redis server running at http://127.0.0.1:${PORT}`);

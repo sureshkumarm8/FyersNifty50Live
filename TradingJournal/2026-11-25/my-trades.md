@@ -12,7 +12,7 @@
 | Entry | **09:38:10** BUY NIFTY 1st w DEC **25750 PE**, 65 qty (MIS) @ **₹213.30**. Spot about 25,772, after the 09:34 high of about 25,787 |
 | Path | +3% straight away → −3% (about ₹207; the 09:42 bounce to about 25,770) → about +8% at best |
 | Exit | **09:46:58** SELL @ **₹226.90** (+6.4%). Spot about 25,735–25,740 |
-| Result | +₹13.60 × 65 = **gross +₹884**. Net after charges: ? (from the contract note) |
+| Result | +₹13.60 × 65 = gross ₹884 − charges ₹81.23 = **net +₹802.77** |
 | Spot captured | about 30–37 pts (the target was about 30) |
 | Held | 8 min 48 s |
 | Why I entered | resistance at the OI wall; the spike was failing |

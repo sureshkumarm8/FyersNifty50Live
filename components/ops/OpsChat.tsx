@@ -16,7 +16,22 @@ interface Turn {
   usage?: { inputTokens: number; outputTokens: number } | null;
 }
 
-export const QUICK_PROMPTS = ['Ready for open?', 'Why no trade today?', 'What happened at 10:40?', 'Summarise today'];
+export const QUICK_PROMPTS = ['What changed in 5 min?', 'Read latest', 'Where are the walls?', 'How is my trade?', 'Ready for open?', 'Summarise today'];
+
+/** A message the agent raised on its own (co-pilot alert), shown in the conversation. */
+export interface ProactiveMessage { id: string; at: number; time: string; severity: 'info' | 'warn' | 'action'; title: string; message: string; kind: string; quiet?: boolean }
+/** Outside 09:15-15:30 an agent message is a note, not an alert. */
+const quietNote = (p: ProactiveMessage) => {
+  if (p.quiet) return true;
+  const d = new Date(new Date(p.at).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const m = d.getHours() * 60 + d.getMinutes();
+  return d.getDay() === 0 || d.getDay() === 6 || m < 9 * 60 + 15 || m > 15 * 60 + 30;
+};
+const PRO_STYLE: Record<string, string> = {
+  info: 'border-slate-700/70 bg-slate-800/40',
+  warn: 'border-amber-500/40 bg-amber-500/10',
+  action: 'border-emerald-500/50 bg-emerald-500/10'
+};
 
 const HISTORY_KEY = 'nifty50ops_chat_v1';
 
@@ -85,7 +100,7 @@ const renderText = (text: string) =>
  * The Nifty50Ops chat. Each answer shows the tool calls behind it, collapsed.
  * Text arrives only after the server's post-check, so it appears in one piece.
  */
-export const OpsChat: React.FC<{ level: number | null }> = ({ level }) => {
+export const OpsChat: React.FC<{ level: number | null; proactive?: ProactiveMessage[] }> = ({ level, proactive = [] }) => {
   const [turns, setTurns] = useState<Turn[]>(loadTurns);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -159,11 +174,20 @@ export const OpsChat: React.FC<{ level: number | null }> = ({ level }) => {
     }
   }, [busy, turns]);
 
+  // The agent's own messages (co-pilot alerts worth reading) interleaved with the conversation by time.
+  const timeline: ({ kind: 'agent'; at: number; p: ProactiveMessage } | { kind: 'turn'; at: number; t: Turn })[] = [
+    ...proactive
+      .filter(p => p.severity !== 'info' || p.kind === 'shadow' || p.kind === 'eod' || p.kind === 'morning')
+      .slice(-40)
+      .map(p => ({ kind: 'agent' as const, at: p.at, p })),
+    ...turns.map(t => ({ kind: 'turn' as const, at: t.startedAt ?? t.id, t }))
+  ].sort((a, b) => a.at - b.at);
+
   return (
     <div className="flex h-full min-h-0 flex-col rounded-2xl border border-white/5 bg-slate-900/40">
       <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
         <Bot className="h-4 w-4 text-cyan-300" />
-        <span className="text-sm font-bold text-slate-100">Ask Nifty50Ops</span>
+        <span className="text-sm font-bold text-slate-100">Nifty50Ops agent</span>
         <span className="text-[10px] text-slate-500">
           {level === null ? '' : `L${level} · ${level === 0 ? 'read-only' : 'read + routine ops'}`} · never places trades
         </span>
@@ -175,12 +199,22 @@ export const OpsChat: React.FC<{ level: number | null }> = ({ level }) => {
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3 text-[13px] leading-relaxed text-slate-300">
-        {turns.length === 0 && (
+        {timeline.length === 0 && (
           <div className="text-slate-500">
-            Ask about readiness, engine state, why something did or didn't trade, or what happened at a time. Answers cite the data and its age.
+            I watch the walls, your logged trade, the data feed and the PAPER shadow on my own, and post here when something needs you.
+            Ask me anything about today: "read latest", where the walls are, why something did or didn't trade, or what happened at a time.
+            Every answer cites its data and age. I never place or change orders.
           </div>
         )}
-        {turns.map(t => (
+        {timeline.map(item => item.kind === 'agent' ? (
+          <div key={`p-${item.p.id}`} className={`max-w-[92%] rounded-xl border px-3 py-2 ${quietNote(item.p) ? PRO_STYLE.info + ' opacity-70' : PRO_STYLE[item.p.severity] ?? PRO_STYLE.info}`}>
+            <div className="mb-0.5 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-cyan-300/80">
+              <Bot className="h-3 w-3" /> Nifty50Ops · on its own · {item.p.time.slice(0, 5)}{quietNote(item.p) ? ' · note (outside market hours)' : ''}
+            </div>
+            <div className="font-semibold text-slate-100">{item.p.title}</div>
+            <div className="text-[12px] text-slate-300">{item.p.message}</div>
+          </div>
+        ) : ((t: Turn) => (
           <div key={t.id} className="space-y-2">
             <div className="ml-auto w-fit max-w-[85%] rounded-xl bg-cyan-600/20 px-3 py-1.5 text-slate-100">{t.question}</div>
             {t.progress && t.progress.length > 0 && (
@@ -229,7 +263,7 @@ export const OpsChat: React.FC<{ level: number | null }> = ({ level }) => {
               </div>
             )}
           </div>
-        ))}
+        ))(item.t))}
         <div ref={endRef} />
       </div>
 
@@ -256,7 +290,7 @@ export const OpsChat: React.FC<{ level: number | null }> = ({ level }) => {
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="Ask about health, state, the journal…"
+            placeholder="Ask the agent… e.g. read latest, where are the walls, how is my trade"
             className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-950/60 px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-500/50"
             disabled={busy}
           />

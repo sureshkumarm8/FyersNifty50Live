@@ -12,10 +12,10 @@ import { ensureJournalDir, findJournalDir, istDateStr } from './time.mjs';
 
 /** Keep in step with JOURNAL_STREAMS in services/journal.ts (ml/journalEndpoint.test.ts checks it). */
 export const BROWSER_STREAMS = Object.freeze([
-  'decisions', 'gates', 'orders', 'fills', 'exits', 'premarket', 'vision', 'alerts'
+  'decisions', 'gates', 'orders', 'fills', 'exits', 'premarket', 'vision', 'alerts', 'manual'
 ]);
 
-export const SERVER_STREAMS = Object.freeze(['state', 'ops', 'charts']);
+export const SERVER_STREAMS = Object.freeze(['state', 'ops', 'charts', 'ticks', 'copilot']);
 
 const ALL_STREAMS = new Set([...BROWSER_STREAMS, ...SERVER_STREAMS]);
 

@@ -99,7 +99,9 @@ export function opsConfig(env = { ...process.env, ...fileEnv }, choice = readPro
     local: LOCAL_CLI_IDS.has(provider),
     geminiKey,
     ollamaUrl: (env.OPS_OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, ''),
-    chatLevel: parseLevel(env.OPS_AUTONOMY_LEVEL, 0),
+    // L1 by default (2026-11-27, the user's choice): chat may run routine ops (pre-flight,
+    // chart pull, EOD report). Orders stay unreachable at every level (ops/client.mjs FORBIDDEN).
+    chatLevel: parseLevel(env.OPS_AUTONOMY_LEVEL, 1),
     daemonLevel: parseLevel(env.OPS_DAEMON_AUTONOMY_LEVEL, 1),
     serverBase: env.OPS_SERVER_URL || `http://127.0.0.1:${env.PORT || 5001}`
   };

@@ -8,6 +8,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { AgentRail, AlertsFeed, PulsePanel, useCopilot } from './ops/CopilotPanel';
 import { Radar } from 'lucide-react';
 import {
   fetchOpsConfig, fetchOpsEvents, fetchOpsHealth, fetchOpsState, OpsConfig, OpsEvent, OpsHealth, OpsStateReply, saveOpsProvider
@@ -61,6 +62,7 @@ const OpsAgent: React.FC<{ active: boolean; credentials: FyersCredentials }> = (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, wantedKey]);
 
+  const copilot = useCopilot(active);
   const [error, setError] = useState<string | null>(null);
   const sinceRef = useRef(0);
 
@@ -96,11 +98,12 @@ const OpsAgent: React.FC<{ active: boolean; credentials: FyersCredentials }> = (
   }, [active]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 px-3 pb-3 sm:px-4">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-3 pb-3 sm:px-4 lg:overflow-hidden">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Radar className="h-5 w-5 text-cyan-300" />
           <h1 className="text-base font-black tracking-tight text-slate-100">Nifty50Ops</h1>
+          <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-px text-[10px] font-bold text-cyan-200">autonomous agent</span>
           {config && (
             <span
               className="text-[10px] text-slate-500"
@@ -115,12 +118,21 @@ const OpsAgent: React.FC<{ active: boolean; credentials: FyersCredentials }> = (
           <StatusStrip health={health} state={state} error={error} />
         </div>
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-3">
-        <div className="min-h-[420px] lg:col-span-2">
-          <OpsChat level={config?.chatLevel ?? null} />
+
+      {/* Console: agent status | conversation | activity. Each column scrolls on its own so the chat is always in view. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[280px_minmax(0,1fr)_300px]">
+        <div className="order-2 min-h-0 lg:order-1 lg:overflow-y-auto custom-scrollbar">
+          <AgentRail s={copilot} provider={config ? `${config.provider}${config.model ? `:${config.model}` : ''}` : null} level={config?.chatLevel ?? null} />
         </div>
-        <div className="min-h-[240px]">
-          <ActivityTimeline events={events} />
+        <div className="order-1 flex h-[80vh] min-h-[480px] flex-col gap-3 lg:order-2 lg:h-auto lg:min-h-0">
+          <div className="shrink-0"><PulsePanel s={copilot} /></div>
+          <div className="min-h-[300px] flex-1"><OpsChat level={config?.chatLevel ?? null} proactive={copilot?.alerts ?? []} /></div>
+        </div>
+        <div className="order-3 min-h-0 space-y-3 lg:overflow-y-auto custom-scrollbar">
+          <AlertsFeed s={copilot} />
+          <div className="min-h-[240px]">
+            <ActivityTimeline events={events} />
+          </div>
         </div>
       </div>
     </div>

@@ -37,7 +37,17 @@ export interface OpsStateSnapshot {
   schema: 1;
   at: number;
   tabId: string;
-  market: { spot: number | null; quoteAgeSec: number | null; source: MarketSource };
+  market: {
+    spot: number | null;
+    quoteAgeSec: number | null;
+    source: MarketSource;
+    /** Epoch ms of the market snapshot `spot` came from; lets the server count each tick once. */
+    quoteAt?: number | null;
+    /** That snapshot's OI ladder ("strike:putOI/callOI;..."), for the server-side co-pilot. */
+    oiLadder?: string | null;
+    /** Breadth, PCR, OI totals and heavyweight moves for the per-minute Market Pulse. */
+    pulse?: MarketPulseInputs | null;
+  };
   engines: {
     autotrade: { mode: 'PAPER' | 'LIVE'; requestedMode: 'PAPER' | 'LIVE'; armed: boolean; killed: boolean; broker: string | null };
     sniper: { state: string; armed: boolean; playbookDate: string | null; lastDecision?: string };
@@ -89,6 +99,9 @@ export interface CollectInputs {
   spot: number | null;
   lastQuoteAt: number | null;
   source: MarketSource;
+  quoteAt?: number | null;
+  oiLadder?: string | null;
+  pulse?: MarketPulseInputs | null;
   /** localStorage-backed fallbacks for when UnifiedAutoTrade has not reported yet. */
   storedMode: 'PAPER' | 'LIVE';
   storedKilled: boolean;
@@ -158,7 +171,10 @@ export function collectOpsState(i: CollectInputs): OpsStateSnapshot {
     market: {
       spot: Number.isFinite(i.spot as number) ? i.spot : null,
       quoteAgeSec: i.lastQuoteAt ? Math.max(0, Math.round((i.now - i.lastQuoteAt) / 1000)) : null,
-      source: i.source
+      source: i.source,
+      quoteAt: i.quoteAt ?? null,
+      oiLadder: i.oiLadder ?? null,
+      pulse: i.pulse ?? null
     },
     engines: {
       autotrade: {
@@ -252,10 +268,19 @@ export function startPublisher(deps: PublisherDeps): () => void {
 
 // --- browser wiring ---------------------------------------------------------
 
+export interface MarketPulseInputs {
+  adv: number | null; dec: number | null; pcr: number | null; sent: number | null;
+  callsOI: number | null; putsOI: number | null;
+  movers: { s: string; w: number; m1: number; day: number }[];
+}
+
 export interface LiveInputs {
   spot: number | null;
   lastQuoteAt: number | null;
   source: MarketSource;
+  quoteAt?: number | null;
+  oiLadder?: string | null;
+  pulse?: MarketPulseInputs | null;
 }
 
 const TAB_ID = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -360,6 +385,9 @@ export function startOpsStatePublisher(getLive: () => LiveInputs): () => void {
         spot: live.spot,
         lastQuoteAt: live.lastQuoteAt,
         source: live.source,
+        quoteAt: live.quoteAt ?? null,
+        oiLadder: live.oiLadder ?? null,
+        pulse: live.pulse ?? null,
         storedMode: localStorage.getItem('autotrade_mode') === 'LIVE' ? 'LIVE' : 'PAPER',
         storedKilled: localStorage.getItem(`autotrade_killed_${today}`) === 'true',
         engines: reports.engines,

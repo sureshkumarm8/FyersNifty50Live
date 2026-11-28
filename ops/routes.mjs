@@ -4,6 +4,9 @@
  *
  *   POST /api/ops/state    browser snapshot in (services/opsState.ts)
  *   GET  /api/ops/state    { snapshot, ageSec, stale }
+ *   POST /api/ops/agent-note  { title, message } — the app reports what it did on its own (autopilot)
+ *   GET  /api/ops/manual-record  the trader's own trades (scalping-journal.md + Manual tab saves)
+ *   GET  /api/ops/copilot  live co-pilot: walls, setup stages, in-app alerts, PAPER shadow, watched trade
  *   GET  /api/ops/health   deterministic health checks, no LLM
  *   GET  /api/ops/events   timeline: daemon runs, notifications, alerts, answers (?since=ms)
  *   GET  /api/ops/runs     daemon job runs only
@@ -19,6 +22,13 @@ import { createRuntime } from './runtime.mjs';
 import { saveProviderChoice, SERVER_PROVIDERS } from './config.mjs';
 import { stateStore } from './stateStore.mjs';
 import { TOOL_BY_NAME } from './tools.mjs';
+import { copilot } from './copilot.mjs';
+import { manualRecord } from './manualRecord.mjs';
+import { readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { istDateStr } from './time.mjs';
+import { runPreflight } from './preflight.mjs';
 
 const json = (res, status, body) => {
   res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -42,6 +52,48 @@ function readBody(req, limit = 512_000) {
 
 let chatInFlight = false;
 
+/** Today's pre-market chart files in ~/Downloads (YYYYMMDD-HHMMSS-<chart>.png). */
+function chartFilesToday() {
+  const dir = join(homedir(), 'Downloads');
+  const prefix = istDateStr().replace(/-/g, '');
+  try { return readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.png')).length; } catch { return 0; }
+}
+
+/** The pull_premarket_charts tool at L1, with the same guard and audit as chat and the daemon. */
+async function guardedChartPull() {
+  const rt = createRuntime({ level: 1 });
+  const tool = TOOL_BY_NAME.get('pull_premarket_charts');
+  rt.guard.startTurn();
+  const verdict = rt.guard.check(tool, {});
+  if (!verdict.ok) return { error: `denied: ${verdict.reason}` };
+  rt.audit.toolCall('copilot', tool.name, {});
+  try {
+    const result = await tool.run({}, { ...rt.ctx, audit: rt.audit });
+    rt.audit.toolResult('copilot', tool.name, !result?.error, result);
+    return result;
+  } catch (err) {
+    rt.audit.toolResult('copilot', tool.name, false, { error: err.message });
+    return { error: err.message };
+  }
+}
+
+// Co-pilot clock: once-a-day checks (morning, feed, zone, EOD) every 30 s. Started on the
+// first ops request, which the app tab makes within 5 s of opening.
+let copilotClock = null;
+function startCopilotClock() {
+  if (copilotClock) return;
+  const run = () => copilot.tickClock({
+    state: stateStore.get(),
+    premarketRows: readJournal('premarket', { limit: 0 }),
+    preflight: () => runPreflight(),
+    chartsToday: () => chartFilesToday(),
+    repullCharts: () => guardedChartPull()
+  }).catch(err => console.warn('[Ops] co-pilot clock:', err.message));
+  copilotClock = setInterval(run, 30_000);
+  copilotClock.unref?.();
+  setTimeout(run, 2_000).unref?.();
+}
+
 export async function handleOpsRoute(req, res, reqUrl, { port }) {
   const path = reqUrl.pathname;
   const base = `http://127.0.0.1:${port}`;
@@ -54,7 +106,29 @@ export async function handleOpsRoute(req, res, reqUrl, { port }) {
         return json(res, 400, { success: false, error: 'invalid JSON' });
       }
       const error = stateStore.put(snapshot);
+      if (!error) {
+        startCopilotClock();
+        try { copilot.onState(snapshot); } catch (err) { console.warn('[Ops] co-pilot:', err.message); }
+      }
       return error ? json(res, 400, { success: false, error }) : json(res, 200, { success: true });
+    }
+
+    if (path === '/api/ops/agent-note' && req.method === 'POST') {
+      let note;
+      try { note = JSON.parse(await readBody(req, 8_000)); } catch { return json(res, 400, { success: false, error: 'invalid JSON' }); }
+      const title = String(note?.title || '').slice(0, 80);
+      const message = String(note?.message || '').slice(0, 600);
+      if (!title) return json(res, 400, { success: false, error: 'title required' });
+      copilot.inbox(title, message);
+      return json(res, 200, { success: true });
+    }
+
+    if (path === '/api/ops/manual-record' && req.method === 'GET') {
+      return json(res, 200, { trades: manualRecord() });
+    }
+
+    if (path === '/api/ops/copilot' && req.method === 'GET') {
+      return json(res, 200, copilot.status());
     }
 
     if (path === '/api/ops/state' && req.method === 'GET') {

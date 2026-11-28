@@ -11,6 +11,7 @@ const GET_ALLOW = [
   /^\/api\/token-status$/,
   /^\/api\/kill\/status$/,
   /^\/api\/ops\/state$/,
+  /^\/api\/ops\/copilot$/,
   /^\/api\/get-redis-data$/,
   /^\/api\/vision\/(status|latest|history)(\?.*)?$/,
   /^\/api\/vision-snapshot-file\/[^/]+$/,

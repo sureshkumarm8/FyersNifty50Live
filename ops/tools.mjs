@@ -74,6 +74,40 @@ export const TOOLS = [
     }
   },
   {
+    name: 'get_copilot_status',
+    tier: 'read',
+    description: "The live co-pilot for the trader's manual wall system: Nifty spot and tick age, refresh cadence, the floor/ceiling OI walls with writers' % change, each side's setup stage (AT_WALL, STALLING, TURNING, CONFIRMED with entry/stop/target/room, FAILED), the 5-minute trend, recent setup events, in-app alerts, the PAPER shadow trade, and the trade the user logged on the Manual tab. Use it for 'read latest', 'where are the walls', 'is the bounce confirmed', 'how is my trade'.",
+    parameters: { type: 'object', properties: {} },
+    async run(_args, ctx) {
+      const r = await ctx.client.get('/api/ops/copilot');
+      if (!r.ok || !r.json) return { error: 'co-pilot unavailable' };
+      const s = r.json;
+      const ev = e => e && { at: ist(e.t), side: e.side, stage: e.stage, wall: e.wall, spot: e.spot, note: e.note, plan: e.plan ?? undefined };
+      return {
+        asOf: ist(s.asOf), spot: s.spot, lastTickAgeSec: s.lastTickAgeSec, cadenceSec: s.cadenceSec, oiLadder: s.ladder,
+        walls: s.walls, trend5m: s.trend5m,
+        long: { stage: s.stages?.long?.stage, wall: s.stages?.long?.wall, last: ev(s.stages?.long?.last) },
+        short: { stage: s.stages?.short?.stage, wall: s.stages?.short?.wall, last: ev(s.stages?.short?.last) },
+        recentEvents: (s.events || []).slice(-12).map(ev),
+        alerts: (s.alerts || []).slice(-10).map(a => ({ at: a.time, kind: a.kind, title: a.title, message: a.message })),
+        paperShadow: s.shadow, yourLoggedTrade: s.watched, ticksToday: s.ticksToday
+      };
+    }
+  },
+  {
+    name: 'get_market_pulse',
+    tier: 'read',
+    description: "The per-minute Market Pulse: Nifty's 1-min and 5-min move, which strikes' put/call OI was added or cut in the last ~5 min and last minute with the writer read (bullish/bearish/range/unwinding), breadth (advances/declines) and its change, PCR change, sentiment change, the heavyweights moving Nifty now and today's drivers. Use for 'what changed', 'how is OI moving', 'what happened in the last 5 minutes'. `minutes` returns that many recent pulses (default 5, max 30).",
+    parameters: { type: 'object', properties: { minutes: { type: 'integer', description: 'How many recent minutes (default 5, max 30)' } } },
+    async run(args, ctx) {
+      const r = await ctx.client.get('/api/ops/copilot');
+      if (!r.ok || !r.json) return { error: 'co-pilot unavailable' };
+      const n = Math.max(1, Math.min(30, Number(args?.minutes) || 5));
+      const list = (r.json.pulses || []).slice(-n).map(p => ({ at: ist(p.t), spot: p.spot, headline: p.headline, details: p.lines }));
+      return list.length ? { asOf: ist(r.json.asOf), pulses: list } : { asOf: ist(r.json.asOf), pulses: [], note: 'No pulses yet today (they are built each minute in market hours).' };
+    }
+  },
+  {
     name: 'get_market_snapshot',
     tier: 'read',
     description: 'Latest market snapshot stored in Redis (written by the app or the failover fetcher): Nifty spot, advances/declines across the Nifty 50, option-chain size, with its timestamp and age.',
@@ -214,6 +248,16 @@ export const TOOLS = [
       await ctx.notify(title, message);
       ctx.audit?.notify(String(args.topic || 'general'), title, message, true);
       return { sent: true, at: ist(ctx.now()) };
+    }
+  },
+  {
+    name: 'write_eod_report',
+    tier: 'ops',
+    description: "Write (or rewrite) today's co-pilot end-of-day report now: your trades from the Manual tab, the PAPER shadow, a replay of every confirmed setup, walls that failed, and data problems. Returns the file path.",
+    parameters: { type: 'object', properties: {} },
+    async run(_args, ctx) {
+      const { copilot } = await import('./copilot.mjs');
+      return { path: copilot.writeEod(), at: ist(ctx.now()) };
     }
   },
   {
