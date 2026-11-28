@@ -32,6 +32,8 @@ import { Card, LogEntry, LogFeed, Meter, Pill, PositionsTable, Stat, Toggle, inr
 import AutoTradeHistory from './AutoTradeHistory';
 import { NIFTY_LOT_SIZE } from '../../constants/lotSize';
 import { resolveOptionSymbol } from '../../services/instrumentResolver';
+import { wallContext, wallRoom } from '../../services/oiWalls';
+import { forecast, isForecastFailure, toModelRows } from '../../services/predictionModel';
 
 export { pairRoundTrips, findMissingRoundTrips } from '../../services/momentumEntryGuard';
 export type { RoundTrip } from '../../services/momentumEntryGuard';
@@ -436,6 +438,10 @@ export const MomentumPanel: React.FC<Props> = ({
 
   const proposal = useMemo(() => makeProposal(signal, niftyLtp, settings, expiry),
     [signal, niftyLtp, settings, expiry]);
+  const currentForecast = useMemo(() => forecast(toModelRows(historyLog)), [historyLog]);
+  const forecast5m = isForecastFailure(currentForecast)
+    ? null
+    : currentForecast.horizons.find(h => h.minutes === 5) ?? null;
 
   const assessEntry = useCallback((s = signalRef.current, signalAt = signalAtRef.current) => {
     const inputs = inputsRef.current;
@@ -526,7 +532,8 @@ export const MomentumPanel: React.FC<Props> = ({
       history,
       piv?.s1 ?? ltp - 50,
       piv?.r1 ?? ltp + 50,
-      ltp
+      ltp,
+      { neutralizeInvalidPcr: tradingModeRef.current === 'PAPER' }
     );
     signalRef.current = s;
     signalAtRef.current = history[0]?.timestamp ?? 0;
@@ -551,6 +558,15 @@ export const MomentumPanel: React.FC<Props> = ({
           `mom ${fmtPct(m.momentumScore)}`,
         s.confidence >= threshold ? 'good' : 'info'
       );
+      const pcr = history[0]?.pcr;
+      if (
+        tradingModeRef.current === 'PAPER' &&
+        typeof pcr === 'number' &&
+        Number.isFinite(pcr) &&
+        (pcr <= 0.2 || pcr >= 3)
+      ) {
+        addLog(`Ignoring out-of-range PCR ${pcr.toFixed(2)} for PAPER signal (accepted range 0.2-3).`, 'warn');
+      }
     }
 
     if (gateLogRef.current !== gate.reason) {
@@ -755,11 +771,13 @@ export const MomentumPanel: React.FC<Props> = ({
       const r = reason.toLowerCase();
       const mapped: PaperExitReason = r.includes('target')
         ? 'TARGET'
-        : r.includes('stop')
-          ? 'STOPLOSS'
-          : r.includes('market close') || r.includes('eod')
-            ? 'EOD'
-            : 'MANUAL';
+        : r.includes('trailing')
+          ? 'TRAILING'
+          : r.includes('stop')
+            ? 'STOPLOSS'
+            : r.includes('market close') || r.includes('eod')
+              ? 'EOD'
+              : 'MANUAL';
 
       const meta = entryRef.current[symbol];
       const spot = inputsRef.current.niftyLtp;
@@ -777,9 +795,11 @@ export const MomentumPanel: React.FC<Props> = ({
           ? `The +${targetPct}% premium target was reached, so the engine banked it.`
           : mapped === 'STOPLOSS'
             ? `The −${stopPct}% premium stop was breached; the engine cuts without waiting for a recovery.`
-            : mapped === 'EOD'
-              ? 'Closed at the end of the session — nothing is carried overnight.'
-              : 'Closed by hand from the Momentum panel.',
+            : mapped === 'TRAILING'
+              ? 'The trailing stop protected gains after the premium moved in the trade’s favor.'
+              : mapped === 'EOD'
+                ? 'Closed at the end of the session — nothing is carried overnight.'
+                : 'Closed by hand from the Momentum panel.',
         `Booked ${inr(pnl)} on the broker book.`
       ]
         .filter(Boolean)
@@ -839,6 +859,27 @@ export const MomentumPanel: React.FC<Props> = ({
         addLog(`✅ Bought ${proposed.symbol} × ${proposed.qty} at spot ${fmt(spot)}`, 'good');
         playOrderFilledChime();
         journalEntry(proposed.symbol, proposed.strike, proposed.optionType, fill, spot, s, orderTimestamp);
+        // How far the OI wall in the trade's path was at entry. Logged, not
+        // gated: 2026-11-18's two losses were shorts 24-50 points above a put
+        // wall, and one day is not enough to make that a rule.
+        const snap = inputsRef.current.historyLog[0];
+        logJournal('decisions', {
+          strategy: 'MOMENTUM',
+          event: 'ENTRY',
+          mode: tradingModeRef.current,
+          symbol: proposed.symbol,
+          direction: s.direction,
+          spot,
+          premium: fill,
+          score: Math.round(s.confidence * 10) / 10,
+          ...wallRoom(snap?.oiLadder, spot, s.direction as 'LONG' | 'SHORT'),
+          walls: wallContext(inputsRef.current.historyLog, spot),
+          callWall: snap?.callWall ?? null,
+          putWall: snap?.putWall ?? null,
+          pcr: snap?.pcr ?? null,
+          oiLadder: snap?.oiLadder ?? null,
+          snapshotAt: snap?.timestamp ?? null
+        });
       } else {
         addLog(`❌ Order rejected: ${res.message ?? 'unknown error'}`, 'bad');
       }
@@ -887,6 +928,24 @@ export const MomentumPanel: React.FC<Props> = ({
           setStats(p => ({ ...p, wins: p.wins + (grossPnl > 0 ? 1 : 0), pnl: p.pnl + grossPnl }));
           // Journal before the metadata is dropped — the exit note is built from it.
           journalExit(symbol, order.avgPrice, reason, grossPnl, pnlPercent);
+          // The order book's exit record has prices but not why; this has why.
+          const meta = entryRef.current[symbol];
+          const exitSpot = inputsRef.current.niftyLtp;
+          logJournal('decisions', {
+            strategy: 'MOMENTUM',
+            event: 'EXIT',
+            mode: tradingModeRef.current,
+            symbol,
+            reason,
+            premium: order.avgPrice,
+            pnlPercent: Math.round(pnlPercent * 10) / 10,
+            netPnl: Math.round(netPnl * 100) / 100,
+            spot: exitSpot ?? null,
+            spotMove: meta && exitSpot != null
+              ? Math.round((exitSpot - meta.entry) * (meta.direction === 'LONG' ? 1 : -1) * 100) / 100
+              : null,
+            heldMs: meta ? Date.now() - meta.at : null
+          });
           delete entryRef.current[symbol];
         } else {
           addLog(`❌ Exit rejected: ${res.message ?? 'unknown error'}`, 'bad');
@@ -1090,8 +1149,15 @@ export const MomentumPanel: React.FC<Props> = ({
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
           <Stat label="Signal score" value={signal ? `${signal.confidence.toFixed(0)}/100` : '—'} sub="Not a win probability" />
+          <Stat
+            label="5m spot range"
+            value={forecast5m ? `${fmt(forecast5m.low)}-${fmt(forecast5m.high)}` : '—'}
+            sub={forecast5m
+              ? `Nominal 80% band · ${Math.round(forecast5m.probUp * 100)}% up · advisory only`
+              : 'Forecast warming up · advisory only'}
+          />
           <Stat label="Net reward / risk" value={entryGate.netRiskReward?.toFixed(2) ?? '—'} sub="Estimated fees + slippage" />
           <Stat label="Open" value={positions.length} sub={`${settings.lots} lot${settings.lots > 1 ? 's' : ''} per entry`} />
           <Stat

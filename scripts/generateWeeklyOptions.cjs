@@ -20,8 +20,14 @@ const CSV_PATH = path.join(__dirname, '../api/paytm/option_security_master.csv')
 const OUTPUT_PATH = path.join(__dirname, '../constants/niftyWeeklyOptions.ts');
 const LOT_SIZE_PATH = path.join(__dirname, '../constants/lotSize.ts');
 const EXPIRY_DATES_PATH = path.join(__dirname, '../constants/niftyExpiryDates.ts');
-const STRIKE_MIN = 21000;
-const STRIKE_MAX = 25000;
+/**
+ * Every strike of the expiry is kept. Callers select ATM ± 1000 from the live
+ * price, so the list only has to contain the strikes, not guess where Nifty
+ * will be. A fixed 21000-25000 band silently broke the moment Nifty crossed
+ * 25000 (2026-11-12): only deep-ITM calls and OTM puts were left in the
+ * window, PCR read 5-30 instead of ~0.7, and every contract outside the list
+ * was labelled UNKNOWN by the quote converters.
+ */
 
 /**
  * Get next expiry date from the official calendar (handles holidays)
@@ -77,7 +83,6 @@ function parseOptions(csvData, expiryDate) {
   
   console.log(`📊 Total CSV rows: ${lines.length}`);
   console.log(`🎯 Target expiry: ${expiryDate}`);
-  console.log(`📏 Strike range: ${STRIKE_MIN} - ${STRIKE_MAX}`);
   
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -94,12 +99,12 @@ function parseOptions(csvData, expiryDate) {
     const strike = parseFloat(strikeStr);
     
     // Filter criteria
-    const isNifty = symbol.includes('NIFTY') && !symbol.includes('BANKNIFTY') && !symbol.includes('FINNIFTY');
+    // Exact prefix: monthly expiries also list NIFTYNXT50, MIDCPNIFTY and
+    // NIFTYFPI contracts, which a substring match would let in.
+    const isNifty = symbol.startsWith('NIFTY-');
     const isNSE = exchange === 'NSE';
     const isTargetExpiry = expiry === expiryDate;
-    const isInRange = strike >= STRIKE_MIN && strike <= STRIKE_MAX;
-    
-    if (isNifty && isNSE && isTargetExpiry && isInRange) {
+    if (isNifty && isNSE && isTargetExpiry && isFinite(strike)) {
       const type = symbol.endsWith('-CE') ? 'CE' : 'PE';
       options.push({ 
         security_id: securityId, 
@@ -135,7 +140,7 @@ function generateTypeScriptFile(options, expiryDate) {
   const content = `
 // Nifty Weekly Options - Manually curated for current week
 // Expiry: ${expiryDate} (Next Tuesday)
-// Range: ${STRIKE_MIN} to ${STRIKE_MAX} (ATM ± 20 strikes)
+// Range: every listed strike (${options[0].strike} to ${options[options.length - 1].strike}); callers filter ATM ± 20 strikes
 
 export interface NiftyOption {
   security_id: string;

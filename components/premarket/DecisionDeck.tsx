@@ -23,7 +23,7 @@ import {
   AlertCircle, ArrowRight, Ban, Brain, Check, ChevronDown, ClipboardCopy, Clock, Crosshair, Loader2,
   Lock, RefreshCw, Shield, Target, TrendingDown, TrendingUp
 } from 'lucide-react';
-import { SNIPER, ZonePlay, istMinutes } from '../../services/sniperPlaybook';
+import { PHASE_LABELS, SNIPER, ZonePlay, istMinutes, resolvePhase } from '../../services/sniperPlaybook';
 import { BASIS_LABEL, DecisionBasis } from '../../services/premarketSchedule';
 import { PhaseReview } from '../../services/premarketReview';
 import { PhaseSnapshot, PreMarketDecision } from './model';
@@ -213,7 +213,7 @@ export const StepRail: React.FC<{
 // Step 2 — the call
 // ---------------------------------------------------------------------------
 
-type CallWord = 'PREPARING' | 'NO TRADE' | 'WAIT FOR THE LEVEL' | 'TAKE THE TRADE';
+type CallWord = 'PREPARING' | 'NO TRADE' | 'WAIT FOR THE LEVEL' | 'TAKE THE TRADE' | 'DAY OVER';
 
 interface Call {
   word: CallWord;
@@ -223,13 +223,35 @@ interface Call {
   play: ZonePlay | null;
   /** Points from spot to the level the play arms at. Null when there is no play. */
   distance: number | null;
+  /** From the price now: points to the target and to the stop. Null without a play. */
+  rewardNow?: number | null;
+  riskNow?: number | null;
 }
+
+/**
+ * A play measured from where price is NOW, not from the zone. The trigger band
+ * is as wide as the target, so entering at its far edge used to leave nothing:
+ * on 2026-11-27 the card said TAKE THE TRADE at 25,876 for a fade whose target
+ * was 25,875.
+ */
+export function measureFromSpot(play: ZonePlay, spot: number) {
+  const sign = play.side === 'CE' ? 1 : -1;
+  return {
+    rewardNow: Math.round(sign * (play.targetSpot - spot)),
+    riskNow: Math.round(sign * (spot - play.stopSpot)),
+    inBand: spot >= play.triggerFrom && spot <= play.triggerTo
+  };
+}
+
+/** The smallest move left to the target that still makes the trade worth taking. */
+export const MIN_REWARD_NOW = Math.round(SNIPER.targetPoints * 0.6);
 
 const TONE = {
   go: { wrap: 'border-emerald-500/50 bg-emerald-500/[0.08] shadow-[0_0_70px_-28px_rgba(16,185,129,0.9)]', chip: 'bg-emerald-500 text-emerald-950', text: 'text-emerald-300', Icon: Target },
   wait: { wrap: 'border-amber-500/45 bg-amber-500/[0.07]', chip: 'bg-amber-500 text-amber-950', text: 'text-amber-300', Icon: Clock },
   no: { wrap: 'border-rose-500/45 bg-rose-500/[0.07]', chip: 'bg-rose-500 text-white', text: 'text-rose-300', Icon: Ban },
-  prep: { wrap: 'border-sky-500/40 bg-sky-500/[0.06]', chip: 'bg-sky-500 text-sky-950', text: 'text-sky-300', Icon: Lock }
+  prep: { wrap: 'border-sky-500/40 bg-sky-500/[0.06]', chip: 'bg-sky-500 text-sky-950', text: 'text-sky-300', Icon: Lock },
+  over: { wrap: 'border-slate-700 bg-slate-900/40', chip: 'bg-slate-700 text-slate-200', text: 'text-slate-400', Icon: Lock }
 } as const;
 
 /**
@@ -246,7 +268,7 @@ const TONE = {
  *     level. Buying mid-zone is the single most expensive habit this protocol
  *     was built to stop, so distance decides between "take it" and "wait".
  */
-export function deriveCall(view: PhaseSnapshot, basis: DecisionBasis, liveSpot: number | null): Call {
+export function deriveCall(view: PhaseSnapshot, basis: DecisionBasis, liveSpot: number | null, now: Date = new Date()): Call {
   const pb = view.playbook;
   const play = pb?.primaryPlay ?? null;
   const spot = liveSpot ?? view.spot;
@@ -258,6 +280,18 @@ export function deriveCall(view: PhaseSnapshot, basis: DecisionBasis, liveSpot: 
       word: 'PREPARING',
       line: `Map drawn from your charts: ${num(view.expectedSupport)} support, ${num(view.expectedResistance)} resistance. No price from today yet, so there is nothing to trade — bring the 09:10 auction print to step 2.`,
       tone: TONE.prep,
+      play: null,
+      distance: null
+    };
+  }
+
+  // The clock outranks the plan: after the hard stop nothing is opened, whatever the zones say.
+  const phase = resolvePhase(now);
+  if (phase === 'CLOSED') {
+    return {
+      word: 'DAY OVER',
+      line: `Past the ${SNIPER.hardStop} hard stop. No new trades today: review the day instead. The plan below is kept for the record.`,
+      tone: TONE.over,
       play: null,
       distance: null
     };
@@ -304,130 +338,165 @@ export function deriveCall(view: PhaseSnapshot, basis: DecisionBasis, liveSpot: 
   }
 
   const distance = Math.round(Math.abs(spot - play.zone));
-  const atLevel = spot >= play.triggerFrom && spot <= play.triggerTo;
+  const m = measureFromSpot(play, spot);
+  const levels = `target ${num(play.targetSpot)} (${m.rewardNow} pts from here), stop ${num(play.stopSpot)} (${m.riskNow} pts)`;
 
-  if (atLevel) {
+  if (m.inBand && (phase === 'PRE_MARKET' || phase === 'DOWNLOAD')) {
+    return {
+      word: 'WAIT FOR THE LEVEL',
+      line: `Nifty ${num(spot)} is in the ${num(play.triggerFrom)}–${num(play.triggerTo)} band, but the entry window opens at ${SNIPER.entryStart}. Watch only until then.`,
+      tone: TONE.wait,
+      play,
+      distance,
+      ...m
+    };
+  }
+
+  if (m.inBand && m.rewardNow < MIN_REWARD_NOW) {
+    return {
+      word: 'WAIT FOR THE LEVEL',
+      line: `Nifty ${num(spot)} is in the band but only ${Math.max(0, m.rewardNow)} pt${Math.max(0, m.rewardNow) === 1 ? " is" : "s are"} left to the ${num(play.targetSpot)} target (needs ${MIN_REWARD_NOW}+). Too late for this touch: wait for a fresh test of ${num(play.zone)}.`,
+      tone: TONE.wait,
+      play,
+      distance,
+      ...m
+    };
+  }
+
+  if (m.inBand) {
     return {
       word: 'TAKE THE TRADE',
-      line: `Price is at ${num(play.zone)} — inside the trigger band. Buy ${play.optionLabel} now, ${SNIPER.targetPoints} pts target, ${SNIPER.stopPoints} pts stop, out by ${SNIPER.hardStop} regardless.`,
+      line: `Nifty ${num(spot)} is inside the ${num(play.triggerFrom)}–${num(play.triggerTo)} band at the ${num(play.zone)} ${play.zoneKind.toLowerCase()}. Buy ${play.optionLabel}: ${levels}. Out by ${SNIPER.hardStop} regardless.`,
       tone: TONE.go,
       play,
-      distance
+      distance,
+      ...m
     };
   }
 
   return {
     word: 'WAIT FOR THE LEVEL',
-    line: `The plan is ready but price is ${distance} pts away from ${num(play.zone)}. Do not chase — this system buys at the level, never into a move.`,
+    line: `The plan is ready but Nifty ${num(spot)} is ${distance} pts from ${num(play.zone)}. Do not chase — this system buys at the level, never into a move.`,
     tone: TONE.wait,
     play,
-    distance
+    distance,
+    ...m
   };
 }
 
-/** The one card the morning is decided from. */
+/** The one card the morning is decided from: verdict, map, setups, in one screen. */
 export const TheCall: React.FC<{
   view: PhaseSnapshot;
   basis: DecisionBasis;
   liveSpot: number | null;
+  /** When liveSpot was true (epoch ms); shown so an old price is never read as live. */
+  liveAt?: number | null;
   nowTick: number;
   onCopy: () => void;
-}> = ({ view, basis, liveSpot, nowTick, onCopy }) => {
-  const call = useMemo(() => deriveCall(view, basis, liveSpot), [view, basis, liveSpot]);
+}> = ({ view, basis, liveSpot, liveAt, nowTick, onCopy }) => {
+  const call = useMemo(() => deriveCall(view, basis, liveSpot), [view, basis, liveSpot, nowTick]);
   const clock = useMemo(() => {
     const mins = istMinutes(new Date());
-    return { toEntry: toMin(SNIPER.entryStart) - mins, toStop: toMin(SNIPER.hardStop) - mins };
+    return { toEntry: toMin(SNIPER.entryStart) - mins, toStop: toMin(SNIPER.hardStop) - mins, phase: resolvePhase(new Date()) };
   }, [nowTick]);
 
   const countdown =
     clock.toEntry > 0
-      ? `${clock.toEntry} min until the ${SNIPER.entryStart} entry window opens`
+      ? `${clock.toEntry} min to the ${SNIPER.entryStart} entry window`
       : clock.toStop > 0
-        ? `${clock.toStop} min left before the ${SNIPER.hardStop} hard stop`
-        : `Past ${SNIPER.hardStop} — the day is over, do not open anything`;
+        ? `${clock.toStop} min left before ${SNIPER.hardStop}`
+        : `Past ${SNIPER.hardStop} · day over`;
 
   const { Icon } = call.tone;
   const spot = liveSpot ?? view.spot;
+  const review = view.aiReview;
+  const plays = (view.playbook?.plays ?? []).filter(p => p.status !== 'BLOCKED' || p === view.playbook?.primaryPlay);
+  const reviewWord = review ? (review.stance === 'ACT' ? 'ACT' : review.stance === 'WAIT' ? 'WAIT' : 'STAND ASIDE') : null;
+  const agrees = !review || (review.stance === 'ACT') === (call.word === 'TAKE THE TRADE');
+  const missingCharts = 4 - (view.chartCoverage ?? 0);
 
   return (
     <section className={`rounded-2xl border ${call.tone.wrap}`}>
-      <div className="p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <Icon size={30} className={`mt-0.5 shrink-0 ${call.tone.text}`} />
-            <div className="min-w-0">
-              <h2 className={`text-2xl font-black leading-tight tracking-tight sm:text-3xl ${call.tone.text}`}>
-                {call.word}
-              </h2>
-              <p className="mt-0.5 text-[11px] font-medium text-slate-400">
-                {BASIS_LABEL[basis]} · Nifty {num(spot)}
-                {liveSpot != null && Math.round(liveSpot) !== Math.round(view.spot) && (
-                  <span className="text-slate-600"> (plan cut at {num(view.spot)})</span>
-                )}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`rounded-lg px-2.5 py-1 text-[10px] font-black tracking-wider ${call.tone.chip}`}>
-              {countdown}
-            </span>
-            <button
-              onClick={onCopy}
-              title="Copy the plan"
-              className="rounded-lg border border-slate-700 p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
-            >
-              <ClipboardCopy size={14} />
-            </button>
-          </div>
+      <div className="p-5 sm:p-6 space-y-3">
+        {/* status line: session phase and data */}
+        <div className="flex flex-wrap items-center gap-2 text-[10.5px]">
+          <span className={`rounded-md px-2 py-0.5 font-black tracking-wider ${call.tone.chip}`}>{countdown}</span>
+          <span className="text-slate-400">{PHASE_LABELS[clock.phase]}</span>
+          <span className={missingCharts > 0 ? 'text-amber-300' : 'text-slate-500'}>· charts {view.chartCoverage}/4{missingCharts > 0 ? ' read' : ''}</span>
+          {view.staleCharts.length > 0 && <span className="text-rose-300">· stale: {view.staleCharts.join(', ')}</span>}
+          <button onClick={onCopy} title="Copy the plan" className="ml-auto rounded-lg border border-slate-700 p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200">
+            <ClipboardCopy size={13} />
+          </button>
         </div>
 
-        <p className="mt-3 text-[13px] leading-relaxed text-slate-200">{call.line}</p>
+        {/* the verdict, once */}
+        <div className="flex items-start gap-3">
+          <Icon size={30} className={`mt-0.5 shrink-0 ${call.tone.text}`} />
+          <div className="min-w-0">
+            <h2 className={`text-2xl font-black leading-tight tracking-tight sm:text-3xl ${call.tone.text}`}>{call.word}</h2>
+            <p className="mt-0.5 text-[11px] font-medium text-slate-400">
+              {BASIS_LABEL[basis]} step · Nifty {num(spot)}
+              {liveSpot != null && liveAt
+                ? <span className={Date.now() - liveAt > 120_000 ? 'text-amber-300' : 'text-slate-500'}> as of {new Date(liveAt).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}{Date.now() - liveAt > 120_000 ? ' (not live)' : ''}</span>
+                : <span className="text-slate-500"> (price when the plan was cut)</span>}
+              {liveSpot != null && Math.round(liveSpot) !== Math.round(view.spot) && <span className="text-slate-600"> · plan cut at {num(view.spot)}</span>}
+            </p>
+          </div>
+        </div>
+        <p className="text-[13px] leading-relaxed text-slate-200">{call.line}</p>
+        {review && (
+          <p className={`text-[11.5px] ${agrees ? 'text-slate-400' : 'text-amber-300'}`}>
+            <Brain size={11} className="mr-1 inline" />
+            Analyst (AI): <b>{reviewWord}</b> · {review.conviction}% — {review.headline}
+            {!agrees && <span className="text-slate-500"> (disagrees; the levels below are the rule-based plan)</span>}
+          </p>
+        )}
 
-        {call.play && <Ticket play={call.play} live={call.word === 'TAKE THE TRADE'} distance={call.distance} />}
+        {/* the map */}
+        <ZoneStrip view={view} liveSpot={liveSpot} compact />
+
+        {/* the setups, measured from where price is now */}
+        {plays.length > 0 && call.word !== 'PREPARING' && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {plays.map(p => <SetupRow key={`${p.side}-${p.zone}`} play={p} spot={spot} />)}
+          </div>
+        )}
       </div>
     </section>
   );
 };
 
-/**
- * The order, written out.
- *
- * Deliberately reads like something you would type into a broker, because that
- * is the moment it exists to survive. Every number is fixed by the protocol -
- * nothing here is a judgement call once the level is reached.
- */
-const Ticket: React.FC<{ play: ZonePlay; live: boolean; distance: number | null }> = ({ play, live, distance }) => {
+/** One setup on one line: when it arms, where it exits, and whether it still pays from here. */
+const SetupRow: React.FC<{ play: ZonePlay; spot: number }> = ({ play, spot }) => {
   const isCe = play.side === 'CE';
+  const m = measureFromSpot(play, spot);
+  const distance = Math.round(Math.abs(spot - play.zone));
+  const valid = play.targetSpot !== play.triggerFrom && play.targetSpot !== play.triggerTo;
+  const state = m.inBand
+    ? m.rewardNow < MIN_REWARD_NOW ? { t: `in band · only ${Math.max(0, m.rewardNow)} pt${Math.max(0, m.rewardNow) === 1 ? '' : 's'} left`, c: 'text-amber-300' } : { t: 'in band now', c: 'text-emerald-300' }
+    : { t: `${distance} pts away`, c: 'text-slate-400' };
   return (
-    <div
-      className={`mt-4 rounded-xl border p-4 ${
-        live ? 'border-emerald-500/40 bg-emerald-500/[0.06]' : 'border-slate-700 bg-slate-950/50'
-      }`}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className={`rounded-xl border p-3 ${play.status === 'BLOCKED' ? 'border-slate-800 opacity-60' : 'border-slate-700 bg-slate-950/50'}`}>
+      <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          {isCe ? <TrendingUp size={16} className="text-emerald-400" /> : <TrendingDown size={16} className="text-rose-400" />}
-          <span className="text-[15px] font-black text-slate-100">BUY {play.optionLabel}</span>
-          <span className={`rounded px-1.5 py-px text-[9.5px] font-bold tracking-wider ${isCe ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
-            {play.itmPoints} PTS ITM
-          </span>
+          {isCe ? <TrendingUp size={14} className="text-emerald-400" /> : <TrendingDown size={14} className="text-rose-400" />}
+          <span className="text-[13px] font-black text-slate-100">{isCe ? 'LONG' : 'SHORT'} at {num(play.zone)}</span>
+          <span className="text-[10px] text-slate-500">buy {play.optionLabel} · {play.itmPoints} ITM</span>
         </div>
-        {!live && distance != null && (
-          <span className="font-mono text-[10.5px] font-semibold text-amber-300">{distance} pts away — not yet</span>
-        )}
+        <span className={`font-mono text-[10.5px] font-semibold ${state.c}`}>{state.t}</span>
       </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Cell label="Arm when spot" value={`${num(play.triggerFrom)}–${num(play.triggerTo)}`} accent="text-sky-300" />
-        <Cell label="Target spot" value={num(play.targetSpot)} sub={`≈ +${Math.round(play.approxPremiumTarget)} premium`} accent="text-emerald-300" />
-        <Cell label="Stop spot" value={num(play.stopSpot)} sub={`≈ −${Math.round(play.approxPremiumStop)} premium`} accent="text-rose-300" />
-        <Cell label="Hard exit" value={SNIPER.hardStop} sub="no exceptions" accent="text-amber-300" />
+      <div className="mt-2 grid grid-cols-3 gap-2 font-mono text-[11px]">
+        <div><div className="text-[9px] uppercase text-slate-500">arm</div><div className="text-sky-300">{num(play.triggerFrom)}–{num(play.triggerTo)}</div></div>
+        <div><div className="text-[9px] uppercase text-slate-500">target</div><div className="text-emerald-300">{num(play.targetSpot)}</div></div>
+        <div><div className="text-[9px] uppercase text-slate-500">stop</div><div className="text-rose-300">{num(play.stopSpot)}</div></div>
       </div>
-
-      <p className="mt-2.5 text-[10.5px] leading-snug text-slate-500">
-        Buying the {play.zoneKind.toLowerCase()} at {num(play.zone)} with {Math.round(play.roomToOpposite)} pts of room to
-        the opposite wall. One trade. If it stops out, the day is finished.
-      </p>
+      <div className="mt-1.5 text-[10px] text-slate-500">
+        {m.inBand
+          ? <>from {num(spot)}: <span className="text-emerald-300">+{Math.max(0, m.rewardNow)}</span> / <span className="text-rose-300">−{Math.max(0, m.riskNow)}</span> pts</>
+          : <>from the zone: <span className="text-emerald-300">+{Math.abs(play.targetSpot - play.zone)}</span> / <span className="text-rose-300">−{Math.abs(play.zone - play.stopSpot)}</span> pts</>} · room {Math.round(play.roomToOpposite)} to the opposite wall
+        {play.status === 'BLOCKED' && <span className="text-slate-400"> · blocked</span>}
+        {!valid && <span className="text-amber-300"> · target sits on the band edge</span>}
+      </div>
     </div>
   );
 };
@@ -452,7 +521,7 @@ const Cell: React.FC<{ label: string; value: string; sub?: string; accent: strin
  * and the shaded ends are the literal arm bands, so "is it close enough" stops
  * being an eyeball judgement.
  */
-export const ZoneStrip: React.FC<{ view: PhaseSnapshot; liveSpot: number | null }> = ({ view, liveSpot }) => {
+export const ZoneStrip: React.FC<{ view: PhaseSnapshot; liveSpot: number | null; compact?: boolean }> = ({ view, liveSpot, compact }) => {
   const lo = view.expectedSupport;
   const hi = view.expectedResistance;
   const width = hi - lo;
@@ -466,8 +535,8 @@ export const ZoneStrip: React.FC<{ view: PhaseSnapshot; liveSpot: number | null 
   const narrow = width < SNIPER.minZoneWidth;
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <div className={compact ? '' : 'rounded-2xl border border-slate-800 bg-slate-900/40 p-4'}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-[12px] font-bold text-slate-200">
           <Crosshair size={14} className="text-indigo-400" /> Where price sits
         </h3>
@@ -504,10 +573,10 @@ export const ZoneStrip: React.FC<{ view: PhaseSnapshot; liveSpot: number | null 
           <span className="text-slate-600">{toRes >= 0 ? `${toRes} pts above` : `${-toRes} pts below`} · resistance</span> {num(hi)}
         </span>
       </div>
-      <p className="mt-2 text-[10px] leading-snug text-slate-600">
+      {!compact && <p className="mt-2 text-[10px] leading-snug text-slate-600">
         Shaded ends are the {SNIPER.zoneBuffer}-pt arm bands. Price inside one of them is a trade; price in the middle is
         not, however strong the read looks.
-      </p>
+      </p>}
     </div>
   );
 };
@@ -533,53 +602,12 @@ export const NextMoves: React.FC<{
   onRunReview?: () => void;
   aiLabel?: string;
 }> = ({ view, basis, review, reviewing, reviewError, onRunReview, aiLabel }) => {
-  const steps = (review?.playbook.length ? review.playbook : view.tradePlan).slice(0, 3);
-  const kills = (review?.invalidators.length ? review.invalidators : view.playbook?.invalidations ?? []).slice(0, 3);
+  // One source of numbers: the rule-based plan. The analyst's own lists (with their own
+  // levels) stay in "Why"; on 2026-11-27 the screen showed three different stops for one fade.
+  const kills = (view.playbook?.invalidations ?? []).slice(0, 3);
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-        <div className="mb-2.5 flex items-center justify-between gap-2">
-          <h3 className="flex items-center gap-2 text-[12px] font-bold text-slate-200">
-            <ArrowRight size={14} className="text-indigo-400" /> Do this next
-          </h3>
-          {review && (
-            <span className="flex items-center gap-1 text-[9.5px] font-bold uppercase tracking-wider text-indigo-300">
-              <Brain size={11} /> analyst
-            </span>
-          )}
-        </div>
-        {steps.length ? (
-          <ol className="space-y-2">
-            {steps.map((s, i) => (
-              <li key={i} className="flex gap-2.5 text-[12px] leading-relaxed text-slate-300">
-                <span className="font-black text-indigo-400">{i + 1}.</span>
-                <span className="flex-1">{s}</span>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="text-[11px] text-slate-600">Nothing to do at this step.</p>
-        )}
-
-        {!review && onRunReview && basis !== 'CHARTS_ONLY' && (
-          <button
-            onClick={onRunReview}
-            disabled={reviewing}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 transition hover:bg-indigo-500/25 disabled:opacity-50"
-          >
-            {reviewing ? <Loader2 size={12} className="animate-spin" /> : <Brain size={12} />}
-            {reviewing ? 'Reading this price…' : `Ask ${aiLabel || 'the analyst'} to re-read this step`}
-          </button>
-        )}
-        {reviewError && !review && (
-          <p className="mt-2 flex items-start gap-1.5 text-[10px] text-amber-400/80">
-            <AlertCircle size={11} className="mt-px shrink-0" /> Analyst pass failed — the mechanical plan above still
-            stands. {reviewError}
-          </p>
-        )}
-      </div>
-
+    <div className="grid gap-3">
       <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-4">
         <h3 className="mb-2.5 flex items-center gap-2 text-[12px] font-bold text-amber-300">
           <Shield size={14} /> Abandon the plan if
@@ -597,6 +625,21 @@ export const NextMoves: React.FC<{
           <p className="text-[11px] text-slate-500">
             Nothing specific flagged. The standing rule still applies: if it is choppy or confusing by{' '}
             {SNIPER.reviewBy}, close the laptop.
+          </p>
+        )}
+        {!review && onRunReview && basis !== 'CHARTS_ONLY' && (
+          <button
+            onClick={onRunReview}
+            disabled={reviewing}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 transition hover:bg-indigo-500/25 disabled:opacity-50"
+          >
+            {reviewing ? <Loader2 size={12} className="animate-spin" /> : <Brain size={12} />}
+            {reviewing ? 'Reading this price…' : `Ask ${aiLabel || 'the analyst'} to re-read this step`}
+          </button>
+        )}
+        {reviewError && !review && (
+          <p className="mt-2 flex items-start gap-1.5 text-[10px] text-amber-400/80">
+            <AlertCircle size={11} className="mt-px shrink-0" /> Analyst pass failed; the rule-based plan still stands. {reviewError}
           </p>
         )}
       </div>

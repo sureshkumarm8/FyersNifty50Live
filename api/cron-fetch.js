@@ -21,7 +21,7 @@ function convertPayTMToFyersFormat(paytmQuote, mappingData, isOption = false) {
   
   if (isOption) {
     // Find in options mapping
-    const optInfo = NIFTY_WEEKLY_OPTIONS.find(o => o.security_id === securityIdStr);
+    const optInfo = (mappingData || NIFTY_WEEKLY_OPTIONS).find(o => String(o.security_id) === securityIdStr);
     if (optInfo) {
       symbol = `NSE:NIFTY-${optInfo.strike}-${optInfo.type}`;
       shortName = `NIFTY ${optInfo.strike} ${optInfo.type}`;
@@ -246,12 +246,20 @@ export default async function handler(req, res) {
 
     // Fetch Options data (ATM ± 1000 points) - DYNAMIC DISCOVERY
     let optionsData = null;
+    // Contracts are labelled from the list they were fetched from. Looking them
+    // up only in the static list turned every discovered contract it lacked
+    // into UNKNOWN, which the OI aggregation then counted as a put.
+    let optionLabels = NIFTY_WEEKLY_OPTIONS;
     if (niftyLTP && niftyLTP > 0) {
       try {
         const atmStrike = Math.round(niftyLTP / 50) * 50;
         const strikeRange = 20; // ±1000 points
         const minStrike = atmStrike - (strikeRange * 50);
         const maxStrike = atmStrike + (strikeRange * 50);
+        // Discovery is cached for the week, so it keeps a band wide enough for a
+        // week of drift; the fetch below still takes only ATM ± 1000.
+        const discoverMin = atmStrike - 2500;
+        const discoverMax = atmStrike + 2500;
         
         // Try to get current week's options from Redis cache (populated by discover-options API)
         let currentWeekOptions = await redis.get('options:current_week');
@@ -330,8 +338,8 @@ export default async function handler(req, res) {
               if (symbol?.toUpperCase().includes('NIFTY') && 
                   expiry === nextExpiry &&
                   !isNaN(strike) &&
-                  strike >= minStrike && 
-                  strike <= maxStrike &&
+                  strike >= discoverMin && 
+                  strike <= discoverMax &&
                   securityId) {
                 
                 const type = symbol.toUpperCase().includes('CE') ? 'CE' : 
@@ -356,7 +364,7 @@ export default async function handler(req, res) {
               discoveredAt: new Date().toISOString(),
               atmStrike,
               niftyLTP,
-              strikeRange: { min: minStrike, max: maxStrike },
+              strikeRange: { min: discoverMin, max: discoverMax },
               options,
               count: options.length
             };
@@ -377,6 +385,7 @@ export default async function handler(req, res) {
           opt.strike >= minStrike && opt.strike <= maxStrike
         );
         const optionIds = filteredOptions.map(opt => opt.security_id);
+        optionLabels = [...filteredOptions, ...NIFTY_WEEKLY_OPTIONS];
         
         if (optionIds.length > 0) {
           const optionPreferences = optionIds.map(id => `NSE:${id}:INDEX_OPT`).join(',');
@@ -411,7 +420,7 @@ export default async function handler(req, res) {
     
     const convertedOptions = (optionsData || [])
       .filter(quote => quote.found !== false)
-      .map(quote => convertPayTMToFyersFormat(quote, NIFTY_WEEKLY_OPTIONS, true));
+      .map(quote => convertPayTMToFyersFormat(quote, optionLabels, true));
     
     console.log(`[Cron] Converted ${convertedStocks.length} stocks and ${convertedOptions.length} options to FyersQuote format`);
     

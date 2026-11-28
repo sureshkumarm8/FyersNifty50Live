@@ -12,6 +12,7 @@ import { createOllamaProvider } from './providers/ollama.mjs';
 import { createLocalCliProvider } from './providers/localCli.mjs';
 import { LIMITS } from './agent.mjs';
 import { sendNotification } from '../services/notify.mjs';
+import { copilot } from './copilot.mjs';
 
 export function createProvider(config) {
   if (config.local) return createLocalCliProvider({ provider: config.provider, model: config.model, timeoutMs: LOCAL_STEP_MS });
@@ -53,7 +54,11 @@ export function createRuntime({ base, level, env } = {}) {
     ctx: {
       client: createOpsClient(base ?? config.serverBase),
       now: () => Date.now(),
-      notify: (title, message) => sendNotification(title, message)
+      // In-app only (the user's choice, 2026-11-27): notifications land in the co-pilot's
+      // alert list shown in the app. OPS_NOTIFY=macos restores the desktop pop-up.
+      notify: (title, message) => (process.env.OPS_NOTIFY === 'macos'
+        ? sendNotification(title, message)
+        : Promise.resolve(copilot.inbox(title, message)))
     }
   };
 }

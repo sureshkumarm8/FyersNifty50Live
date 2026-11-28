@@ -23,10 +23,17 @@ import { fetchQuotes, getNiftyOptionSymbols, fetchYesterdayOHLC } from './servic
 import { fetchPayTMStocks, fetchPayTMOptions, getNifty50SecurityIds, fetchNiftyIndexLTP, fetchPayTMFromRedis } from './services/paytmService';
 import { NIFTY50_SYMBOLS, REFRESH_OPTIONS, NIFTY_WEIGHTAGE, NIFTY_INDEX_SYMBOL, SECTOR_MAPPING } from './constants';
 import { dbService } from './services/db';
+import { quotesFromSession } from './services/lastSession';
+
+/** IndexedDB meta key for the last live market screen (shown after hours, never pulled). */
+const LAST_SCREEN_KEY = 'last_market_screen';
 import { scheduleBackground } from './services/heartbeat';
 import { lifecycleManager } from './services/lifecycleManager';
 import { downloadCSV } from './services/csv';
+import { computeOiWalls } from './services/oiWalls';
 import { getMarketTimeInfo, formatDelay } from './utils/marketTime';
+import ManualTrading from './components/manual/ManualTrading';
+import { CopilotToasts } from './components/ops/CopilotPanel';
 import { apiCallTracker, APIStats, callAI } from './services/aiProvider';
 import { istMinutesOf } from './services/sniperEngine';
 import { dayStrength, isUsableBaseline, shouldAnchorSymbol } from './services/marketStrength';
@@ -122,6 +129,10 @@ const App: React.FC = () => {
 
   const [optionQuotes, setOptionQuotes] = useState<EnrichedFyersQuote[]>([]);
   const [niftyLtp, setNiftyLtp] = useState<number | null>(null);
+  /** When the ribbon's price was true (the Redis cache's own time, not the fetch time). */
+  const [marketAsOf, setMarketAsOf] = useState<number | null>(null);
+  /** Last live screen (stocks + Nifty) kept locally for after-hours display. */
+  const lastScreenSavedRef = useRef(0);
   
   // Data States
   const [historyLog, setHistoryLog] = useState<MarketSnapshot[]>([]);
@@ -165,9 +176,30 @@ const App: React.FC = () => {
   opsLiveRef.current = {
     spot: niftyLtp,
     lastQuoteAt: lastUpdated || null,
-    source: credentials.dataProvider ?? 'paytm'
+    source: credentials.dataProvider ?? 'paytm',
+    quoteAt: historyLog[0]?.timestamp ?? null,
+    oiLadder: historyLog[0]?.oiLadder ?? null,
+    pulse: historyLog[0] ? {
+      adv: historyLog[0].adv ?? null, dec: historyLog[0].dec ?? null,
+      pcr: historyLog[0].pcr ?? null, sent: historyLog[0].overallSent ?? null,
+      callsOI: historyLog[0].callsOI ?? null, putsOI: historyLog[0].putsOI ?? null,
+      // Heavyweights (weight >= 2%) with their 1-min and day % moves.
+      movers: stocks.filter(st => (st.weight ?? 0) >= 2).map(st => ({ s: st.symbol, w: st.weight ?? 0, m1: st.lp_chg_1m_p ?? 0, day: st.chp ?? 0 }))
+    } : null
   };
   useEffect(() => startOpsStatePublisher(() => opsLiveRef.current), []);
+
+  // Ribbon honesty: show how old the price is, and the real AutoTrade mode (it was hard-coded "PAPER").
+  const ribbonAsOf = marketAsOf ?? historyLog[0]?.timestamp ?? null;
+  const ribbonAgeMin = ribbonAsOf ? Math.floor((Date.now() - ribbonAsOf) / 60_000) : null;
+  const ribbonAsOfLabel = ribbonAsOf === null
+    ? 'unknown'
+    : ribbonAgeMin! <= 2
+      ? 'live'
+      : new Date(ribbonAsOf).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+        ? `as of ${new Date(ribbonAsOf).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}`
+        : `OLD · ${new Date(ribbonAsOf).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+  const ribbonMode = (() => { try { return localStorage.getItem('autotrade_mode') === 'LIVE' ? 'LIVE' : 'PAPER'; } catch { return 'PAPER'; } })();
 
   const prevStocksRef = useRef<Record<string, FyersQuote>>({});
   const initialStocksRef = useRef<Record<string, FyersQuote>>({});
@@ -414,7 +446,8 @@ const App: React.FC = () => {
                       putsBuyQty,
                       putsSellQty,
                       callsOI,
-                      putsOI
+                      putsOI,
+                      ...computeOiWalls(options, niftyLTP)
                     };
                   });
                   
@@ -1128,7 +1161,15 @@ const App: React.FC = () => {
       ? credentials.paytmAccessToken 
       : (credentials.appId && credentials.accessToken);
       
-    if (!hasValidCredentials || !isDbLoaded) return;
+    // Outside 09:00-15:30 IST nothing is pulled, so no token is needed: the after-hours
+    // branch below only reads the locally saved session. Let it run without credentials.
+    const closedNow = (() => {
+      if (credentials.bypassMarketHours) return false;
+      const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const tv = ist.getHours() * 100 + ist.getMinutes();
+      return ist.getDay() === 0 || ist.getDay() === 6 || tv < 900 || tv > 1530;
+    })();
+    if (!isDbLoaded || (!hasValidCredentials && !closedNow)) return;
 
     // Wait until the persisted session baseline has been restored, so the first
     // post-refresh fetch computes deltas against the same reference instead of
@@ -1170,12 +1211,54 @@ const App: React.FC = () => {
         const isOpen = timeVal >= 900 && timeVal <= 1530;
 
         if (!isWeekday || !isOpen) {
-            setMarketStatusMsg("Market Closed (09:00 - 15:30 IST)");
-            if (stocks.length > 0) {
-               setIsLoading(false);
-               refreshInFlightRef.current = false;
-               return; 
+            // No live pull outside 09:00-15:30 IST (user, 2026-11-27). This used to fetch
+            // anyway when the page had no stocks yet, so every reload after the close pulled
+            // live data from the broker. Bypass Market Hours in Settings still overrides.
+            // Instead, show the last live screen saved locally, labelled with its time.
+            if (stocks.length === 0) {
+              try {
+                const saved = await dbService.getMeta(LAST_SCREEN_KEY);
+                if (saved && Array.isArray(saved.stocks) && saved.stocks.length > 0) {
+                  setStocks(saved.stocks);
+                  setSectors(calculateSectors(saved.stocks));
+                  if (saved.niftyLtp > 0) setNiftyLtp(saved.niftyLtp);
+                  setMarketAsOf(saved.at);
+                  const when = new Date(saved.at).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  setMarketStatusMsg(`Market closed · showing last data from ${when} IST`);
+                  setIsLoading(false);
+                  refreshInFlightRef.current = false;
+                  return;
+                }
+              } catch { /* fall through */ }
+              // Otherwise rebuild it from the day's saved session history (no broker call).
+              try {
+                const { quotes, asOf, last, afterClose } = quotesFromSession(await dbService.getTodaySession());
+                if (quotes.length > 0 && asOf) {
+                  const enriched = enrichData(quotes, { current: {} }, { current: {} }, true).map(q => {
+                    const c = last[q.symbol];
+                    return c ? { ...q, lp_chg_day_p: c.lp_chg_day_p, bid_chg_day_p: c.bid_chg_day_p, ask_chg_day_p: c.ask_chg_day_p, day_net_strength: c.day_net_strength, net_strength_1m: 0, lp_chg_1m_p: 0 } : q;
+                  });
+                  setStocks(enriched);
+                  setSectors(calculateSectors(enriched));
+                  const lastSnap = (await dbService.getTodaySnapshots().catch(() => [] as MarketSnapshot[]))
+                    .filter(x => x.timestamp && x.timestamp <= asOf + 60_000 && x.niftyLtp > 0)
+                    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))[0];
+                  if (lastSnap) setNiftyLtp(lastSnap.niftyLtp);
+                  setMarketAsOf(asOf);
+                  const when = new Date(asOf).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  setMarketStatusMsg(afterClose
+                    ? `Market closed · showing the day's closing prices (read after the close, ${when} IST)`
+                    : `Market closed · showing last data from ${when} IST (saved session)`);
+                  setIsLoading(false);
+                  refreshInFlightRef.current = false;
+                  return;
+                }
+              } catch { /* fall through to the closed message */ }
             }
+            setMarketStatusMsg(stocks.length > 0 ? `Market closed · showing last data${marketAsOf ? ` from ${new Date(marketAsOf).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} IST` : ''}` : "Market Closed (09:00 - 15:30 IST)");
+            setIsLoading(false);
+            refreshInFlightRef.current = false;
+            return;
         }
     }
 
@@ -1183,6 +1266,8 @@ const App: React.FC = () => {
       // Use PayTM or Fyers based on dataProvider setting
       let stockData: FyersQuote[];
       let niftyLtpVal = 0;
+      // When the price came from the Redis cache, its own time; otherwise now.
+      let dataAsOf = Date.now();
       
       console.log(`📊 [App] Starting data fetch - Provider: ${credentials.dataProvider}`);
       
@@ -1268,6 +1353,7 @@ const App: React.FC = () => {
             console.log(`📦 [Redis] Loaded: ${redisData.stocks.length} stocks, ${redisData.options?.length || 0} options, Nifty: ${redisData.niftyLTP}`);
             stockData = redisData.stocks;
             niftyLtpVal = redisData.niftyLTP;
+            dataAsOf = redisData.timestamp;
             
             // Load options from Redis cache
             if (redisData.options && redisData.options.length > 0) {
@@ -1386,6 +1472,7 @@ const App: React.FC = () => {
           if (redisData && redisData.stocks.length > 0) {
             stockData = redisData.stocks;
             niftyLtpVal = redisData.niftyLTP;
+            dataAsOf = redisData.timestamp;
             if (redisData.options && redisData.options.length > 0) {
               window.__PAYTM_OPTIONS_CACHE__ = redisData.options;
             }
@@ -1413,7 +1500,7 @@ const App: React.FC = () => {
       // "No Nifty price yet" even though the History view still shows continuous
       // data. Keep the last good price and let the momentum guard's snapshot
       // freshness check (90s) govern staleness instead.
-      if (niftyLtpVal > 0) setNiftyLtp(niftyLtpVal);
+      if (niftyLtpVal > 0) { setNiftyLtp(niftyLtpVal); setMarketAsOf(dataAsOf); }
 
       // Anchor each stock's baseline independently, at the first beat at/after
       // 09:17 where that symbol's own book has depth on both sides. Symbols
@@ -1438,6 +1525,12 @@ const App: React.FC = () => {
       })));
       setStocks(enrichedStocks);
       updateSessionHistory(enrichedStocks);
+      // Keep the last live screen locally (once a minute) so the Cockpit can show the
+      // last available data after hours without pulling anything (user, 2026-11-27).
+      if (Date.now() - lastScreenSavedRef.current > 60_000 && Date.now() - dataAsOf < 5 * 60_000) {
+        lastScreenSavedRef.current = Date.now();
+        dbService.setMeta(LAST_SCREEN_KEY, { at: dataAsOf, niftyLtp: niftyLtpVal, stocks: enrichedStocks }).catch(() => {});
+      }
 
       // Calculate Sectors
       const sectorMetrics = calculateSectors(enrichedStocks);
@@ -1582,7 +1675,7 @@ const App: React.FC = () => {
                       initialCallBuyQty += o.initial_total_buy_qty || 0;
                       initialCallSellQty += o.initial_total_sell_qty || 0;
                   }
-              } else {
+              } else if (o.symbol.endsWith('PE')) {
                   putsBuyQty += o.total_buy_qty || 0;
                   putsSellQty += o.total_sell_qty || 0;
                   putsOI += o.oi || 0;
@@ -1664,7 +1757,8 @@ const App: React.FC = () => {
                   putsBuyQty,
                   putsSellQty,
                   callsOI,
-                  putsOI
+                  putsOI,
+                  ...computeOiWalls(enrichedOptions, niftyLtpVal)
               };
               // Merge (dedupe-by-minute + re-sort by timestamp) instead of a raw
               // prepend: the client-stamped live snapshot must not interleave with
@@ -1715,16 +1809,17 @@ const App: React.FC = () => {
       
       console.log(`📊 [Mobile Debug] Market info - isBeforeStart: ${marketInfo.isBeforeMarketStart}, bypassMarketHours: ${credentials.bypassMarketHours}`);
       
-      // Don't call API before 9:17 AM IST unless bypass is enabled
-      if (marketInfo.isBeforeMarketStart && !credentials.bypassMarketHours) {
-        // Schedule first call at 9:17 AM IST
-        const delayTime = formatDelay(marketInfo.delayUntil917);
+      // Don't call the API before 09:00 IST (pre-open) unless bypass is enabled.
+      // refreshData() accepts data from 09:00, so the heartbeat starts then too.
+      if (marketInfo.isBeforeDataStart && !credentials.bypassMarketHours) {
+        // Schedule first call at 09:00 AM IST
+        const delayTime = formatDelay(marketInfo.delayUntilDataStart);
         
-        console.log(`⏰ Config loaded before market start. First API call scheduled at 9:17 AM IST (in ${delayTime})`);
-        setMarketStatusMsg(`⏰ First data fetch at 9:17 AM IST (in ${delayTime})`);
+        console.log(`⏰ Config loaded before market start. First API call scheduled at 9:00 AM IST (in ${delayTime})`);
+        setMarketStatusMsg(`⏰ First data fetch at 9:00 AM IST (in ${delayTime})`);
         
         const timeoutId = setTimeout(() => {
-          console.log('🔔 9:17 AM IST reached - Starting live data fetch');
+          console.log('🔔 9:00 AM IST reached - Starting live data fetch');
           setMarketStatusMsg(null);
           refreshDataRef.current();
           
@@ -1740,7 +1835,7 @@ const App: React.FC = () => {
 
           // Store cleanup for the outer effect teardown.
           (timeoutId as any).stopInterval = stop;
-        }, marketInfo.delayUntil917);
+        }, marketInfo.delayUntilDataStart);
 
         return () => {
           clearTimeout(timeoutId);
@@ -1908,6 +2003,7 @@ const App: React.FC = () => {
     <div className="flex flex-col h-full bg-slate-950 text-slate-200">
       
       {/* --- Top Navigation Bar --- */}
+      <CopilotToasts />
       <header className="flex-none p-4 pb-2 z-20">
         <div className="glass-header rounded-2xl p-3 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg border border-white/5">
            
@@ -1939,29 +2035,26 @@ const App: React.FC = () => {
                <button onClick={() => handleSetViewMode('history')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'history' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Clock size={14} /> History
                </button>
-               <button onClick={() => handleSetViewMode('patterns')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'patterns' ? 'bg-purple-500 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <Brain size={14} /> Patterns
+               <button onClick={() => handleSetViewMode('premarket')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'premarket' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <TrendingUp size={14} /> PreMkt
                </button>
                <button onClick={() => handleSetViewMode('vision')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'vision' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <Eye size={14} /> Vision
                </button>
+               <button onClick={() => handleSetViewMode('ops')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ops' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Radar size={14} /> Nifty50Ops
+               </button>
+               <button onClick={() => handleSetViewMode('manual')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'manual' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <TrendingUp size={14} /> Manual
+               </button>
                <button onClick={() => handleSetViewMode('paper')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'paper' ? 'bg-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
                    <GraduationCap size={14} /> Paper
-               </button>
-               <button onClick={() => handleSetViewMode('opening-pilot')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'opening-pilot' ? 'bg-cyan-700 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <Activity size={14} /> Opening Pilot
-               </button>
-               <button onClick={() => handleSetViewMode('premarket')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'premarket' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <TrendingUp size={14} /> PreMkt
                </button>
                <button onClick={() => handleSetViewMode('autotrade')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'autotrade' ? 'bg-purple-600 text-white shadow-md animate-pulse' : 'text-slate-400 hover:text-white'}`}>
                    <Layers size={14} /> AutoTrade
                </button>
-               <button onClick={() => handleSetViewMode('ops')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ops' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <Radar size={14} /> Nifty50Ops
-               </button>
-               <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${viewMode === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                   <Sparkles size={14} /> AI Lab
+               <button onClick={() => handleSetViewMode('ai')} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${['ai', 'patterns', 'opening-pilot'].includes(viewMode) ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+                   <Sparkles size={14} /> AI
                </button>
            </div>
 
@@ -2017,12 +2110,24 @@ const App: React.FC = () => {
         </div>
       </header>
 
+      {/* AI holds the less-used tools: AI Lab, Patterns, Opening Pilot. */}
+      {(['ai', 'patterns', 'opening-pilot'] as ViewMode[]).includes(viewMode) && (
+        <div className="flex-none px-4 pb-2 flex gap-1">
+          {([['ai', 'AI Lab'], ['patterns', 'Patterns'], ['opening-pilot', 'Opening Pilot']] as [ViewMode, string][]).map(([v, label]) => (
+            <button key={v} onClick={() => handleSetViewMode(v)}
+              className={`px-3 py-1 rounded-md text-[11px] font-bold transition-all ${viewMode === v ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-200'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* --- Sticky Top Institutional HUD Ribbon --- */}
       {niftyLtp !== null && niftyLtp > 0 && (
         <div className="flex-none bg-slate-900/95 border-y border-white/10 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono shadow-inner z-10 backdrop-blur-md">
           <div className="flex items-center gap-3">
             <span className="font-bold text-white flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+              <span className={`h-2 w-2 rounded-full inline-block ${ribbonAgeMin !== null && ribbonAgeMin <= 2 ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
               NIFTY: <span className={(historyLog[0]?.ptsChg ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{niftyLtp.toFixed(2)} ({(historyLog[0]?.ptsChg ?? 0) >= 0 ? '+' : ''}{(historyLog[0]?.ptsChg ?? 0).toFixed(1)})</span>
             </span>
             <span className="text-slate-400 hidden sm:inline">PCR: <span className="text-amber-400 font-semibold">{historyLog[0]?.pcr?.toFixed(2) || '—'}</span></span>
@@ -2030,8 +2135,8 @@ const App: React.FC = () => {
             <span className="text-slate-400 hidden lg:inline">Sentiment: <span className={(historyLog[0]?.overallSent ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{historyLog[0]?.overallSent?.toFixed(0) || 0}%</span></span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-slate-400">Desk: <span className="text-sky-300 font-semibold">Active Monitoring</span></span>
-            <span className="text-slate-400 hidden sm:inline">Mode: <span className="text-amber-300 font-semibold">PAPER (Zero Risk)</span></span>
+            <span className="text-slate-400">Data: <span className={`font-semibold ${ribbonAgeMin !== null && ribbonAgeMin <= 2 ? 'text-emerald-300' : 'text-amber-300'}`}>{ribbonAsOfLabel}</span></span>
+            <span className="text-slate-400 hidden sm:inline">Mode: <span className={`font-semibold ${ribbonMode === 'LIVE' ? 'text-rose-300' : 'text-amber-300'}`}>{ribbonMode === 'LIVE' ? 'LIVE (real orders)' : 'PAPER (Zero Risk)'}</span></span>
           </div>
         </div>
       )}
@@ -2243,7 +2348,9 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {(viewMode === 'premarket' || (viewMode === 'opening-pilot' && istMinutesOf(new Date(pilotClock)) < 565)) && (
+        {/* Always mounted (hidden off its tab) so the morning autopilot and the scheduled
+            re-cuts run whatever screen is open, like AutoTrade below. */}
+        {(
             <div className={viewMode === 'premarket' ? 'flex flex-col h-full px-4 pb-4 overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'premarket'}>
                 <PreMarketAnalyzer
                    credentials={credentials}
@@ -2276,6 +2383,12 @@ const App: React.FC = () => {
                    credentials={credentials}
                    historyLog={historyLog || []}
                 />
+            </div>
+        )}
+
+        {viewMode === 'manual' && (
+            <div className="flex flex-col h-full overflow-hidden">
+                <ManualTrading historyLog={historyLog || []} niftyLtp={niftyLtp} />
             </div>
         )}
 

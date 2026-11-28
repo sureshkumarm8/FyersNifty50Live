@@ -132,9 +132,10 @@ YOUR ANSWERS:
             the condition that must still hold when it does.
 - BLOCK     neither side is tradable at any price today. allow="NONE".
             confidencePenalty -100. Reserve this for conditions that poison BOTH plays:
-            the zone is too narrow, the range was built from too few ticks to trust, price
-            is trending hard through levels rather than respecting them, the levels belong
-            to yesterday, or the feed cannot be trusted. "The plan's direction was wrong"
+            the zone is too narrow, the range is flagged THIN below, price is trending
+            hard through levels rather than respecting them, the levels belong to
+            yesterday, or the feed cannot be trusted. How many readings the range holds is
+            checked in code and stated below; do not second-guess a range marked COMPLETE. "The plan's direction was wrong"
             is a REFRAME. If you name a side that still works, it is a REFRAME whatever
             word you use - it will be read as one.
 
@@ -158,6 +159,19 @@ Return ONLY this JSON, no prose, no markdown fence:
 const n = (v: number | null | undefined, suffix = '') =>
   v == null || !isFinite(v) ? 'unknown' : `${Math.round(v * 100) / 100}${suffix}`;
 
+/**
+ * The range's reading count, judged in code rather than left to the model.
+ *
+ * The feed refreshes about once a minute, so ten minutes of open hold 7-11
+ * readings. Shown a bare "7 ticks", the model read a normal range as thin and
+ * blocked a day whose range low sat on a defended 25100 put wall.
+ */
+export function rangeCoverage(samples: number): string {
+  return samples >= SNIPER.minRangeSamples
+    ? `COMPLETE: ${samples} readings over 10 minutes. The feed refreshes about once a minute, so this is full coverage, not a thin range.`
+    : `THIN: only ${samples} readings over 10 minutes, under the ${SNIPER.minRangeSamples} needed to trust these walls.`;
+}
+
 export function buildLivePrompt(input: LiveReviewInput): string {
   const t = input.thesis;
   const checks = t.checks.length
@@ -166,7 +180,8 @@ export function buildLivePrompt(input: LiveReviewInput): string {
   const adjustments = t.adjustments.length ? t.adjustments.map(a => `  - ${a}`).join('\n') : '  (none)';
 
   const range = input.range
-    ? `open ${Math.round(input.range.open)}, high ${Math.round(input.range.high)}, low ${Math.round(input.range.low)} from ${input.range.samples} ticks
+    ? `open ${Math.round(input.range.open)}, high ${Math.round(input.range.high)}, low ${Math.round(input.range.low)}
+  ${rangeCoverage(input.range.samples)}
   → mechanical walls ${Math.round(input.range.support)} / ${Math.round(input.range.resistance)}`
     : 'not marked yet';
 

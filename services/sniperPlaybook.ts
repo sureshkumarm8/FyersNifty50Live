@@ -49,6 +49,13 @@ export const SNIPER = {
    * 25-point target mathematically unreachable before the opposite wall.
    */
   minZoneWidth: 50,
+  /**
+   * Fewest readings a 09:15-09:25 range may be built from and still be trusted.
+   * The feed refreshes about once a minute, so a complete range holds 7-11;
+   * 5 means at least half the window was seen. Checked in code and stated to
+   * the risk officer, which on 2026-11-19 ended the day over a normal 7.
+   */
+  minRangeSamples: 5,
   /** Below this the day is technically tradable but uncomfortably tight. */
   comfortableZoneWidth: 75,
   /**
@@ -73,6 +80,14 @@ export const SNIPER = {
    * real zones will come from the 09:15-09:25 five-minute range instead.
    */
   maxUsefulZoneWidth: 400,
+  /**
+   * PCR outside this band is a data fault, not a reading. ATM ± 1000 Nifty PCR
+   * lives around 0.5-1.8; the 16-32 logged from 2026-11-12 came from a strike
+   * list that stopped at 25000, and the gate read it as a bullish floor that
+   * blocked every short for a week.
+   */
+  minValidPcr: 0.3,
+  maxValidPcr: 3,
   /** Approximate delta of a 250-point ITM weekly Nifty option. */
   itmDelta: 0.85
 } as const;

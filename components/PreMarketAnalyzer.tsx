@@ -297,8 +297,30 @@ export function buildDecision(params: {
     ) * 10
   );
 
-  let expectedSupport = Math.round(nearestReachable(supports) ?? spot - fallbackRange);
-  let expectedResistance = Math.round(nearestReachable(resistances) ?? spot + fallbackRange);
+  /**
+   * The zone's edges are option walls when the OI charts were read. The
+   * intraday chart names every swing (25,880 just under the close on
+   * 2026-11-27; 25,791/25,807 on 11-26), and nearest-first lets that minor
+   * level beat the put wall the writers are actually defending, which
+   * collapses the zone to ~20 pts and forces a STAND ASIDE. Other charts'
+   * levels stay in the ladder; they just stop setting the zone.
+   */
+  const OI_SLOTS: ChartSlotId[] = ['OI_SNAPSHOT', 'MULTI_OI'];
+  const oiLevels = (pick: (v: ChartVerdict) => number[], side: 'below' | 'above') =>
+    charts
+      .filter(c => OI_SLOTS.includes(c.slot))
+      .flatMap(c => pick(c.verdict!))
+      .filter(n => isFinite(n) && (side === 'below' ? n <= spot : n >= spot))
+      .sort((a, b) => (side === 'below' ? b - a : a - b));
+  const oiSupports = oiLevels(v => v.supports, 'below');
+  const oiResistances = oiLevels(v => v.resistances, 'above');
+
+  let expectedSupport = Math.round(
+    nearestReachable(oiSupports) ?? nearestReachable(supports) ?? spot - fallbackRange
+  );
+  let expectedResistance = Math.round(
+    nearestReachable(oiResistances) ?? nearestReachable(resistances) ?? spot + fallbackRange
+  );
 
   // Entry window: anchor the zone to today's measured range when it is supplied.
   // The session low is a real, tested support and the high a real resistance, so
@@ -566,7 +588,16 @@ export function migrateDecision(saved: PreMarketDecision): PreMarketDecision {
  * One `premarket` journal row per saved plan. The day record needs what the
  * engines were handed and when, not the whole analysis object.
  */
+/** Tell the Nifty50Ops agent what the app did on its own (shown in its chat and alerts). */
+function agentNote(title: string, message: string): void {
+  fetch('/api/ops/agent-note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, message }) }).catch(() => {});
+}
+
 function journalDecision(decision: PreMarketDecision, trigger: string): void {
+  if (trigger === 'generate' || trigger === 'recut') {
+    agentNote(`Pre-market plan ${trigger === 'generate' ? 'built' : 're-cut'}`,
+      `${decision.playbook?.verdictHeadline ?? ''} · zone ${decision.expectedSupport}–${decision.expectedResistance} · Nifty ${Math.round(decision.spot)} (${decision.basis ?? ''})`);
+  }
   logJournal('premarket', {
     trigger,
     generatedAt: decision.generatedAt,
@@ -582,6 +613,10 @@ function journalDecision(decision: PreMarketDecision, trigger: string): void {
     expectedResistance: decision.expectedResistance,
     chartCoverage: decision.chartCoverage,
     staleCharts: decision.staleCharts,
+    // Which charts were read, and the level ladder, so the zone can be audited from disk.
+    chartsRead: decision.contributions.map(c => c.slot),
+    supports: decision.supports,
+    resistances: decision.resistances,
     aiReview: decision.aiReview ? { stance: decision.aiReview.stance, conviction: decision.aiReview.conviction } : null
   });
 }
@@ -1133,6 +1168,39 @@ export const PreMarketAnalyzer: React.FC<{
     }
   };
 
+  /**
+   * MORNING AUTOPILOT (Nifty50Ops). On a trading weekday between 08:45 and 09:14,
+   * if today has no charts yet, pull them once: the pull already analyses each
+   * chart and queues the decision, and the scheduled re-cuts take it from there.
+   * Off switch: Nifty50Ops → Morning autopilot (localStorage premarket_autopilot).
+   * It never touches orders, modes or the kill switch.
+   */
+  const autopilotRef = useRef<{ run: () => void }>({ run: () => {} });
+  autopilotRef.current.run = () => {
+    try { if (localStorage.getItem('premarket_autopilot') === 'off') return; } catch { /* default on */ }
+    const now = new Date();
+    const day = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getDay();
+    if (day === 0 || day === 6) return;
+    const m = istMinutes(now);
+    if (m < 8 * 60 + 45 || m >= OPEN_MINS - 1) return;
+    if (isPulling || isGenerating) return;
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const todays = Object.values(charts).filter(c => c && new Date(c.uploadedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === today);
+    const flag = `premarket_autopulled_${today}`;
+    let done = false;
+    try { done = localStorage.getItem(flag) === '1'; } catch { /* ignore */ }
+    if (todays.length > 0 || done) return;
+    try { localStorage.setItem(flag, '1'); } catch { /* ignore */ }
+    addLog('🤖 Morning autopilot: no charts yet for today — pulling, analysing and building the plan.');
+    agentNote('Morning autopilot started', 'No charts for today at ' + new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }) + ', so I am pulling, analysing and building the pre-market plan.');
+    void pullTodaysCharts();
+  };
+  useEffect(() => {
+    const id = window.setInterval(() => autopilotRef.current.run(), 30_000);
+    const first = window.setTimeout(() => autopilotRef.current.run(), 5_000);
+    return () => { window.clearInterval(id); window.clearTimeout(first); };
+  }, []);
+
   useEffect(() => {
     const hash = window.location.hash || '';
     const search = window.location.search || '';
@@ -1339,6 +1407,9 @@ export const PreMarketAnalyzer: React.FC<{
     if (!decision || isGenerating || coverage === 0) return;
 
     const now = new Date();
+    // Always mounted now, so bound it: after the hard stop nothing will be traded off
+    // a re-cut (2026-11-27: a 17:11 drift re-cut replaced the morning plan).
+    if (resolvePhase(now) === 'CLOSED') return;
     const checkpoint = dueRevalidation(decision.basis, now);
     const drifted = driftRevalidationDue(decision.spot, liveLtp, now);
     if (!checkpoint && !drifted) return;
@@ -1625,20 +1696,12 @@ export const PreMarketAnalyzer: React.FC<{
         <div className="space-y-4">
           {hasDecision && preMarketDecision ? (
             <>
-              <StepRail
-                decision={preMarketDecision}
-                active={activeBasis}
-                onSelect={b => setPinnedPhase(b === newestPhase ? null : b)}
-                onRunPhase={runPhase}
-                running={isGenerating}
-              />
-
               {!view ? (
                 <p className="flex items-start gap-2 rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 text-[11px] text-slate-400">
                   <AlertCircle size={14} className="mt-px shrink-0" />
                   <span>
                     Step {activeBasis === 'PREOPEN' ? '2' : activeBasis === 'CHARTS_ONLY' ? '1' : '3'} has not been run
-                    yet. Enter its price above and press Run, or{' '}
+                    yet. Open "Session phases" below to run it, or{' '}
                     <button onClick={() => setPinnedPhase(null)} className="font-bold underline hover:text-white">
                       go back to {BASIS_LABEL[newestPhase]}
                     </button>
@@ -1659,25 +1722,15 @@ export const PreMarketAnalyzer: React.FC<{
                     </p>
                   )}
 
-                  {view.staleCharts.length > 0 && (
-                    <p className="flex items-start gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2.5 text-[11px] text-rose-200">
-                      <AlertCircle size={14} className="mt-px shrink-0" />
-                      <span>
-                        <span className="font-bold">Stale input:</span> {view.staleCharts.join(', ')}. Re-capture and
-                        re-run before trading this.
-                      </span>
-                    </p>
-                  )}
 
                   <TheCall
                     view={view}
                     basis={activeBasis}
                     liveSpot={activeBasis === 'CHARTS_ONLY' ? null : liveLtp}
+                    liveAt={historyLog[0]?.timestamp ?? null}
                     nowTick={nowTick}
                     onCopy={() => copyToClipboard()}
                   />
-
-                  <ZoneStrip view={view} liveSpot={activeBasis === 'CHARTS_ONLY' ? null : liveLtp} />
 
                   <NextMoves
                     view={view}
@@ -1714,20 +1767,27 @@ export const PreMarketAnalyzer: React.FC<{
                       reviewing={reviewingPhase === activeBasis}
                     />
                     <EvidenceGrid decision={view} visionLabel={visionLabel} aiLabel={aiLabel} />
-                    <PhaseBoard
-                      decision={preMarketDecision}
-                      active={activeBasis}
-                      onSelect={b => setPinnedPhase(b === newestPhase ? null : b)}
-                      onRunPhase={runPhase}
-                      onRunReview={reviewReady ? b => { runReview(b); } : undefined}
-                      reviewingPhase={reviewingPhase}
-                      aiLabel={aiLabel}
-                    />
                   </Drawer>
                 </>
               )}
 
-              <Drawer title="Charts" note={`${coverage}% captured`}>
+              <Drawer
+                title="Session phases · re-run a step"
+                note={`showing ${BASIS_LABEL[activeBasis]}${viewingOlder ? ' (older)' : ''}`}
+                defaultOpen={!view}
+              >
+                <PhaseBoard
+                  decision={preMarketDecision}
+                  active={activeBasis}
+                  onSelect={b => setPinnedPhase(b === newestPhase ? null : b)}
+                  onRunPhase={runPhase}
+                  onRunReview={reviewReady ? b => { runReview(b); } : undefined}
+                  reviewingPhase={reviewingPhase}
+                  aiLabel={aiLabel}
+                />
+              </Drawer>
+
+              <Drawer title="Charts" note={`${coverage}/${CHART_SLOTS.length} read`}>
                 {workspace}
               </Drawer>
             </>

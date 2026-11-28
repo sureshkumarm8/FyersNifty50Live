@@ -374,10 +374,31 @@ export function reconcile(params: {
   // and is respected. A stand-aside cut before any price from today existed is
   // a forecast, and a forecast that the tape has since contradicted must not
   // veto a clean session - that is precisely the "adjust immediately" case.
+  //
+  // One exception to "a real-price stand-aside stands": a stand-aside cut only
+  // because the walls were too close together is a judgement about those
+  // walls. If the open lands outside them (2026-11-18: walls 25380/25392, open
+  // 25323), the walls no longer describe the session, so the verdict built on
+  // them goes too and the room check above judges the live zone instead.
   const standAside = playbook.verdict === 'STAND_ASIDE';
   const tapeIsClean = width >= SNIPER.comfortableZoneWidth && !divorced;
+  const roomWasTheOnlyBlocker = playbook.gates
+    .filter(g => !g.pass && g.severity === 'BLOCKER')
+    .every(g => g.id === 'room');
+  const openedOutsideWalls = range.open < playbook.plannedSupport || range.open > playbook.plannedResistance;
 
-  if (standAside && !planIsProvisional) {
+  if (standAside && roomWasTheOnlyBlocker && openedOutsideWalls) {
+    checks.push({
+      id: 'verdict',
+      label: 'Verdict',
+      verdict: 'UNKNOWN',
+      detail: `The plan stood aside on the room between ${fmt(playbook.plannedSupport)} and ${fmt(playbook.plannedResistance)}, but the session opened at ${fmt(range.open)}, outside both. Those walls no longer apply; the live zone is judged on its own.`,
+      weight: 0
+    });
+    adjustments.push(
+      `"Stand aside" dropped — it was about walls the ${fmt(range.open)} open already broke.`
+    );
+  } else if (standAside && !planIsProvisional) {
     checks.push({
       id: 'verdict',
       label: 'Verdict',

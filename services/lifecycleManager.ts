@@ -317,6 +317,11 @@ export class DataLifecycleManager {
         putsSellQty: s.putsSellQty,
         callsOI: s.callsOI,
         putsOI: s.putsOI,
+        callWall: s.callWall ?? '',
+        callWallOI: s.callWallOI ?? '',
+        putWall: s.putWall ?? '',
+        putWallOI: s.putWallOI ?? '',
+        oiLadder: s.oiLadder ?? '',
       }));
 
       // Format date for filename

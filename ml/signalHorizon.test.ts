@@ -42,6 +42,11 @@ function rows(flow: (i: number) => number, count = 20): MarketSnapshot[] {
 const metricsFor = (h: MarketSnapshot[]) =>
   EnhancedSignalGenerator.generateSignal(h, 23350, 23450, h[0].niftyLtp).metrics;
 
+const signalFor = (h: MarketSnapshot[], neutralizeInvalidPcr = false) =>
+  EnhancedSignalGenerator.generateSignal(h, 23350, 23450, h[0].niftyLtp, {
+    neutralizeInvalidPcr
+  });
+
 console.log('signal horizon');
 
 test('a high but unchanged cumulative flow reads NEUTRAL, not BULLISH', () => {
@@ -72,6 +77,29 @@ test('flow and trend are anchored to the same row', () => {
   const m = metricsFor(rows(i => (i >= 16 ? 200 : 63), 20));
   assert.strictEqual(m.optionFlow, 'NEUTRAL',
     'a move outside the 15m window must not set the direction');
+});
+
+test('out-of-range PCR is neutralized for paper signals but legacy scoring remains unchanged', () => {
+  const h = rows(() => 0);
+  h[0].pcr = 8.32;
+
+  const legacy = signalFor(h);
+  assert.ok(legacy.reasons.some(reason => reason.includes('PCR')),
+    'default behavior must remain unchanged for live callers');
+
+  const paper = signalFor(h, true);
+  assert.strictEqual(paper.metrics.callPutRatio, 0,
+    'invalid PCR must not add a bullish or bearish vote in paper mode');
+  assert.ok(!paper.reasons.some(reason => reason.includes('PCR')),
+    'paper signal must not cite the invalid PCR');
+});
+
+test('valid PCR remains available to the paper signal', () => {
+  const h = rows(() => 0);
+  h[0].pcr = 1.5;
+  const paper = signalFor(h, true);
+  assert.strictEqual(paper.metrics.callPutRatio, 1 / 1.5);
+  assert.ok(paper.reasons.some(reason => reason.includes('PCR')));
 });
 
 console.log(`${passed} passed\n`);

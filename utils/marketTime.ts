@@ -10,6 +10,13 @@ export interface MarketTimeInfo {
   timeVal: number;
   isBeforeMarketStart: boolean;
   delayUntil917: number;
+  /**
+   * Before 09:00 IST, when the live feed starts (pre-open). refreshData() accepts
+   * data from 09:00, so the refresh heartbeat must start then too; starting it at
+   * 09:17 left only the 60s watchdog fetching from 09:00 to 09:17 (2026-11-27).
+   */
+  isBeforeDataStart: boolean;
+  delayUntilDataStart: number;
   isWeekday: boolean;
   isMarketHours: boolean;
 }
@@ -17,8 +24,7 @@ export interface MarketTimeInfo {
 /**
  * Get current IST time and market status
  */
-export function getMarketTimeInfo(): MarketTimeInfo {
-  const now = new Date();
+export function getMarketTimeInfo(now: Date = new Date()): MarketTimeInfo {
   const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
   const istDate = new Date(istString);
   
@@ -39,6 +45,14 @@ export function getMarketTimeInfo(): MarketTimeInfo {
     delayUntil917 = targetTime.getTime() - istDate.getTime();
   }
   
+  const isBeforeDataStart = timeVal < 900;
+  let delayUntilDataStart = 0;
+  if (isBeforeDataStart) {
+    const targetTime = new Date(istDate);
+    targetTime.setHours(9, 0, 0, 0);
+    delayUntilDataStart = targetTime.getTime() - istDate.getTime();
+  }
+
   return {
     istDate,
     hour,
@@ -46,6 +60,8 @@ export function getMarketTimeInfo(): MarketTimeInfo {
     timeVal,
     isBeforeMarketStart,
     delayUntil917,
+    isBeforeDataStart,
+    delayUntilDataStart,
     isWeekday,
     isMarketHours
   };

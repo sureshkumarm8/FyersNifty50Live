@@ -80,6 +80,17 @@ export const getNiftyIndexSecurityId = (): string => {
   return NIFTY_INDEX_SECURITY_ID;
 };
 
+/**
+ * Strike/type of contracts that came from discovery rather than the static
+ * list. The quote converter labels from both: a contract it cannot place
+ * becomes UNKNOWN, and the OI aggregation used to count that as a put.
+ */
+const discoveredOptionMeta = new Map<string, NiftyOption>();
+
+/** True when the set has strikes at least `reach` points either side of ATM. */
+export const straddlesAtm = (options: NiftyOption[], atmStrike: number, reach = 500): boolean =>
+  options.some(o => o.strike >= atmStrike + reach) && options.some(o => o.strike <= atmStrike - reach);
+
 export const getNiftyOptionSecurityIds = async (niftyLtp: number): Promise<string[]> => {
   // Round to nearest 50 to get ATM strike
   const atmStrike = Math.round(niftyLtp / 50) * 50;
@@ -103,6 +114,11 @@ export const getNiftyOptionSecurityIds = async (niftyLtp: number): Promise<strin
         filteredOptions = data.options.filter((opt: NiftyOption) => 
           opt.strike >= minStrike && opt.strike <= maxStrike
         );
+        filteredOptions.forEach(opt => discoveredOptionMeta.set(String(opt.security_id), opt));
+        if (filteredOptions.length > 0 && !straddlesAtm(filteredOptions, atmStrike)) {
+          console.warn(`[PayTM] Discovered options do not straddle ATM ${atmStrike} (cached band is stale) - using the static list`);
+          filteredOptions = [];
+        }
       }
     }
   } catch (err) {
@@ -115,6 +131,12 @@ export const getNiftyOptionSecurityIds = async (niftyLtp: number): Promise<strin
       opt.strike >= minStrike && opt.strike <= maxStrike
     );
     console.log(`[PayTM] Using static options fallback (count: ${filteredOptions.length})`);
+  }
+
+  // A one-sided set skews PCR and every option-flow metric without failing
+  // anything, which is how 21000-25000 survived a week of Nifty above 25000.
+  if (!straddlesAtm(filteredOptions, atmStrike)) {
+    console.error(`[PayTM] ⚠️ Option strikes do not straddle ATM ${atmStrike} - PCR and option flow are unreliable. Run \`npm run generate:options\`.`);
   }
   
   const allIds = filteredOptions.map(opt => opt.security_id);
@@ -142,7 +164,8 @@ const convertPayTMToFyersQuote = (
     description = stockInfo.name;
   } else {
     // Check in weekly options
-    const optInfo = NIFTY_WEEKLY_OPTIONS.find(o => o.security_id === securityIdStr);
+    const optInfo =
+      NIFTY_WEEKLY_OPTIONS.find(o => o.security_id === securityIdStr) ?? discoveredOptionMeta.get(securityIdStr);
     if (optInfo) {
       symbol = `NSE:NIFTY-${optInfo.strike}-${optInfo.type}`;
       // Format: "NIFTY 22750 CE" for short_name (main display)
@@ -323,7 +346,7 @@ export const fetchNiftyIndexLTP = async (credentials: FyersCredentials): Promise
 
 // Fetch data from Redis (stored by cron job)
 // This avoids making duplicate API calls and uses pre-fetched data
-export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], options: FyersQuote[], niftyLTP: number } | null> => {
+export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], options: FyersQuote[], niftyLTP: number; timestamp: number } | null> => {
   try {
     console.log('[PayTM Redis] Fetching data from /api/get-redis-data...');
     const response = await fetchWithTimeout('/api/get-redis-data');
@@ -350,6 +373,14 @@ export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], opt
     if (dataAge > 5 * 60 * 1000) {
       console.warn(`[PayTM Redis] ⚠️ Data is ${Math.round(dataAge / 60000)} minutes old`);
     }
+    // A snapshot from another IST day is never "the market": on 2026-11-27 a 16-Oct
+    // cache (Nifty 23,135.90, sentiment -94%) was shown in the ribbon as live. Same-day
+    // data (e.g. after the close) is kept and carries its own timestamp.
+    const istDay = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    if (!snapshot.timestamp || istDay(snapshot.timestamp) !== istDay(Date.now())) {
+      console.warn(`[PayTM Redis] ⛔ Ignoring snapshot from ${snapshot.timestamp ? istDay(snapshot.timestamp) : 'an unknown time'}; it is not today's data.`);
+      return null;
+    }
     
     // Data is now always in FyersQuote format (converted by both cron and frontend)
     const stocks: FyersQuote[] = snapshot.stocks || [];
@@ -366,7 +397,8 @@ export const fetchPayTMFromRedis = async (): Promise<{ stocks: FyersQuote[], opt
     return {
       stocks,
       options,
-      niftyLTP: snapshot.niftyLTP || 0
+      niftyLTP: snapshot.niftyLTP || 0,
+      timestamp: snapshot.timestamp
     };
     
   } catch (error) {

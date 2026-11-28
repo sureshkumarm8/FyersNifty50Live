@@ -216,9 +216,12 @@ export default async function handler(req, res) {
     
     console.log(`[Discover] Nifty 50 LTP: ${niftyLTP}`);
     
-    // Step 3: Calculate ATM strike and range (±1000 points, ~20 strikes each side)
+    // Step 3: Calculate ATM strike and range (±2500 points, 50 strikes each side)
+    // The result is cached for the whole week while callers select ATM ± 1000
+    // from the live price, so the cached band must cover a week of drift. A
+    // ±1000 band fixed at discovery time went one-sided after a big week.
     const atmStrike = Math.round(niftyLTP / 50) * 50; // Round to nearest 50
-    const strikeRange = 20; // 20 strikes on each side
+    const strikeRange = 50; // 50 strikes on each side
     const minStrike = atmStrike - (strikeRange * 50);
     const maxStrike = atmStrike + (strikeRange * 50);
     

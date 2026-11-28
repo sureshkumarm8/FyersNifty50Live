@@ -67,7 +67,8 @@ export class EnhancedSignalGenerator {
     historyLog: MarketSnapshot[],
     pivotSupport: number,
     pivotResistance: number,
-    currentNiftyLtp: number
+    currentNiftyLtp: number,
+    options: { neutralizeInvalidPcr?: boolean } = {}
   ): EnhancedSignal {
     if (historyLog.length < 5) {
       return {
@@ -85,7 +86,7 @@ export class EnhancedSignalGenerator {
 
     // Analyze different aspects
     const trendAnalysis = this.analyzeTrend(historyLog);
-    const sentimentAnalysis = this.analyzeSentiment(historyLog);
+    const sentimentAnalysis = this.analyzeSentiment(historyLog, options.neutralizeInvalidPcr === true);
     const momentumAnalysis = this.analyzeMomentum(historyLog);
     const optionsAnalysis = this.analyzeOptions(historyLog);
     const volatilityAnalysis = this.analyzeVolatility(historyLog);
@@ -212,15 +213,19 @@ export class EnhancedSignalGenerator {
   /**
    * Analyze sentiment from advanced indicators
    */
-  private static analyzeSentiment(historyLog: MarketSnapshot[]) {
+  private static analyzeSentiment(historyLog: MarketSnapshot[], neutralizeInvalidPcr = false) {
     const latest = historyLog[0];
     const prev = historyLog[1];
 
     // Broad market sentiment (-100 to +100)
     const broadSentiment = latest.overallSent || 0;
     
-    // Call-Put Ratio (higher = more bullish)
-    const callPutRatio = latest.pcr ? 1 / latest.pcr : 0;
+    // The historical model's accepted range is 0.2-3. Preserve legacy behavior
+    // unless the paper-only caller opts into rejecting out-of-range readings.
+    const validPcr = Number.isFinite(latest.pcr) && latest.pcr > 0.2 && latest.pcr < 3;
+    const callPutRatio = neutralizeInvalidPcr && !validPcr
+      ? 0
+      : latest.pcr ? 1 / latest.pcr : 0;
     
     // Option flow, measured over the SAME 15-minute window as trend15m.
     //

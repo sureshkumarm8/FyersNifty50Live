@@ -14,7 +14,8 @@ export const JOURNAL_STREAMS = [
   'exits',
   'premarket',
   'vision',
-  'alerts'
+  'alerts',
+  'manual'
 ] as const;
 
 export type JournalStream = (typeof JOURNAL_STREAMS)[number];
